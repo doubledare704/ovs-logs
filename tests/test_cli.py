@@ -1,0 +1,271 @@
+"""Tests for the Typer CLI."""
+
+from pathlib import Path
+
+from typer.testing import CliRunner
+
+from ovs_logs.cli.main import app
+
+runner = CliRunner()
+
+
+def test_ingest_csv_success(tmp_path: Path) -> None:
+    csv = tmp_path / "sample.csv"
+    csv.write_text("timestamp,client_ip,status\n2024-01-01T00:00:00,1.2.3.4,200\n")
+    db = tmp_path / "test.db"
+
+    result = runner.invoke(
+        app,
+        [
+            "ingest",
+            "--file",
+            str(csv),
+            "--db",
+            str(db),
+            "--table",
+            "raw_sample",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Loaded 1 rows" in result.output
+    assert "raw_sample" in result.output
+    assert "timestamp" in result.output
+
+
+def test_ingest_missing_file() -> None:
+    result = runner.invoke(app, ["ingest", "--file", "nonexistent.csv"])
+
+    assert result.exit_code == 2
+    assert "File error" in result.output
+
+
+def test_ingest_unsupported_type(tmp_path: Path) -> None:
+    csv = tmp_path / "sample.csv"
+    csv.write_text("a\n1\n")
+
+    result = runner.invoke(
+        app, ["ingest", "--file", str(csv), "--type", "unknown"]
+    )
+
+    assert result.exit_code == 3
+    assert "Unsupported type" in result.output
+
+
+def test_ingest_empty_file(tmp_path: Path) -> None:
+    empty = tmp_path / "empty.log"
+    empty.write_text("")
+
+    result = runner.invoke(app, ["ingest", "--file", str(empty)])
+
+    assert result.exit_code == 3
+    assert "Validation error" in result.output
+
+
+def test_ingest_evtx_not_supported(tmp_path: Path) -> None:
+    evtx = tmp_path / "sample.evtx"
+    evtx.write_bytes(b"EVT\x00...")
+
+    result = runner.invoke(
+        app, ["ingest", "--file", str(evtx), "--type", "evtx"]
+    )
+
+    assert result.exit_code == 4
+    assert "Not supported" in result.output
+
+
+# -----------------------------------------------------------------------------
+# Analyze command tests
+# -----------------------------------------------------------------------------
+
+
+def _write_events_csv(path: Path, rows: int) -> None:
+    """Write a CSV with normalized event columns."""
+    lines = [
+        "event_timestamp,source_ip,event_type,status_code",
+        "2024-01-01T00:00:00,1.2.3.4,GET,200",
+        "2024-01-01T00:01:00,1.2.3.4,GET,200",
+        "2024-01-01T00:02:00,1.2.3.4,POST,200",
+        "2024-01-01T00:03:00,5.6.7.8,POST,404",
+        "2024-01-01T00:04:00,1.2.3.4,GET,500",
+    ]
+    path.write_text("\n".join(lines[: rows + 1]) + "\n")
+
+
+def _ingest_csv(csv: Path, db: Path) -> None:
+    result = runner.invoke(
+        app,
+        [
+            "ingest",
+            "--file",
+            str(csv),
+            "--db",
+            str(db),
+            "--table",
+            "raw_events",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+
+
+def test_analyze_csv_success(tmp_path: Path) -> None:
+    csv = tmp_path / "events.csv"
+    _write_events_csv(csv, rows=5)
+    db = tmp_path / "test.db"
+    _ingest_csv(csv, db)
+
+    result = runner.invoke(app, ["analyze", "--table", "events", "--db", str(db)])
+
+    assert result.exit_code == 0, result.output
+    assert "Suspicious Indicators" in result.output
+    assert "top_talkers" in result.output
+
+
+def test_analyze_no_indicators(tmp_path: Path) -> None:
+    csv = tmp_path / "events.csv"
+    csv.write_text("event_timestamp,source_ip,event_type,status_code\n")
+    db = tmp_path / "test.db"
+    _ingest_csv(csv, db)
+
+    result = runner.invoke(app, ["analyze", "--table", "events", "--db", str(db)])
+
+    assert result.exit_code == 0, result.output
+    assert "No suspicious indicators found" in result.output
+
+
+def test_analyze_with_intel_no_api_key(tmp_path: Path) -> None:
+    csv = tmp_path / "events.csv"
+    _write_events_csv(csv, rows=5)
+    db = tmp_path / "test.db"
+    _ingest_csv(csv, db)
+
+    result = runner.invoke(
+        app, ["analyze", "--table", "events", "--db", str(db), "--intel"]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Suspicious Indicators" in result.output
+
+
+def test_analyze_missing_table(tmp_path: Path) -> None:
+    db = tmp_path / "test.db"
+    result = runner.invoke(
+        app, ["analyze", "--table", "missing_table", "--db", str(db)]
+    )
+
+    assert result.exit_code != 0
+    assert "Unexpected error" in result.output
+
+
+def test_analyze_output_requires_llm(tmp_path: Path) -> None:
+    csv = tmp_path / "events.csv"
+    _write_events_csv(csv, rows=5)
+    db = tmp_path / "test.db"
+    _ingest_csv(csv, db)
+    output = tmp_path / "report.json"
+
+    result = runner.invoke(
+        app,
+        [
+            "analyze",
+            "--table",
+            "events",
+            "--db",
+            str(db),
+            "--output",
+            str(output),
+        ],
+    )
+
+    assert result.exit_code == 3
+    assert "Validation error" in result.output
+
+
+def test_analyze_with_llm_and_output(tmp_path: Path) -> None:
+    from unittest.mock import Mock, patch
+
+    csv = tmp_path / "events.csv"
+    _write_events_csv(csv, rows=5)
+    db = tmp_path / "test.db"
+    _ingest_csv(csv, db)
+    output = tmp_path / "report.json"
+
+    llm_response = """
+    ```json
+    {
+      "title": "Brute-force login attempt",
+      "summary": "Multiple failed logins from a single IP.",
+      "severity": "High",
+      "timeline": [
+        {"timestamp": "2024-01-01T00:00:00", "description": "Failed login", "source_ip": "1.2.3.4", "event_type": "POST", "status_code": 401, "raw_message": null}
+      ],
+      "mitre_mappings": [
+        {"technique_id": "T1110", "technique_name": "Brute Force", "tactic": "Credential Access", "description": "Repeated failed auth attempts."}
+      ],
+      "mitigation": {"format": "Sigma", "title": "Detect repeated failed logins", "content": "title: repeated failed logins"},
+      "indicators": [
+        {"type": "top_talkers", "severity": "High", "description": "IP 1.2.3.4 generated 250 events", "evidence": {"source_ip": "1.2.3.4", "event_count": 250}}
+      ],
+      "metadata": {"source_file": "auth.log"}
+    }
+    ```
+    """
+
+    mock_response = Mock()
+    mock_response.raise_for_status.return_value = None
+    mock_response.json.return_value = {
+        "choices": [{"message": {"content": llm_response}}]
+    }
+
+    with patch("ovs_logs.core.llm.requests.post", return_value=mock_response):
+        result = runner.invoke(
+            app,
+            [
+                "analyze",
+                "--table",
+                "events",
+                "--db",
+                str(db),
+                "--llm",
+                "--llm-api-key",
+                "sk-test",
+                "--output",
+                str(output),
+            ],
+        )
+
+    assert result.exit_code == 0, result.output
+    assert "Report saved" in result.output
+    assert "Report written to" in result.output
+    assert output.exists()
+
+
+def test_analyze_invalid_abuseipdb_key(tmp_path: Path) -> None:
+    from unittest.mock import Mock, patch
+
+    csv = tmp_path / "events.csv"
+    _write_events_csv(csv, rows=5)
+    db = tmp_path / "test.db"
+    _ingest_csv(csv, db)
+
+    response = Mock()
+    response.status_code = 401
+    response.text = "Unauthorized"
+
+    with patch("ovs_logs.core.threat_intel.requests.get", return_value=response):
+        result = runner.invoke(
+            app,
+            [
+                "analyze",
+                "--table",
+                "events",
+                "--db",
+                str(db),
+                "--intel",
+                "--abuseipdb-api-key",
+                "bad-key",
+            ],
+        )
+
+    assert result.exit_code != 0
+    assert "AbuseIPDB lookup failed" in str(result.exception) or "Unexpected error" in result.output

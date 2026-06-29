@@ -1,0 +1,103 @@
+"""Suspicious indicator data model and result shaping."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any
+
+from ovs_logs.config.settings import settings
+
+
+def _default_thresholds() -> dict[str, int]:
+    """Return the default indicator thresholds as a template-name mapping."""
+    return {
+        "top_talkers": settings.thresholds.top_talkers,
+        "error_spikes": settings.thresholds.error_spikes,
+        "event_distribution": settings.thresholds.event_distribution,
+        "temporal_anomaly": settings.thresholds.temporal_anomaly,
+    }
+
+
+@dataclass(frozen=True)
+class SuspiciousIndicator:
+    """A single suspicious indicator produced by the analysis pipeline."""
+
+    type: str
+    severity: str
+    description: str
+    evidence: dict[str, Any]
+
+    def __post_init__(self) -> None:
+        if self.severity not in {"Low", "Medium", "High"}:
+            raise ValueError(
+                f"Severity must be one of Low, Medium, or High; got {self.severity!r}"
+            )
+
+
+class IndicatorProcessor:
+    """Transforms raw analysis engine output into a flat list of indicators."""
+
+    def __init__(self, thresholds: dict[str, int] | None = None) -> None:
+        self.thresholds = {**_default_thresholds(), **(thresholds or {})}
+
+    def _severity(self, value: int, threshold: int) -> str:
+        """Assign a severity level based on how much the value exceeds the threshold."""
+        if threshold <= 0:
+            return "Low"
+        if value >= threshold * 2:
+            return "High"
+        if value >= threshold:
+            return "Medium"
+        return "Low"
+
+    def _extract_value(self, indicator_type: str, evidence: dict[str, Any]) -> int:
+        """Extract the numeric count used for severity scoring."""
+        return int(evidence.get("event_count", 0) or evidence.get("error_count", 0) or 0)
+
+    def _build_description(self, indicator_type: str, evidence: dict[str, Any]) -> str:
+        """Generate a human-readable description for the indicator."""
+        if indicator_type == "top_talkers":
+            return (
+                f"IP {evidence['source_ip']} generated "
+                f"{evidence['event_count']} events"
+            )
+        if indicator_type == "error_spikes":
+            return (
+                f"IP {evidence['source_ip']} returned "
+                f"HTTP {evidence['status_code']} "
+                f"{evidence['error_count']} times"
+            )
+        if indicator_type == "event_distribution":
+            return (
+                f"Event type '{evidence['event_type']}' occurred "
+                f"{evidence['event_count']} times"
+            )
+        if indicator_type == "temporal_anomaly":
+            return (
+                f"Time bucket {evidence['time_bucket']} had "
+                f"{evidence['event_count']} events"
+            )
+        return f"Indicator of type {indicator_type}: {evidence}"
+
+    def process(
+        self, results: dict[str, list[dict[str, Any]]]
+    ) -> list[SuspiciousIndicator]:
+        """Convert raw analysis results into a flat list of suspicious indicators."""
+        indicators: list[SuspiciousIndicator] = []
+
+        for indicator_type, rows in results.items():
+            threshold = self.thresholds.get(indicator_type, 0)
+            for evidence in rows:
+                value = self._extract_value(indicator_type, evidence)
+                severity = self._severity(value, threshold)
+                description = self._build_description(indicator_type, evidence)
+                indicators.append(
+                    SuspiciousIndicator(
+                        type=indicator_type,
+                        severity=severity,
+                        description=description,
+                        evidence=evidence,
+                    )
+                )
+
+        return indicators
