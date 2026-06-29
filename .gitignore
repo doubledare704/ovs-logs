@@ -3,6 +3,7 @@
 .ovs_logs
 .venv
 .idea
+.kilocode
 
 # Python
 __pycache__/
