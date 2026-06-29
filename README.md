@@ -7,6 +7,7 @@ OVS-Log ingests raw logs (CSV, JSON, text, EVTX) into a local DuckDB database, e
 ## Prerequisites
 
 - Python 3.12 or newer
+- [UV](https://docs.astral.sh/uv/) (package manager and runner)
 - An AbuseIPDB API key (optional, for threat-intel enrichment)
 - An API key for an OpenAI-compatible LLM provider (optional, for report synthesis)
 
@@ -17,7 +18,7 @@ OVS-Log ingests raw logs (CSV, JSON, text, EVTX) into a local DuckDB database, e
 Install the package in editable mode along with its runtime dependencies:
 
 ```bash
-pip install -e .
+uv sync --frozen
 ```
 
 This also registers the `ovs-log` CLI entry point.
@@ -27,7 +28,7 @@ This also registers the `ovs-log` CLI entry point.
 Install the package with development extras:
 
 ```bash
-pip install -e ".[dev]"
+uv sync --frozen --all-extras
 ```
 
 This installs `pytest` in addition to the runtime dependencies.
@@ -35,7 +36,7 @@ This installs `pytest` in addition to the runtime dependencies.
 ### Verify the installation
 
 ```bash
-ovs-log version
+uv run ovs-log version
 ```
 
 ## Configuration
@@ -61,8 +62,8 @@ API keys can also be supplied per-command with `--abuseipdb-api-key` and `--llm-
 Load a log file into DuckDB and normalize it into the unified `events` table:
 
 ```bash
-ovs-log ingest --file sample.csv
-ovs-log ingest --file access.log --type log --db ./my.db
+uv run ovs-log ingest --file sample.csv
+uv run ovs-log ingest --file access.log --type log --db ./my.db
 ```
 
 Supported formats: `csv`, `json`, `txt`, `log`. EVTX is accepted as a stub and will require conversion in a future release.
@@ -73,13 +74,13 @@ Extract indicators from a DuckDB table:
 
 ```bash
 # Indicators only
-ovs-log analyze --table events
+uv run ovs-log analyze --table events
 
 # Indicators with threat-intel enrichment
-ovs-log analyze --table events --intel
+uv run ovs-log analyze --table events --intel
 
 # Full pipeline: indicators + threat intel + LLM report + JSON export
-ovs-log analyze --table events --intel --llm --output report.json
+uv run ovs-log analyze --table events --intel --llm --output report.json
 ```
 
 ### Export a mitigation rule
@@ -87,7 +88,7 @@ ovs-log analyze --table events --intel --llm --output report.json
 After a report has been synthesized and saved (requires `--llm` during `analyze`), export a mitigation rule:
 
 ```bash
-ovs-log export-rule --report-id <report-id> --format sigma --output rule.yml
+uv run ovs-log export-rule --report-id <report-id> --format sigma --output rule.yml
 ```
 
 ## Running tests
@@ -95,11 +96,11 @@ ovs-log export-rule --report-id <report-id> --format sigma --output rule.yml
 Run the full test suite with `pytest`:
 
 ```bash
-python -m pytest
+uv run pytest
 ```
 
 To see verbose output:
 
 ```bash
-python -m pytest -v
+uv run pytest -v
 ```
