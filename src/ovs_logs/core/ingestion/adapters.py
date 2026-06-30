@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import csv
+import logging
+import os
 import re
+import tempfile
 import uuid
 from dataclasses import dataclass
 from typing import Sequence
@@ -84,20 +88,28 @@ def load_text_log(
     """Load an unstructured text or log file into a single-column DuckDB table."""
     name = _resolve_table_name(log_file, table_name)
     connection.execute(f'CREATE OR REPLACE TABLE "{name}" (line VARCHAR)')
-
-    inserted = 0
-    batch: list[tuple[str]] = []
-    with log_file.path.open("r", encoding="utf-8", errors="replace") as fh:
-        for line in fh:
-            batch.append((line.rstrip("\n"),))
-            if len(batch) >= batch_size:
-                connection.executemany(f'INSERT INTO "{name}" (line) VALUES (?)', batch)
-                inserted += len(batch)
-                batch = []
-
-    if batch:
-        connection.executemany(f'INSERT INTO "{name}" (line) VALUES (?)', batch)
-        inserted += len(batch)
+    logging.info(f'Loading text log into table "{name}" from {log_file.path}')
+    tmp_path: str | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", suffix=".csv", delete=False, newline=""
+        ) as tmp:
+            writer = csv.writer(tmp)
+            writer.writerow(["line"])
+            with log_file.path.open("r", encoding="utf-8", errors="replace") as fh:
+                for line in fh:
+                    writer.writerow([line.rstrip("\n")])
+            tmp_path = tmp.name
+            logging.info(f"Temporary CSV file created at {tmp_path} for ingestion")
+        
+        logging.info(f'Inserting data from temporary CSV into table "{name}"')
+        connection.execute(
+            f'INSERT INTO "{name}" SELECT * FROM read_csv_auto(?)',
+            [tmp_path],
+        )
+    finally:
+        if tmp_path is not None and os.path.exists(tmp_path):
+            os.unlink(tmp_path)
 
     return _build_result(connection, name)
 
