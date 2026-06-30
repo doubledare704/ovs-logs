@@ -91,6 +91,13 @@ After a report has been synthesized and saved (requires `--llm` during `analyze`
 uv run ovs-log export-rule --report-id <report-id> --format sigma --output rule.yml
 ```
 
+You can export other supported formats by specifying the `--format` option. Examples:
+
+```bash
+uv run ovs-log export-rule --report-id <report-id> --format yara-l --output rule.yara
+uv run ovs-log export-rule --report-id <report-id> --format spl --output rule.spl
+```
+
 ## Running tests
 
 Run the full test suite with `pytest`:

@@ -239,5 +239,35 @@ def version() -> None:
     console.print(f"OVS-Log {__version__}")
 
 
+@app.command()
+def export_rule(
+    report_id: str = typer.Option(..., "--report-id", help="Report ID to export"),
+    format: str = typer.Option("sigma", "--format", help="Rule format, e.g. sigma"),
+    db: Path = typer.Option(
+        Path(settings.database.path), "--db", help="DuckDB database path"
+    ),
+    output: Path = typer.Option(..., "--output", help="Write rule to file"),
+) -> None:
+    """Export a mitigation rule from a saved report.
+
+    The report must have been synthesized with `--llm` during `analyze` so
+    a `mitigation` artifact exists in the stored report.
+    """
+    try:
+        with Database(db) as connection:
+            report = ReportStore().get_report(connection, report_id)
+
+        if report.mitigation.format.lower() != format.lower():
+            raise ValueError(
+                f"Requested format '{format}' does not match report mitigation format '{report.mitigation.format}'"
+            )
+
+        output.write_text(report.mitigation.content, encoding="utf-8")
+        console.print(f"[bold]Rule written to:[/bold] {output}")
+    except Exception as exc:
+        exit_code = _classify_error(exc)
+        raise typer.Exit(code=exit_code) from exc
+
+
 if __name__ == "__main__":
     app()
