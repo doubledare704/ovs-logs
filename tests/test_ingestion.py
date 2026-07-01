@@ -1,11 +1,13 @@
 """Tests for the DuckDB ingestion adapters."""
 
+import json
 from pathlib import Path
 from typing import Sequence
 
 import pytest
 
 from ovs_logs.core.database import Database
+from ovs_logs.core.ingestion import adapters
 from ovs_logs.core.ingestion.adapters import (
     LoadResult,
     load_csv,
@@ -67,13 +69,63 @@ def test_load_text_log(db, tmp_path: Path) -> None:
     assert "line" in _schema_columns(result.schema)
 
 
-def test_load_evtx_is_stub(db, tmp_path: Path) -> None:
+def test_load_evtx_converts_to_csv(db, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     file = tmp_path / "sample.evtx"
     file.write_bytes(b"EVT\x00...")
+
+    class FakeParser:
+        def __init__(self, path: str) -> None:
+            self.path = path
+
+        def records_json(self):
+            return [
+                {
+                    "identifier": "1",
+                    "timestamp": "2024-01-01T00:00:00Z",
+                    "data": json.dumps(
+                        {
+                            "System": {
+                                "EventID": 4624,
+                                "TimeCreated": {"SystemTime": "2024-01-01T00:00:00Z"},
+                            },
+                            "EventData": {
+                                "IpAddress": "1.2.3.4",
+                                "TargetUserName": "alice",
+                            },
+                        }
+                    ),
+                }
+            ]
+
+    monkeypatch.setattr(adapters, "PyEvtxParser", FakeParser)
 
     log = validate_log_file(file)
     assert log.format == "evtx"
     assert log.needs_conversion
 
-    with pytest.raises(NotImplementedError):
+    result = load_evtx(log, db, table_name="test_evtx")
+
+    assert result.table_name == "test_evtx"
+    assert result.row_count == 1
+    assert {"timestamp", "event", "message"}.issubset(_schema_columns(result.schema))
+
+
+def test_load_evtx_raises_for_unparseable_file(
+    db, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    file = tmp_path / "sample.evtx"
+    file.write_bytes(b"EVT\x00...")
+
+    class FailingParser:
+        def __init__(self, path: str) -> None:
+            self.path = path
+
+        def records_json(self):
+            raise RuntimeError("boom")
+
+    monkeypatch.setattr(adapters, "PyEvtxParser", FailingParser)
+
+    log = validate_log_file(file)
+
+    with pytest.raises(RuntimeError, match="Unable to parse EVTX"):
         load_evtx(log, db, table_name="test_evtx")

@@ -62,16 +62,30 @@ def test_ingest_empty_file(tmp_path: Path) -> None:
     assert "Validation error" in result.output
 
 
-def test_ingest_evtx_not_supported(tmp_path: Path) -> None:
+def test_ingest_evtx_success(tmp_path: Path, monkeypatch) -> None:
     evtx = tmp_path / "sample.evtx"
     evtx.write_bytes(b"EVT\x00...")
+    db = tmp_path / "test.db"
 
-    result = runner.invoke(
-        app, ["ingest", "--file", str(evtx), "--type", "evtx"]
-    )
+    class FakeParser:
+        def __init__(self, path: str) -> None:
+            self.path = path
 
-    assert result.exit_code == 4
-    assert "Not supported" in result.output
+        def records_json(self):
+            return [
+                {
+                    "identifier": "1",
+                    "timestamp": "2024-01-01T00:00:00Z",
+                    "data": '{"System":{"EventID":4624,"TimeCreated":{"SystemTime":"2024-01-01T00:00:00Z"}},"EventData":{"IpAddress":"1.2.3.4","TargetUserName":"alice"}}',
+                }
+            ]
+
+    monkeypatch.setattr("ovs_logs.core.ingestion.adapters.PyEvtxParser", FakeParser)
+
+    result = runner.invoke(app, ["ingest", "--file", str(evtx), "--type", "evtx", "--db", str(db)])
+
+    assert result.exit_code == 0, result.output
+    assert "Loaded 1 rows" in result.output
 
 
 # -----------------------------------------------------------------------------
