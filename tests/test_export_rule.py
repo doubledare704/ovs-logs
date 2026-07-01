@@ -1,7 +1,6 @@
 """Acceptance tests for the `export-rule` CLI command."""
 
 from pathlib import Path
-import dataclasses
 
 from typer.testing import CliRunner
 
@@ -95,6 +94,7 @@ def test_export_rule_success(tmp_path: Path) -> None:
 
     assert result.exit_code == 0, result.output
     assert out.exists()
+    assert out.parent.exists()
     assert out.read_text(encoding="utf-8") == report.mitigation.content
 
 
@@ -122,6 +122,7 @@ def test_export_rule_format_mismatch(tmp_path: Path) -> None:
 
     assert result.exit_code == 3
     assert "does not match report mitigation" in result.output
+    assert not out.exists()
 
 
 def test_export_rule_yara_l_and_spl_success(tmp_path: Path) -> None:
@@ -150,7 +151,7 @@ def test_export_rule_yara_l_and_spl_success(tmp_path: Path) -> None:
 
     assert res_yara.exit_code == 0, res_yara.output
     assert out_yara.exists()
-    assert "rule suspicious" in out_yara.read_text(encoding="utf-8")
+    assert out_yara.read_text(encoding="utf-8") == yara_content
 
     # SPL
     spl_content = "search index=main | stats count by source_ip"
@@ -176,4 +177,4 @@ def test_export_rule_yara_l_and_spl_success(tmp_path: Path) -> None:
 
     assert res_spl.exit_code == 0, res_spl.output
     assert out_spl.exists()
-    assert "search index=main" in out_spl.read_text(encoding="utf-8")
+    assert out_spl.read_text(encoding="utf-8") == spl_content

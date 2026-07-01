@@ -242,7 +242,7 @@ def version() -> None:
 @app.command()
 def export_rule(
     report_id: str = typer.Option(..., "--report-id", help="Report ID to export"),
-    format: str = typer.Option("sigma", "--format", help="Rule format, e.g. sigma"),
+    rule_format: str = typer.Option("sigma", "--format", help="Rule format, e.g. sigma"),
     db: Path = typer.Option(
         Path(settings.database.path), "--db", help="DuckDB database path"
     ),
@@ -257,11 +257,12 @@ def export_rule(
         with Database(db) as connection:
             report = ReportStore().get_report(connection, report_id)
 
-        if report.mitigation.format.lower() != format.lower():
+        if report.mitigation.format.lower() != rule_format.lower():
             raise ValueError(
-                f"Requested format '{format}' does not match report mitigation format '{report.mitigation.format}'"
+                f"Requested format '{rule_format}' does not match report mitigation format '{report.mitigation.format}'"
             )
 
+        output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text(report.mitigation.content, encoding="utf-8")
         console.print(f"[bold]Rule written to:[/bold] {output}")
     except Exception as exc:
