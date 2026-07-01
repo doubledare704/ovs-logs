@@ -1,6 +1,7 @@
 """Tests for the DuckDB ingestion adapters."""
 
 import json
+import tempfile
 from pathlib import Path
 from typing import Sequence
 
@@ -129,3 +130,46 @@ def test_load_evtx_raises_for_unparseable_file(
 
     with pytest.raises(RuntimeError, match="Unable to parse EVTX"):
         load_evtx(log, db, table_name="test_evtx")
+
+
+def test_extract_evtx_fields_preserves_list_values_as_json_arrays() -> None:
+    row = adapters._extract_evtx_fields(
+        {"EventData": {"Tags": ["alpha", "beta"]}},
+        {"identifier": "1"},
+    )
+
+    assert '"EventData_Tags": ["alpha", "beta"]' in row["message"]
+
+
+def test_load_evtx_cleans_up_temporary_csv_on_parser_error(
+    db, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    file = tmp_path / "sample.evtx"
+    file.write_bytes(b"EVT\x00...")
+    created_paths: list[str] = []
+
+    class FailingParser:
+        def __init__(self, path: str) -> None:
+            self.path = path
+
+        def records_json(self):
+            yield {"identifier": "1", "data": json.dumps({"EventData": {"IpAddress": "1.2.3.4"}})}
+            raise RuntimeError("boom")
+
+    original_named_temporary_file = tempfile.NamedTemporaryFile
+
+    def tracking_named_temporary_file(*args, **kwargs):
+        handle = original_named_temporary_file(*args, **kwargs)
+        created_paths.append(handle.name)
+        return handle
+
+    monkeypatch.setattr(adapters, "PyEvtxParser", FailingParser)
+    monkeypatch.setattr(adapters.tempfile, "NamedTemporaryFile", tracking_named_temporary_file)
+
+    log = validate_log_file(file)
+
+    with pytest.raises(RuntimeError, match="Unable to parse EVTX"):
+        load_evtx(log, db, table_name="test_evtx")
+
+    assert created_paths
+    assert not any(Path(path).exists() for path in created_paths)

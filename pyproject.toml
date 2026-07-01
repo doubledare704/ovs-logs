@@ -13,7 +13,6 @@ dependencies = [
     "streamlit>=1.35.0",
     "requests>=2.32.0",
     "evtx==0.12.1",
-    "pandas==3.0.3",
 ]
 
 [project.optional-dependencies]

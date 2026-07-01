@@ -139,7 +139,7 @@ def _flatten_event_payload(value: Any, parent_key: str = "") -> dict[str, Any]:
         return flattened
 
     if isinstance(value, list):
-        return {parent_key: json.dumps(value, ensure_ascii=False)} if parent_key else {}
+        return {parent_key: value} if parent_key else {}
 
     return {parent_key: value} if parent_key else {}
 
@@ -213,6 +213,7 @@ def load_evtx(
         with tempfile.NamedTemporaryFile(
             mode="w", encoding="utf-8", suffix=".csv", delete=False, newline=""
         ) as tmp:
+            tmp_path = tmp.name
             writer = csv.DictWriter(
                 tmp,
                 fieldnames=["timestamp", "event", "message", "record_id", "source_ip", "status_code"],
@@ -223,25 +224,28 @@ def load_evtx(
             parser = PyEvtxParser(str(log_file.path.resolve()))
             try:
                 records = parser.records_json()
+                for record in records:
+                    payload = record.get("data")
+                    if isinstance(payload, str):
+                        try:
+                            event_data = json.loads(payload)
+                        except json.JSONDecodeError as exc:
+                            raise RuntimeError(
+                                f"Unable to parse EVTX record {record.get('identifier')}"
+                            ) from exc
+                    elif isinstance(payload, dict):
+                        event_data = payload
+                    else:
+                        event_data = {"raw": payload}
+
+                    row = _extract_evtx_fields(event_data, record)
+                    writer.writerow(row)
+            except RuntimeError as exc:
+                if "Unable to parse EVTX record" in str(exc):
+                    raise
+                raise RuntimeError(f"Unable to parse EVTX file {log_file.path}") from exc
             except Exception as exc:  # pragma: no cover - exercised through parser errors
                 raise RuntimeError(f"Unable to parse EVTX file {log_file.path}") from exc
-
-            for record in records:
-                payload = record.get("data")
-                if isinstance(payload, str):
-                    try:
-                        event_data = json.loads(payload)
-                    except json.JSONDecodeError as exc:
-                        raise RuntimeError(f"Unable to parse EVTX record {record.get('identifier')}") from exc
-                elif isinstance(payload, dict):
-                    event_data = payload
-                else:
-                    event_data = {"raw": payload}
-
-                row = _extract_evtx_fields(event_data, record)
-                writer.writerow(row)
-
-            tmp_path = tmp.name
 
         connection.execute(
             f'CREATE OR REPLACE TABLE "{name}" AS SELECT * FROM read_csv_auto(?)',

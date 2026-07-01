@@ -507,7 +507,6 @@ source = { editable = "." }
 dependencies = [
     { name = "duckdb" },
     { name = "evtx" },
-    { name = "pandas" },
     { name = "requests" },
     { name = "streamlit" },
     { name = "typer" },
@@ -522,7 +521,6 @@ dev = [
 requires-dist = [
     { name = "duckdb", specifier = ">=1.0.0" },
     { name = "evtx", specifier = "==0.12.1" },
-    { name = "pandas", specifier = "==3.0.3" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },
     { name = "requests", specifier = ">=2.32.0" },
     { name = "streamlit", specifier = ">=1.35.0" },
