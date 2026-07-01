@@ -3,15 +3,21 @@
 from __future__ import annotations
 
 import csv
+import json
 import logging
 import os
 import re
 import tempfile
 import uuid
 from dataclasses import dataclass
-from typing import Sequence
+from typing import Any, Sequence
 
 import duckdb
+
+try:
+    from evtx import PyEvtxParser
+except ImportError:  # pragma: no cover - depends on optional runtime dependency
+    PyEvtxParser = None  # type: ignore[assignment]
 
 from ovs_logs.core.validation import LogFile
 
@@ -123,17 +129,130 @@ def load_text_log(
     return _build_result(connection, name)
 
 
+def _flatten_event_payload(value: Any, parent_key: str = "") -> dict[str, Any]:
+    """Recursively flatten a nested mapping into a dotted-key dictionary."""
+    if isinstance(value, dict):
+        flattened: dict[str, Any] = {}
+        for key, nested_value in value.items():
+            next_key = f"{parent_key}_{key}" if parent_key else str(key)
+            flattened.update(_flatten_event_payload(nested_value, next_key))
+        return flattened
+
+    if isinstance(value, list):
+        return {parent_key: value} if parent_key else {}
+
+    return {parent_key: value} if parent_key else {}
+
+
+def _extract_evtx_fields(event_data: dict[str, Any], record: dict[str, Any]) -> dict[str, Any]:
+    """Create a flat row from parsed EVTX data and parser metadata."""
+    flattened = _flatten_event_payload(event_data)
+
+    timestamp = None
+    for key in ("System_TimeCreated_SystemTime", "TimeCreated_SystemTime", "timestamp"):
+        if key in flattened and flattened[key] not in (None, ""):
+            timestamp = flattened[key]
+            break
+    if timestamp is None:
+        timestamp = record.get("timestamp")
+
+    event_id = None
+    for key in ("System_EventID", "EventID"):
+        if key in flattened and flattened[key] not in (None, ""):
+            event_id = flattened[key]
+            break
+
+    source_ip = None
+    for key in (
+        "System_EventData_IpAddress",
+        "EventData_IpAddress",
+        "IpAddress",
+        "ClientIpAddress",
+        "SourceIp",
+    ):
+        if key in flattened and flattened[key] not in (None, ""):
+            source_ip = flattened[key]
+            break
+
+    status_code = None
+    for key in ("System_EventData_StatusCode", "EventData_StatusCode", "StatusCode", "Status"):
+        if key in flattened and flattened[key] not in (None, ""):
+            status_code = flattened[key]
+            break
+
+    message = json.dumps(flattened, ensure_ascii=False, sort_keys=True)
+
+    row: dict[str, Any] = {
+        "timestamp": timestamp,
+        "event": event_id,
+        "message": message,
+        "record_id": record.get("identifier"),
+    }
+    if source_ip is not None:
+        row["source_ip"] = source_ip
+    if status_code is not None:
+        row["status_code"] = status_code
+    return row
+
+
 def load_evtx(
     log_file: LogFile,
     connection: duckdb.DuckDBPyConnection,
     table_name: str | None = None,
 ) -> LoadResult:
-    """Placeholder for EVTX ingestion.
+    """Convert an EVTX file into a temporary CSV and load it into DuckDB."""
+    if PyEvtxParser is None:  # pragma: no cover - depends on optional runtime dependency
+        raise RuntimeError(
+            "EVTX support requires the optional 'evtx' dependency to be installed."
+        )
 
-    Raises:
-        NotImplementedError: EVTX conversion is not yet supported in the MVP.
-    """
-    raise NotImplementedError(
-        f"EVTX ingestion is not yet implemented for {log_file.path}. "
-        "The file is flagged as needing conversion (needs_conversion=True)."
-    )
+    name = _resolve_table_name(log_file, table_name)
+    tmp_path: str | None = None
+
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", suffix=".csv", delete=False, newline=""
+        ) as tmp:
+            tmp_path = tmp.name
+            writer = csv.DictWriter(
+                tmp,
+                fieldnames=["timestamp", "event", "message", "record_id", "source_ip", "status_code"],
+                extrasaction="ignore",
+            )
+            writer.writeheader()
+
+            parser = PyEvtxParser(str(log_file.path.resolve()))
+            try:
+                records = parser.records_json()
+                for record in records:
+                    payload = record.get("data")
+                    if isinstance(payload, str):
+                        try:
+                            event_data = json.loads(payload)
+                        except json.JSONDecodeError as exc:
+                            raise RuntimeError(
+                                f"Unable to parse EVTX record {record.get('identifier')}"
+                            ) from exc
+                    elif isinstance(payload, dict):
+                        event_data = payload
+                    else:
+                        event_data = {"raw": payload}
+
+                    row = _extract_evtx_fields(event_data, record)
+                    writer.writerow(row)
+            except RuntimeError as exc:
+                if "Unable to parse EVTX record" in str(exc):
+                    raise
+                raise RuntimeError(f"Unable to parse EVTX file {log_file.path}") from exc
+            except Exception as exc:  # pragma: no cover - exercised through parser errors
+                raise RuntimeError(f"Unable to parse EVTX file {log_file.path}") from exc
+
+        connection.execute(
+            f'CREATE OR REPLACE TABLE "{name}" AS SELECT * FROM read_csv_auto(?)',
+            [tmp_path],
+        )
+    finally:
+        if tmp_path is not None and os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+
+    return _build_result(connection, name)
