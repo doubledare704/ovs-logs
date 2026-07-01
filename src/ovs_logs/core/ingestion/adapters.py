@@ -43,10 +43,16 @@ def _resolve_table_name(log_file: LogFile, table_name: str | None) -> str:
     return _sanitize_table_name(table_name) if table_name else _generate_table_name(log_file)
 
 
+def _quote_identifier(identifier: str) -> str:
+    """Quote an identifier safely for DuckDB SQL."""
+    return '"' + identifier.replace('"', '""') + '"'
+
+
 def _build_result(connection: duckdb.DuckDBPyConnection, table_name: str) -> LoadResult:
     """Query the loaded table for row count and schema."""
-    row_count = connection.execute(f'SELECT COUNT(*) FROM "{table_name}"').fetchone()[0]
-    schema_rows = connection.execute(f'DESCRIBE "{table_name}"').fetchall()
+    quoted_name = _quote_identifier(table_name)
+    row_count = connection.execute(f'SELECT COUNT(*) FROM {quoted_name}').fetchone()[0]
+    schema_rows = connection.execute(f'DESCRIBE {quoted_name}').fetchall()
     schema = [(row[0], row[1]) for row in schema_rows]
     return LoadResult(table_name=table_name, row_count=row_count, schema=schema)
 
@@ -58,8 +64,9 @@ def load_csv(
 ) -> LoadResult:
     """Load a CSV file into DuckDB using ``read_csv_auto``."""
     name = _resolve_table_name(log_file, table_name)
+    quoted_name = _quote_identifier(name)
     connection.execute(
-        f'CREATE OR REPLACE TABLE "{name}" AS SELECT * FROM read_csv_auto(?)',
+        f'CREATE OR REPLACE TABLE {quoted_name} AS SELECT * FROM read_csv_auto(?, header=true, delim=\',\', all_varchar=true)',
         [str(log_file.path.resolve())],
     )
     return _build_result(connection, name)
@@ -72,8 +79,9 @@ def load_json(
 ) -> LoadResult:
     """Load a JSON file into DuckDB using ``read_json_auto``."""
     name = _resolve_table_name(log_file, table_name)
+    quoted_name = _quote_identifier(name)
     connection.execute(
-        f'CREATE OR REPLACE TABLE "{name}" AS SELECT * FROM read_json_auto(?)',
+        f'CREATE OR REPLACE TABLE {quoted_name} AS SELECT * FROM read_json_auto(?)',
         [str(log_file.path.resolve())],
     )
     return _build_result(connection, name)
@@ -87,8 +95,9 @@ def load_text_log(
 ) -> LoadResult:
     """Load an unstructured text or log file into a single-column DuckDB table."""
     name = _resolve_table_name(log_file, table_name)
-    connection.execute(f'CREATE OR REPLACE TABLE "{name}" (line VARCHAR)')
-    logging.info(f'Loading text log into table "{name}" from {log_file.path}')
+    quoted_name = _quote_identifier(name)
+    connection.execute(f'CREATE OR REPLACE TABLE {quoted_name} (line VARCHAR)')
+    logging.info("Loading text log into table %s from %s", name, log_file.path)
     tmp_path: str | None = None
     try:
         with tempfile.NamedTemporaryFile(
@@ -100,11 +109,11 @@ def load_text_log(
                 for line in fh:
                     writer.writerow([line.rstrip("\n")])
             tmp_path = tmp.name
-            logging.info(f"Temporary CSV file created at {tmp_path} for ingestion")
-        
-        logging.info(f'Inserting data from temporary CSV into table "{name}"')
+            logging.info("Temporary CSV file created at %s for ingestion", tmp_path)
+
+        logging.info("Inserting data from temporary CSV into table %s", name)
         connection.execute(
-            f'INSERT INTO "{name}" SELECT * FROM read_csv_auto(?)',
+            f'INSERT INTO {quoted_name} SELECT * FROM read_csv_auto(?, header=true, delim=\',\', all_varchar=true)',
             [tmp_path],
         )
     finally:
