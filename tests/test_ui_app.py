@@ -110,9 +110,7 @@ def test_changing_db_path_refreshes_tables(
     assert at.session_state["selected_table"] == "beta"
 
 
-def test_changing_db_path_clears_stale_table_selection(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_changing_db_path_clears_stale_table_selection(tmp_path: Path) -> None:
     db = _make_db(tmp_path, [("alpha", "SELECT 1")])
     missing = tmp_path / "missing.db"
 

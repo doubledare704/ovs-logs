@@ -120,11 +120,9 @@ def render_sidebar() -> None:
         previous = tables[0]
         st.session_state["selected_table"] = previous
 
-    default_index = tables.index(previous)
     st.sidebar.selectbox(
         "Select a table",
         options=tables,
-        index=default_index,
         key="selected_table",
     )
 
