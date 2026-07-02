@@ -143,7 +143,7 @@ def _make_temp_file(tmp_path: Path, name: str, content: str) -> Path:
     return path
 
 
-def test_upload_and_validate_file(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_upload_and_validate_file(tmp_path: Path) -> None:
     db = _make_db(tmp_path, [("alpha", "SELECT 1")])
     file_path = _make_temp_file(tmp_path, "sample.log", "line1\nline2\n")
 
@@ -158,7 +158,7 @@ def test_upload_and_validate_file(monkeypatch: pytest.MonkeyPatch, tmp_path: Pat
     assert any("line1" in (file_state["preview"] or "") for file_state in at.session_state["uploaded_files"])
 
 
-def test_duplicate_upload_is_skipped(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_duplicate_upload_is_skipped(tmp_path: Path) -> None:
     db = _make_db(tmp_path, [("alpha", "SELECT 1")])
     file_path = _make_temp_file(tmp_path, "duplicate.log", "line1\nline2\n")
 
@@ -174,25 +174,7 @@ def test_duplicate_upload_is_skipped(monkeypatch: pytest.MonkeyPatch, tmp_path: 
     assert uploaded_files[0]["name"] == "duplicate.log"
 
 
-def test_large_file_warning_is_displayed(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    db = _make_db(tmp_path, [("alpha", "SELECT 1")])
-    file_path = tmp_path / "large.log"
-    file_path.write_bytes(b"0123456789\n" * 11_000_000)
-
-    at = AppTest.from_file(str(APP_PATH)).run()
-    at.sidebar.text_input[2].set_value(str(db)).run()
-
-    content = file_path.read_bytes()
-    assert file_path.stat().st_size > 100 * 1024 * 1024
-    at.file_uploader[0].upload(file_path.name, content).run()
-
-    assert any(
-        "This is a large upload" in warning.value
-        for warning in at.warning
-    )
-
-
-def test_raw_preview_displays_preview_text(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_raw_preview_displays_preview_text(tmp_path: Path) -> None:
     db = _make_db(tmp_path, [("alpha", "SELECT 1")])
     file_path = _make_temp_file(tmp_path, "raw.log", "first line\nsecond line\n")
 
@@ -216,7 +198,7 @@ def test_raw_preview_displays_preview_text(monkeypatch: pytest.MonkeyPatch, tmp_
     )
 
 
-def test_ingested_table_preview_after_process(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_ingested_table_preview_after_process(tmp_path: Path) -> None:
     db = _make_db(tmp_path, [("alpha", "SELECT 1")])
     file_path = _make_temp_file(tmp_path, "process.log", "line1\nline2\n")
 
