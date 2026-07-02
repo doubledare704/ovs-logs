@@ -135,3 +135,83 @@ def test_selecting_table_persists_to_session_state(
     at.sidebar.text_input[2].set_value(str(db)).run()
     at.sidebar.selectbox[0].set_value("beta").run()
     assert at.session_state["selected_table"] == "beta"
+
+
+def _make_temp_file(tmp_path: Path, name: str, content: str) -> Path:
+    path = tmp_path / name
+    path.write_text(content, encoding="utf-8")
+    return path
+
+
+def test_upload_and_validate_file(tmp_path: Path) -> None:
+    db = _make_db(tmp_path, [("alpha", "SELECT 1")])
+    file_path = _make_temp_file(tmp_path, "sample.log", "line1\nline2\n")
+
+    at = AppTest.from_file(str(APP_PATH)).run()
+    at.sidebar.text_input[2].set_value(str(db)).run()
+
+    content = file_path.read_bytes()
+    at.file_uploader[0].upload(file_path.name, content).run()
+
+    assert any(file_state["name"] == "sample.log" for file_state in at.session_state["uploaded_files"])
+    assert any(file_state["status"] == "ready" for file_state in at.session_state["uploaded_files"])
+    assert any("line1" in (file_state["preview"] or "") for file_state in at.session_state["uploaded_files"])
+
+
+def test_duplicate_upload_is_skipped(tmp_path: Path) -> None:
+    db = _make_db(tmp_path, [("alpha", "SELECT 1")])
+    file_path = _make_temp_file(tmp_path, "duplicate.log", "line1\nline2\n")
+
+    at = AppTest.from_file(str(APP_PATH)).run()
+    at.sidebar.text_input[2].set_value(str(db)).run()
+
+    content = file_path.read_bytes()
+    at.file_uploader[0].upload(file_path.name, content).run()
+    at.file_uploader[0].upload(file_path.name, content).run()
+
+    uploaded_files = at.session_state["uploaded_files"]
+    assert len(uploaded_files) == 1
+    assert uploaded_files[0]["name"] == "duplicate.log"
+
+
+def test_raw_preview_displays_preview_text(tmp_path: Path) -> None:
+    db = _make_db(tmp_path, [("alpha", "SELECT 1")])
+    file_path = _make_temp_file(tmp_path, "raw.log", "first line\nsecond line\n")
+
+    at = AppTest.from_file(str(APP_PATH)).run()
+    at.sidebar.text_input[2].set_value(str(db)).run()
+
+    content = file_path.read_bytes()
+    at.file_uploader[0].upload(file_path.name, content).run()
+
+    assert any(
+        file_state["name"] == "raw.log" and file_state["status"] == "ready"
+        for file_state in at.session_state["uploaded_files"]
+    )
+    assert any(
+        "first line" in (file_state["preview"] or "")
+        for file_state in at.session_state["uploaded_files"]
+    )
+    assert any(
+        "Upload status:" in info.value and "ready" in info.value
+        for info in at.info
+    )
+
+
+def test_ingested_table_preview_after_process(tmp_path: Path) -> None:
+    db = _make_db(tmp_path, [("alpha", "SELECT 1")])
+    file_path = _make_temp_file(tmp_path, "process.log", "line1\nline2\n")
+
+    at = AppTest.from_file(str(APP_PATH)).run()
+    at.sidebar.text_input[2].set_value(str(db)).run()
+
+    content = file_path.read_bytes()
+    at.file_uploader[0].upload(file_path.name, content).run()
+
+    at.button[0].click().run()
+
+    uploaded_files = at.session_state["uploaded_files"]
+    assert uploaded_files[0]["status"] == "ingested"
+    assert uploaded_files[0]["ingest_table"] is not None
+    assert uploaded_files[0]["normalized_table"] == "events"
+    assert len(at.dataframe) > 0
