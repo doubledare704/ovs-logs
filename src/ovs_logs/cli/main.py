@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
+import sys
 from pathlib import Path
 from typing import Any, Callable
 
@@ -237,6 +239,49 @@ def analyze(
 def version() -> None:
     """Show the OVS-Log version."""
     console.print(f"OVS-Log {__version__}")
+
+
+@app.command()
+def ui(
+    host: str = typer.Option("localhost", "--host", help="Streamlit server bind address"),
+    port: int = typer.Option(8501, "--port", help="Streamlit server port"),
+    headless: bool = typer.Option(
+        False,
+        "--headless/--no-headless",
+        help="Run Streamlit without opening a browser (useful for remote servers).",
+    ),
+    extra_args: list[str] | None = typer.Argument(
+        None,
+        help="Additional arguments forwarded to `streamlit run` (use after `--`).",
+    ),
+) -> None:
+    """Launch the OVS-Log Streamlit dashboard.
+
+    Spawns `streamlit run` against the packaged `ovs_logs.ui.app` module so
+    the command works the same from a source checkout and an installed wheel.
+    The target is passed as a `.py` filesystem path resolved via the module's
+    ``__file__`` attribute, which is what Streamlit's CLI accepts.
+    """
+    import ovs_logs.ui.app as _app_module
+
+    target = str(Path(_app_module.__file__).resolve())
+
+    cmd: list[str] = [
+        sys.executable,
+        "-m",
+        "streamlit",
+        "run",
+        target,
+    ]
+    if headless:
+        cmd.extend(["--server.headless", "true"])
+    cmd.extend(["--server.address", host, "--server.port", str(port)])
+    if extra_args:
+        cmd.extend(extra_args)
+
+    exit_code = subprocess.call(cmd)
+    if exit_code:
+        raise typer.Exit(code=exit_code)
 
 
 @app.command()

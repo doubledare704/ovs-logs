@@ -45,6 +45,10 @@ Maintain a strict separation of concerns between layers:
 - **Coverage:** Every new feature must include unit tests. Fixes for bugs must include reproduction tests.
 - **Mocking:** Use `pytest-mock` to isolate core logic from external APIs (e.g., AbuseIPDB, LLM providers).
 - **Data Samples:** Use small, representative log samples for tests.
+- **Streamlit UI tests:** Use Streamlit's built-in `AppTest`
+  (`streamlit.testing.v1.AppTest`). See `docs/streamlit_testing.md` for the
+  full OVS-Log patterns (sidebar widgets, session_state, env-var
+  monkeypatching, Recent Tables filtering).
 
 ## 5. Documentation
 

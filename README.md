@@ -98,6 +98,30 @@ uv run ovs-log export-rule --report-id <report-id> --format yara-l --output rule
 uv run ovs-log export-rule --report-id <report-id> --format spl --output rule.spl
 ```
 
+### Streamlit dashboard
+
+Launch the interactive web UI to configure API keys, select a database, browse ingested tables, and visualize results:
+
+```bash
+uv run ovs-log ui
+```
+
+This opens `http://localhost:8501` by default. Common options:
+
+```bash
+# Custom port
+uv run ovs-log ui --port 9000
+
+# Headless mode (no browser popup, useful on remote servers)
+uv run ovs-log ui --headless
+
+# Bind to all interfaces so it's reachable from other machines
+uv run ovs-log ui --host 0.0.0.0
+
+# Forward any extra Streamlit flag after `--`
+uv run ovs-log ui -- --server.enableCORS false
+```
+
 ## Running tests
 
 Run the full test suite with `pytest`:

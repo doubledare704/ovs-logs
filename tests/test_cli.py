@@ -1,7 +1,9 @@
 """Tests for the Typer CLI."""
 
 from pathlib import Path
+from unittest.mock import patch
 
+import pytest
 from typer.testing import CliRunner
 
 from ovs_logs.cli.main import app
@@ -283,3 +285,36 @@ def test_analyze_invalid_abuseipdb_key(tmp_path: Path) -> None:
 
     assert result.exit_code != 0
     assert "AbuseIPDB lookup failed" in str(result.exception) or "Unexpected error" in result.output
+
+
+def test_ui_spawns_streamlit_run(monkeypatch) -> None:
+    monkeypatch.setattr("ovs_logs.cli.main.sys.executable", "/fake/python")
+    with patch("ovs_logs.cli.main.subprocess.call", return_value=0) as mock_call:
+        result = runner.invoke(app, ["ui", "--port", "9000"])
+
+    assert result.exit_code == 0
+    cmd = mock_call.call_args[0][0]
+    assert cmd[0] == "/fake/python"
+    assert cmd[1:3] == ["-m", "streamlit"]
+    assert cmd[3] == "run"
+    # Target must be a resolved .py path, not the module dotted name
+    assert cmd[4].endswith("app.py")
+    assert "/" in cmd[4]
+    assert "--server.port" in cmd and "9000" in cmd
+
+
+def test_ui_headless_flag() -> None:
+    with patch("ovs_logs.cli.main.subprocess.call", return_value=0) as mock_call:
+        result = runner.invoke(app, ["ui", "--headless"])
+
+    assert result.exit_code == 0
+    cmd = mock_call.call_args[0][0]
+    assert "--server.headless" in cmd
+    assert "true" in cmd
+
+
+def test_ui_propagates_streamlit_exit_code() -> None:
+    with patch("ovs_logs.cli.main.subprocess.call", return_value=42):
+        result = runner.invoke(app, ["ui"])
+
+    assert result.exit_code == 42

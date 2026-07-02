@@ -28,7 +28,7 @@ Once execution finishes, Step 1 layout collapses cleanly, yielding to an interac
   * Total Events Parsed (DuckDB count row).
   * High-Risk Anomalous Indicators identified.
   * Attacker Footprint Duration.
-* **Chronological Event Matrix (`st.dataframe`):** A beautiful data grid populated directly by a Panda's translation of the DuckDB tracking query. Includes sorting on keys: `Timestamp`, `Attacker IP`, `Observed Tactic/Action`, `Impacted Endpoint`, `Response Status`.
+* **Chronological Event Matrix (`st.dataframe`):** A beautiful data grid populated directly by a Pandas translation of the DuckDB tracking query. Includes sorting on keys: `Timestamp`, `Attacker IP`, `Observed Tactic/Action`, `Impacted Endpoint`, `Response Status`.
 
 #### Tab 2: 🛡️ Threat Intelligence Mapping
 * **Reputation Cards:** Individual metrics breaking down geographical routing data, ASN telemetry, and public abuse confidence percentages pulled via backend enrichment loops.
