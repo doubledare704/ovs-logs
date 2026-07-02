@@ -110,6 +110,22 @@ def test_changing_db_path_refreshes_tables(
     assert at.session_state["selected_table"] == "beta"
 
 
+def test_changing_db_path_clears_stale_table_selection(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    db = _make_db(tmp_path, [("alpha", "SELECT 1")])
+    missing = tmp_path / "missing.db"
+
+    at = AppTest.from_file(str(APP_PATH)).run()
+    at.sidebar.text_input[2].set_value(str(db)).run()
+    at.sidebar.selectbox[0].set_value("alpha").run()
+    assert at.session_state["selected_table"] == "alpha"
+
+    at.sidebar.text_input[2].set_value(str(missing)).run()
+    assert "selected_table" not in at.session_state
+    assert len(at.sidebar.selectbox) == 0
+
+
 def test_selecting_table_persists_to_session_state(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

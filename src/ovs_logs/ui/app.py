@@ -77,6 +77,7 @@ def render_sidebar() -> None:
     st.sidebar.subheader("Database")
 
     default_db_path = st.session_state.get("db_path", settings.database.path)
+    st.session_state["db_path"] = default_db_path
     db_path = st.sidebar.text_input(
         "Database path",
         value=default_db_path,
@@ -89,35 +90,43 @@ def render_sidebar() -> None:
 
     if not db_path:
         st.sidebar.warning("Provide a database path to list tables.")
+        st.session_state.pop("selected_table", None)
         return
 
     db_file = Path(db_path)
     if not db_file.exists():
         st.sidebar.error(f"Database file not found: {db_path}")
+        st.session_state.pop("selected_table", None)
         return
 
     try:
         tables = _read_user_tables(db_path)
     except duckdb.Error as exc:
         st.sidebar.error(f"Unable to open database: {exc}")
+        st.session_state.pop("selected_table", None)
         return
     except OSError as exc:
         st.sidebar.error(f"Unable to access database: {exc}")
+        st.session_state.pop("selected_table", None)
         return
 
     if not tables:
         st.sidebar.info("No application tables found in this database.")
+        st.session_state.pop("selected_table", None)
         return
 
     previous = st.session_state.get("selected_table")
-    default_index = tables.index(previous) if previous in tables else 0
-    selected = st.sidebar.selectbox(
+    if previous not in tables:
+        previous = tables[0]
+        st.session_state["selected_table"] = previous
+
+    default_index = tables.index(previous)
+    st.sidebar.selectbox(
         "Select a table",
         options=tables,
         index=default_index,
         key="selected_table",
     )
-    st.session_state["selected_table"] = selected
 
 
 def main() -> None:

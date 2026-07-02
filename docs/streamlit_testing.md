@@ -132,7 +132,7 @@ def _make_db(tmp_path: Path, tables: list[tuple[str, str]]) -> Path:
 
 ### 3.2 Verify "Recent Tables" filters system tables
 
-The OVD-50 sidebar excludes `information_schema`, `pg_catalog`, and any
+The OVS-Log sidebar excludes `information_schema`, `pg_catalog`, and any
 `sqlite_*` / `pg_*` prefixed names. Assert that explicitly:
 
 ```python
