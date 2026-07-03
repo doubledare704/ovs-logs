@@ -41,7 +41,7 @@ def _resolve_table_name(log_file: LogFile, table_name: str | None) -> str:
 def _reload_result(connection: duckdb.DuckDBPyConnection, table_name: str) -> LoadResult:
     quoted = _quote_identifier(table_name)
     row = connection.execute(f'SELECT COUNT(*) FROM {quoted}').fetchone()  # noqa: S608
-    row_count = int(row[0])
+    row_count = int(row[0]) if row else 0
     schema_rows = connection.execute(f'DESCRIBE {quoted}').fetchall()  # noqa: S608
     schema = [(row[0], row[1]) for row in schema_rows]
     return LoadResult(table_name=table_name, row_count=row_count, schema=schema)
@@ -169,7 +169,11 @@ def parse_text_log(
 
     fmt = _detect_text_format(log_file.path)
 
+    if fmt == "ambiguous":
+        return load_result
+
     tmp_path: str | None = None
+    hit_count = 0
     try:
         # Heuristic: only inspect the first 20 lines for format detection.
         # This keeps detection cheap but may misclassify logs with long headers.
@@ -184,6 +188,8 @@ def parse_text_log(
                 for (line,) in rows:
                     text = line or ""
                     fields = _extract_hybrid(text, fmt)
+                    if any(fields[k] for k in ("timestamp", "source_ip", "status_code", "event_type")):
+                        hit_count += 1
                     writer.writerow([
                         fields["timestamp"],
                         fields["source_ip"],
@@ -192,7 +198,7 @@ def parse_text_log(
                         text,
                     ])
 
-        if fmt == "ambiguous":
+        if hit_count == 0:
             return load_result
 
         connection.execute(
