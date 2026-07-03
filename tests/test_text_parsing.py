@@ -13,7 +13,6 @@ import pytest
 import duckdb
 
 from ovs_logs.core.database import Database
-from ovs_logs.core.ingestion import adapters
 from ovs_logs.core.ingestion.adapters import load_text_log
 from ovs_logs.core.text_parsing import parse_text_log
 from ovs_logs.core.validation import LogFile, validate_log_file
@@ -90,10 +89,9 @@ def test_parse_ambiguous_fallback(db, tmp_path: Path) -> None:
     log = validate_log_file(path)
     result = parse_text_log(log, db, table_name="ambiguous_events")
     assert result.row_count == 2
-    rows = db.execute('SELECT timestamp, source_ip, status_code, event_type FROM "ambiguous_events"').fetchall()
-    assert rows[0][0] == "00:00:00"
-    assert rows[0][2] == "12"
-    assert rows[0][3] == "[00:00:00]-heartbeat-timeout"
+    assert _schema_columns(result.schema) == {"line"}
+    rows = db.execute('SELECT line FROM "ambiguous_events"').fetchall()
+    assert rows[0][0] == "[00:00:00] heartbeat-timeout OK code=12 len=300"
 
 
 def test_structured_false_returns_raw(db, tmp_path: Path) -> None:
@@ -107,14 +105,15 @@ def test_structured_false_returns_raw(db, tmp_path: Path) -> None:
     assert rows[0][0] == "line one"
 
 
-def test_no_matching_pattern_returns_raw_columns(db, tmp_path: Path) -> None:
+def test_no_matching_pattern_returns_raw_table(db, tmp_path: Path) -> None:
     path = tmp_path / "garbage.txt"
     _write_lines(path, ["alpha beta gamma", "delta epsilon zeta"])
     log = validate_log_file(path)
     result = parse_text_log(log, db, table_name="garbage_table")
     assert result.row_count == 2
-    assert "timestamp" in _schema_columns(result.schema)
-    assert "raw_message" in _schema_columns(result.schema)
+    assert _schema_columns(result.schema) == {"line"}
+    rows = db.execute('SELECT line FROM "garbage_table"').fetchall()
+    assert rows[0][0] == "alpha beta gamma"
 
 
 def test_temp_csv_cleanup_on_success(db, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

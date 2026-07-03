@@ -41,7 +41,7 @@ def _resolve_table_name(log_file: LogFile, table_name: str | None) -> str:
 def _reload_result(connection: duckdb.DuckDBPyConnection, table_name: str) -> LoadResult:
     quoted = _quote_identifier(table_name)
     row = connection.execute(f'SELECT COUNT(*) FROM {quoted}').fetchone()  # noqa: S608
-    row_count = int(row[0]) if row is not None else 0
+    row_count = int(row[0]) if row else 0
     schema_rows = connection.execute(f'DESCRIBE {quoted}').fetchall()  # noqa: S608
     schema = [(row[0], row[1]) for row in schema_rows]
     return LoadResult(table_name=table_name, row_count=row_count, schema=schema)
@@ -64,7 +64,7 @@ def _detect_text_format(path: Path) -> str:
     return "ambiguous"
 
 
-_WEB_TS_RE = re.compile(r"\[([^\]]+)\]")
+_WEB_TS_RE = re.compile(r"\[(\d{2}/\w{3}/\d{4}:\d{2}:\d{2}:\d{2}\s+[+\-]\d{4})\]")
 _WEB_IP_RE = re.compile(r"^([0-9]{1,3}(?:\.[0-9]{1,3}){3})")
 _WEB_STATUS_RE = re.compile(r'"\s+(\d{3})\s+')
 _WEB_EVENT_RE = re.compile(r'"(\w+)\s+\S+\s+HTTP')
@@ -135,7 +135,9 @@ def _extract_hybrid(text: str, fmt: str) -> dict[str, str]:
         m = _AMBIGUOUS_STATUS_RE.search(text)
         if m:
             status = m.group(1)
-        event = "-".join(text.split()[:2])[:64]
+        event = "-".join(text.split()[:2])
+        if len(event) > 64:
+            event = event[:61] + "..."
 
     return {"timestamp": ts, "source_ip": ip, "status_code": status, "event_type": event}
 
@@ -151,9 +153,8 @@ def parse_text_log(
 
     When ``structured=True``, the function detects the log format from the
     file content and runs a hybrid regex pass to populate ``timestamp``,
-    ``source_ip``, ``status_code``, and ``event_type``. When no known
-    format matches, or when ``structured=False``, it falls back to the raw
-    single-column ``(line VARCHAR)`` table from ``load_text_log``.
+    ``source_ip``, ``status_code``, and ``event_type``. When ``structured=False``,
+    the raw table is returned immediately.
     """
     name = _resolve_table_name(log_file, table_name)
     quoted = _quote_identifier(name)
@@ -165,8 +166,14 @@ def parse_text_log(
 
     fmt = _detect_text_format(log_file.path)
 
+    if fmt == "ambiguous":
+        return load_result
+
     tmp_path: str | None = None
+    hit_count = 0
     try:
+        # Heuristic: only inspect the first 20 lines for format detection.
+        # This keeps detection cheap but may misclassify logs with long headers.
         with tempfile.NamedTemporaryFile(
             mode="w", encoding="utf-8", suffix=".csv", delete=False, newline=""
         ) as tmp:
@@ -174,12 +181,11 @@ def parse_text_log(
             writer = csv.writer(tmp)
             writer.writerow(["timestamp", "source_ip", "status_code", "event_type", "raw_message"])
             cursor = connection.execute(f'SELECT line FROM {quoted}')  # noqa: S608
-            hit_count = 0
             while rows := cursor.fetchmany(10_000):
                 for (line,) in rows:
                     text = line or ""
                     fields = _extract_hybrid(text, fmt)
-                    if any(fields.values()):
+                    if any(fields[k] for k in ("timestamp", "source_ip", "status_code", "event_type")):
                         hit_count += 1
                     writer.writerow([
                         fields["timestamp"],
@@ -188,6 +194,9 @@ def parse_text_log(
                         fields["event_type"],
                         text,
                     ])
+
+        if hit_count == 0:
+            return load_result
 
         connection.execute(
             f'CREATE OR REPLACE TABLE {quoted} AS '  # noqa: S608
