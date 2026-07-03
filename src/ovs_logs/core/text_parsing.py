@@ -194,7 +194,10 @@ def parse_text_log(
             f'SELECT * FROM read_csv_auto(?, header=true, delim=\',\', all_varchar=true)',
             [tmp_path],
         )
-        return _reload_result(connection, name)
+        result = _reload_result(connection, name)
+        if structured and result.row_count > 0 and hit_count == 0:
+            raise ValueError("No structured fields matched")
+        return result
     finally:
         if tmp_path is not None and os.path.exists(tmp_path):
             os.unlink(tmp_path)

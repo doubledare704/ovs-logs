@@ -90,6 +90,59 @@ def test_ingest_evtx_success(tmp_path: Path, monkeypatch) -> None:
     assert "Loaded 1 rows" in result.output
 
 
+def test_ingest_log_structured_success(tmp_path: Path) -> None:
+    access_log = tmp_path / "access.log"
+    access_log.write_text(
+        '192.168.1.1 - - [01/Jan/2024:00:00:00 +0000] "GET / HTTP/1.1" 200 1234\n'
+        '192.168.1.2 - - [01/Jan/2024:00:01:00 +0000] "POST /login HTTP/1.1" 404 567\n'
+    )
+    db = tmp_path / "test.db"
+
+    result = runner.invoke(
+        app,
+        [
+            "ingest",
+            "--file",
+            str(access_log),
+            "--type",
+            "log",
+            "--db",
+            str(db),
+            "--table",
+            "raw_access",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Loaded 2 rows" in result.output
+
+
+def test_ingest_log_fallback_to_raw_on_no_matches(tmp_path: Path) -> None:
+    ambiguous = tmp_path / "ambiguous.txt"
+    ambiguous.write_text(
+        "This is just some random text.\nNothing here matches any pattern.\n"
+    )
+    db = tmp_path / "test.db"
+
+    result = runner.invoke(
+        app,
+        [
+            "ingest",
+            "--file",
+            str(ambiguous),
+            "--type",
+            "txt",
+            "--db",
+            str(db),
+            "--table",
+            "raw_ambiguous",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Loaded 2 rows" in result.output
+
+
 # -----------------------------------------------------------------------------
 # Analyze command tests
 # -----------------------------------------------------------------------------

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import duckdb
 import json
 import os
 import subprocess
@@ -28,6 +29,7 @@ from ovs_logs.core.llm import LLMSynthesizer, OpenAICompatibleProvider
 from ovs_logs.core.normalization import NormalizationEngine
 from ovs_logs.core.persistence import ReportStore
 from ovs_logs.core.report import IncidentReport
+from ovs_logs.core.text_parsing import parse_text_log
 from ovs_logs.core.threat_intel import ThreatIntelClient
 from ovs_logs.core.validation import SUPPORTED_FORMATS, LogFile, validate_log_file
 
@@ -37,10 +39,23 @@ console = Console()
 ADAPTER_MAP: dict[str, Callable[..., LoadResult]] = {
     "csv": load_csv,
     "json": load_json,
-    "txt": load_text_log,
-    "log": load_text_log,
     "evtx": load_evtx,
 }
+
+
+def _ingest_text_log_structured(
+    log_file: LogFile,
+    connection: duckdb.DuckDBPyConnection,
+    table_name: str | None = None,
+) -> LoadResult:
+    try:
+        return parse_text_log(log_file, connection, table_name=table_name, structured=True)
+    except Exception:
+        return load_text_log(log_file, connection, table_name=table_name)
+
+
+ADAPTER_MAP["txt"] = _ingest_text_log_structured
+ADAPTER_MAP["log"] = _ingest_text_log_structured
 
 
 def _resolve_log_file(file: Path, file_type: str | None) -> LogFile:
