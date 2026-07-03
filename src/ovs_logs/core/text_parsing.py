@@ -153,10 +153,7 @@ def parse_text_log(
 
     When ``structured=True``, the function detects the log format from the
     file content and runs a hybrid regex pass to populate ``timestamp``,
-    ``source_ip``, ``status_code``, and ``event_type``. If no known
-    format matches *or* the structured pass yields zero extracted fields
-    across all rows, the raw single-column ``(line VARCHAR)`` table from
-    ``load_text_log`` is preserved instead. When ``structured=False``,
+    ``source_ip``, ``status_scode``, and ``event_type``. When ``structured=False``,
     the raw table is returned immediately.
     """
     name = _resolve_table_name(log_file, table_name)
