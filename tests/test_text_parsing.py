@@ -3,9 +3,14 @@
 from __future__ import annotations
 
 import csv
+import tempfile
 from pathlib import Path
 
+from collections.abc import Iterator
+
 import pytest
+
+import duckdb
 
 from ovs_logs.core.database import Database
 from ovs_logs.core.ingestion import adapters
@@ -15,7 +20,7 @@ from ovs_logs.core.validation import LogFile, validate_log_file
 
 
 @pytest.fixture
-def db():
+def db() -> Iterator[duckdb.DuckDBPyConnection]:
     with Database(":memory:") as conn:
         yield conn
 
@@ -24,7 +29,7 @@ def _write_lines(path: Path, lines: list[str]) -> None:
     path.write_text("\n".join(lines), encoding="utf-8")
 
 
-def _schema_columns(schema):
+def _schema_columns(schema: list[tuple[str, str]]) -> set[str]:
     return {name.lower() for name, _ in schema}
 
 
@@ -112,7 +117,8 @@ def test_no_matching_pattern_returns_raw_columns(db, tmp_path: Path) -> None:
     assert "raw_message" in _schema_columns(result.schema)
 
 
-def test_temp_csv_cleanup_on_success(db, tmp_path: Path) -> None:
+def test_temp_csv_cleanup_on_success(db, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(tempfile, "gettempdir", lambda: str(tmp_path))
     path = tmp_path / "clean.log"
     _write_lines(path, ["10.0.0.1 - - [14/Nov/2023:12:00:00 +0000] \"GET / HTTP/1.1\" 200 10"])
     log = validate_log_file(path)

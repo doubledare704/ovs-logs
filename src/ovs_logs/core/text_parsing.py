@@ -33,15 +33,16 @@ def _quote_identifier(identifier: str) -> str:
 def _resolve_table_name(log_file: LogFile, table_name: str | None) -> str:
     if table_name:
         return _sanitize_table_name(table_name)
-    stem = _sanitize_table_name(log_file.path.stem)
-    return f"raw_{log_file.format}_{stem}_{uuid.uuid4().hex[:8]}"
+    return _sanitize_table_name(
+        f"raw_{log_file.format}_{log_file.path.stem}_{uuid.uuid4().hex[:8]}"
+    )
 
 
 def _reload_result(connection: duckdb.DuckDBPyConnection, table_name: str) -> LoadResult:
     quoted = _quote_identifier(table_name)
-    row = connection.execute(f'SELECT COUNT(*) FROM {quoted}').fetchone()
+    row = connection.execute(f'SELECT COUNT(*) FROM {quoted}').fetchone()  # noqa: S608
     row_count = int(row[0]) if row is not None else 0
-    schema_rows = connection.execute(f'DESCRIBE {quoted}').fetchall()
+    schema_rows = connection.execute(f'DESCRIBE {quoted}').fetchall()  # noqa: S608
     schema = [(row[0], row[1]) for row in schema_rows]
     return LoadResult(table_name=table_name, row_count=row_count, schema=schema)
 
@@ -70,7 +71,7 @@ _WEB_EVENT_RE = re.compile(r'"(\w+)\s+\S+\s+HTTP')
 
 _SYSLOG_TS_RE = re.compile(r"^([A-Z][a-z]{2}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2})")
 _SYSLOG_IP_RE = re.compile(r"(?:from\s+)([0-9]{1,3}(?:\.[0-9]{1,3}){3})")
-_SYSLOG_EVENT_RE = re.compile(r"\s+([a-zA-Z_]+?)(?:\[\d+\])?:")
+_SYSLOG_EVENT_RE = re.compile(r"^[A-Z][a-z]{2}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}\s+\S+\s+([A-Za-z0-9_.-]+)(?:\[\d+\])?:")
 
 _JSON_TS_RE = re.compile(r'"ts"\s*:\s*"([^"]+)"')
 _JSON_IP_RE = re.compile(r'"src_ip"\s*:\s*"([^"]+)"')
@@ -143,6 +144,7 @@ def parse_text_log(
     log_file: LogFile,
     connection: duckdb.DuckDBPyConnection,
     table_name: str | None = None,
+    *,
     structured: bool = True,
 ) -> LoadResult:
     """Ingest a text log into DuckDB, with optional structured field extraction.
@@ -168,27 +170,27 @@ def parse_text_log(
         with tempfile.NamedTemporaryFile(
             mode="w", encoding="utf-8", suffix=".csv", delete=False, newline=""
         ) as tmp:
+            tmp_path = tmp.name
             writer = csv.writer(tmp)
             writer.writerow(["timestamp", "source_ip", "status_code", "event_type", "raw_message"])
-            raw_rows = connection.execute(f'SELECT line FROM {quoted}').fetchall()
+            cursor = connection.execute(f'SELECT line FROM {quoted}')  # noqa: S608
             hit_count = 0
-            for (line,) in raw_rows:
-                text = line or ""
-                fields = _extract_hybrid(text, fmt)
-                if any(fields.values()):
-                    hit_count += 1
-                writer.writerow([
-                    fields["timestamp"],
-                    fields["source_ip"],
-                    fields["status_code"],
-                    fields["event_type"],
-                    "",
-                ])
-            tmp_path = tmp.name
+            while rows := cursor.fetchmany(10_000):
+                for (line,) in rows:
+                    text = line or ""
+                    fields = _extract_hybrid(text, fmt)
+                    if any(fields.values()):
+                        hit_count += 1
+                    writer.writerow([
+                        fields["timestamp"],
+                        fields["source_ip"],
+                        fields["status_code"],
+                        fields["event_type"],
+                        text,
+                    ])
 
-        connection.execute(f'DROP TABLE IF EXISTS {quoted}')
         connection.execute(
-            f'CREATE OR REPLACE TABLE {quoted} AS '
+            f'CREATE OR REPLACE TABLE {quoted} AS '  # noqa: S608
             f'SELECT * FROM read_csv_auto(?, header=true, delim=\',\', all_varchar=true)',
             [tmp_path],
         )
