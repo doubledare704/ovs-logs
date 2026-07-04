@@ -106,8 +106,8 @@ class TextParseConfig:
 
 def _load_text_parse_settings() -> TextParseConfig:
     return TextParseConfig(
-        structured=_str_env("OVS_LOG_STRUCTURED", "true").lower() != "false",
-        max_lines_per_file=_int_env("OVS_LOG_PARSE_LIMIT", 0),
+        structured=_str_env("OVS_LOGS_STRUCTURED", "true").lower() != "false",
+        max_lines_per_file=_int_env("OVS_LOGS_PARSE_LIMIT", 0),
     )
 
 

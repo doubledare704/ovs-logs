@@ -16,7 +16,6 @@ from ovs_logs.core.ingestion.adapters import (
     LoadResult,
     load_text_log,
 )
-from ovs_logs.core.normalization import NormalizationEngine
 from ovs_logs.core.validation import LogFile
 
 
@@ -167,9 +166,6 @@ def parse_text_log(
 
     load_result = load_text_log(log_file, connection, table_name=name)
 
-    if not config.structured:
-        return load_result
-
     if config.max_lines_per_file > 0:
         connection.execute(
             f"CREATE OR REPLACE TABLE {quoted} AS "
@@ -177,6 +173,9 @@ def parse_text_log(
             [config.max_lines_per_file],
         )
         load_result = _reload_result(connection, name)
+
+    if not config.structured:
+        return load_result
 
     fmt = _detect_text_format(log_file.path)
 
@@ -218,8 +217,6 @@ def parse_text_log(
             [tmp_path],
         )
         result = _reload_result(connection, name)
-        if config.structured and result.row_count > 0 and hit_count == 0:
-            raise ValueError("No structured fields matched")
         return result
     finally:
         if tmp_path is not None and os.path.exists(tmp_path):

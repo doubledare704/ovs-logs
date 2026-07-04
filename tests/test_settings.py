@@ -37,8 +37,8 @@ def test_environment_variables_override_defaults() -> None:
         "OVS_LOGS_EVENT_DISTRIBUTION_THRESHOLD": "200",
         "OVS_LOGS_TEMPORAL_BUCKET_THRESHOLD": "150",
         "OVS_LOGS_DB_PATH": "/tmp/ovs_logs.db",
-        "OVS_LOG_STRUCTURED": "false",
-        "OVS_LOG_PARSE_LIMIT": "500",
+        "OVS_LOGS_STRUCTURED": "false",
+        "OVS_LOGS_PARSE_LIMIT": "500",
     }
 
     with patch.dict("os.environ", env, clear=False):

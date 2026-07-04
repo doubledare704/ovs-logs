@@ -21,7 +21,7 @@ All strategies feed the same production adapter (`load_text_log`) and run throug
 | python_regex_loop | Python-loop | row-by-row `re.search` in Python; write CSV; reload; normalize |
 | parser_line | single format regex | one compiled per-format regex; row-by-row; CSV-reload-normalize |
 | hybrid_light | cheap dispatch + per-field regex | format-specific lightweight regex; CSV-reload-normalize |
-| duckdb_regex_native | DuckDB-native | `UPDATE raw SET col = COALESCE(regexp_extract(...), '')` in SQL |
+| duckdb_regex_native | DuckDB-native | `UPDATE raw SET col = COALESCE(regexp_extract(...), '')` in SQL (DuckDB function is `regexp_extract`) |
 
 ## 3. Hardware & software
 
@@ -30,7 +30,7 @@ All strategies feed the same production adapter (`load_text_log`) and run throug
 | CPU | Apple Silicon (darwin/arm64) |
 | Python | 3.12 |
 | DuckDB | 1.5.4 |
-| env | virtualenv at `/Users/oleksiiovdiienko/.pyenv/versions/3.12.12/bin/python3.12` |
+| env | Python 3.12 virtualenv |
 
 ## 4. Methodology
 
@@ -74,7 +74,7 @@ Set `OVD68_LARGE_BENCHMARKS=1` only when you intend to exercise the extended mat
 
 ## 6. Sample results (5,000-line, Apple Silicon)
 
-```
+```text
 === OVD-68 benchmark summary (5k) ===
 baseline_raw_only    web_access_5000        rows= 5000 time=  0.023s peak=  168KB
 baseline_raw_only    syslog_5000             rows= 5000 time=  0.021s peak=  169KB
@@ -103,9 +103,9 @@ Numbers above are representative. Actual values will vary slightly with Python b
 ## 7. Findings (initial)
 
 - `baseline_raw_only` remains fastest (~0.02s) but extracts zero structured fields — not viable for analysis workflows.
-- `hybrid_light` and `duckdb_regex_native` are neck-and-neck at 1.3–1.8× the Python-loop time, but `duckdb_regex_native` uses ~30–40% less memory because it avoids Python fetch-and-iterate.
-- `duckdb_regex_native` hits match `hybrid_light` on fields where the regex can fully express the extraction (web `timestamp`, jsonlog all fields). It is slightly weaker on `syslog.source_ip` (our syslog fixture places the IP after `from ` while the production regex anchors on the msg group) and misses `event_type` for ambiguous lines (would require multi-regex or positional logic).
-- `parser_line` remains slower on web-access logs because the large combined regex is greedy.
+- `duckdb_regex_native` is slower than `python_regex_loop` on `web_access`, but faster on `syslog`, `jsonlog`, and `ambiguous`; it still uses less memory because it avoids Python fetch-and-iterate.
+- `duckdb_regex_native` hits match `hybrid_light` on fields where the regex can fully express the extraction (web `timestamp`, jsonlog all fields). It is slightly weaker on `syslog.source_ip` (our syslog fixture places the IP after the word `from` while the production regex anchors on the msg group) and misses `event_type` for ambiguous lines (would require multi-regex or positional logic).
+- `parser_line` remains slower on web-access logs because the large combined regex is greedy (see `regex` field-level extraction vs `parser_line`'s whole-line strategy).
 - Memory is dominated by the CSV-reload path (~1100–1400 KB for 5k rows) for Python-loop/parser_line/hybrid_light strategies. `duckdb_regex_native` avoids this path entirely and stays under 500 KB.
 
 ## 8. Configuration surface
@@ -123,8 +123,8 @@ Environment variables:
 
 | variable | default | purpose |
 | -- | -- | -- |
-| `OVS_LOG_STRUCTURED` | `true` | set `false` to skip structured extraction |
-| `OVS_LOG_PARSE_LIMIT` | `0` | max lines to parse per file; 0 = unlimited |
+| `OVS_LOGS_STRUCTURED` | `true` | set `false` to skip structured extraction |
+| `OVS_LOGS_PARSE_LIMIT` | `0` | max lines to parse per file; 0 = unlimited |
 
 They surface through `settings.text_parse` and are consumed by `parse_text_log(log_file, connection, config=settings.text_parse)`.
 
