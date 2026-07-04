@@ -12,6 +12,7 @@ import pytest
 
 import duckdb
 
+from ovs_logs.config.settings import TextParseConfig
 from ovs_logs.core.database import Database
 from ovs_logs.core.ingestion.adapters import load_text_log
 from ovs_logs.core.text_parsing import parse_text_log
@@ -98,7 +99,7 @@ def test_structured_false_returns_raw(db, tmp_path: Path) -> None:
     path = tmp_path / "plain.txt"
     _write_lines(path, ["line one", "line two"])
     log = validate_log_file(path)
-    result = parse_text_log(log, db, table_name="raw_table", structured=False)
+    result = parse_text_log(log, db, table_name="raw_table", config=TextParseConfig(structured=False))
     assert result.row_count == 2
     assert _schema_columns(result.schema) == {"line"}
     rows = db.execute('SELECT line FROM "raw_table"').fetchall()

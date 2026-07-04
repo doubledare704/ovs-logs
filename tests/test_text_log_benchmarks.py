@@ -1,8 +1,9 @@
-"""Benchmark suite for large text-log parsing strategies (OVD-33 spike)."""
+"""Benchmark suite for large text-log parsing strategies (OVD-33 / OVD-68 spikes)."""
 
 from __future__ import annotations
 
 import logging
+import os
 import random
 import re
 import tempfile
@@ -15,6 +16,7 @@ from pathlib import Path
 import duckdb
 import pytest
 
+from ovs_logs.config.settings import TextParseConfig
 from ovs_logs.core.database import Database
 from ovs_logs.core.ingestion.adapters import LoadResult, load_text_log
 from ovs_logs.core.normalization import NormalizationEngine
@@ -22,6 +24,9 @@ from ovs_logs.core.validation import validate_log_file
 
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# Data containers
+# ---------------------------------------------------------------------------
 
 @dataclass(frozen=True)
 class LogSample:
@@ -40,6 +45,10 @@ class BenchmarkResult:
     regex_hits: dict[str, int] | None = None
 
 
+# ---------------------------------------------------------------------------
+# Synthetic sample generators
+# ---------------------------------------------------------------------------
+
 def _write_text(path: Path, content: str) -> LogSample:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")
@@ -47,7 +56,6 @@ def _write_text(path: Path, content: str) -> LogSample:
 
 
 def generate_web_access_logs(line_count: int = 5000) -> str:
-    """Generate Apache/nginx-style access log lines."""
     methods = ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"]
     paths = ["/", "/api/v1/users", "/api/v1/auth/login", "/assets/main.js", "/health", "/api/v1/search", "/dashboard"]
     statuses = [200, 200, 200, 301, 400, 401, 403, 404, 500, 503]
@@ -65,7 +73,6 @@ def generate_web_access_logs(line_count: int = 5000) -> str:
 
 
 def generate_syslog_lines(line_count: int = 5000) -> str:
-    """Generate syslog-style lines."""
     facilities = ["systemd", "kernel", "sshd", "cron", "nginx", "app"]
     buf = StringIO()
     for i in range(line_count):
@@ -84,7 +91,6 @@ def generate_syslog_lines(line_count: int = 5000) -> str:
 
 
 def generate_jsonlog_lines(line_count: int = 5000) -> str:
-    """Generate one-line JSON log entries."""
     levels = ["INFO", "WARN", "ERROR", "DEBUG"]
     components = ["auth", "ingest", "api", "worker", "scheduler"]
     buf = StringIO()
@@ -106,7 +112,6 @@ def generate_jsonlog_lines(line_count: int = 5000) -> str:
 
 
 def generate_ambiguous_lines(line_count: int = 5000) -> str:
-    """Lines with weak structure."""
     words = ["heartbeat", "cache-miss", "gc-pause", "retry", "timeout", "ok", "latency", "drop", "connect", "accept"]
     buf = StringIO()
     for i in range(line_count):
@@ -127,6 +132,10 @@ def write_sample(tmp_path: Path, name: str, generator, line_count: int = 5000) -
     return _write_text(path, generator(line_count=line_count))
 
 
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
 def _measure(fn, *args, **kwargs):
     tracemalloc.start()
     start = time.perf_counter()
@@ -136,6 +145,31 @@ def _measure(fn, *args, **kwargs):
     tracemalloc.stop()
     return result, elapsed, max(peak, 0)
 
+
+def _reload_result(connection: duckdb.DuckDBPyConnection, table_name: str) -> LoadResult:
+    row_count = connection.execute(f'SELECT COUNT(*) FROM "{table_name}"').fetchone()[0]
+    schema_rows = connection.execute(f'DESCRIBE "{table_name}"').fetchall()
+    schema = [(row[0], row[1]) for row in schema_rows]
+    return LoadResult(table_name=table_name, row_count=row_count, schema=schema)
+
+
+def build_samples(tmp_path: Path, sizes: list[int] | None = None) -> dict[int, list[LogSample]]:
+    if sizes is None:
+        sizes = [5000]
+    out: dict[int, list[LogSample]] = {}
+    for size in sizes:
+        out[size] = [
+            write_sample(tmp_path, "web_access", generate_web_access_logs, size),
+            write_sample(tmp_path, "syslog", generate_syslog_lines, size),
+            write_sample(tmp_path, "jsonlog", generate_jsonlog_lines, size),
+            write_sample(tmp_path, "ambiguous", generate_ambiguous_lines, size),
+        ]
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Strategy 1: baseline (raw only)
+# ---------------------------------------------------------------------------
 
 def _baseline(sample: LogSample) -> BenchmarkResult:
     with Database(":memory:") as db:
@@ -150,6 +184,10 @@ def _baseline(sample: LogSample) -> BenchmarkResult:
         peak_kb=round(peak / 1024),
     )
 
+
+# ---------------------------------------------------------------------------
+# Strategy 2: python regex loop
+# ---------------------------------------------------------------------------
 
 _WEB_RE = re.compile(r'(?P<ip>(?:\d{1,3}\.){3}\d{1,3})[^[]*\[(?P<ts>[^\]]+)\]\s+"[^"]*"\s+(?P<status>\d{3})\s+(?P<size>\d+)', re.IGNORECASE)
 _SYSLOG_RE = re.compile(r'(?P<ts>[A-Z][a-z]{2}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2})\s+(?P<host>\S+)\s+(?P<proc>\S+?)(?:\[(?P<pid>\d+)\])?: (?P<msg>.+)', re.IGNORECASE)
@@ -245,6 +283,10 @@ def _regex_python_loop(sample: LogSample) -> BenchmarkResult:
     )
 
 
+# ---------------------------------------------------------------------------
+# Strategy 3: parser_line (single format regex)
+# ---------------------------------------------------------------------------
+
 def _parser_based(sample: LogSample) -> BenchmarkResult:
     if sample.name.startswith("web"):
         pattern = re.compile(
@@ -310,6 +352,10 @@ def _parser_based(sample: LogSample) -> BenchmarkResult:
             peak_kb=round(peak / 1024),
         )
 
+
+# ---------------------------------------------------------------------------
+# Strategy 4: hybrid_light
+# ---------------------------------------------------------------------------
 
 def _hybrid(sample: LogSample) -> BenchmarkResult:
     hits = {"timestamp": 0, "source_ip": 0, "status_code": 0, "event_type": 0}
@@ -397,30 +443,126 @@ def _hybrid(sample: LogSample) -> BenchmarkResult:
         )
 
 
-def _reload_result(connection: duckdb.DuckDBPyConnection, table_name: str) -> LoadResult:
-    row_count = connection.execute(f'SELECT COUNT(*) FROM "{table_name}"').fetchone()[0]
-    schema_rows = connection.execute(f'DESCRIBE "{table_name}"').fetchall()
-    schema = [(row[0], row[1]) for row in schema_rows]
-    return LoadResult(table_name=table_name, row_count=row_count, schema=schema)
+# ---------------------------------------------------------------------------
+# Strategy 5: DuckDB-native regex via regexp_extract in SQL UPDATE
+# ---------------------------------------------------------------------------
+
+_DUCKDB_NATIVE_PATTERNS: dict[str, dict[str, tuple[str, str]]] = {
+    "web": {
+        "timestamp": (r"\[([^\]]+)\]", "i"),
+        "source_ip": (r"^([0-9]{1,3}(?:\.[0-9]{1,3}){3})", ""),
+        "status_code": (r'"\s+(\d{3})\s+', "i"),
+        "event_type": (r'"(\w+)\s+\S+\s+HTTP', "i"),
+    },
+    "syslog": {
+        "timestamp": (r"^([A-Z][a-z]{2}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2})", "i"),
+        "source_ip": (r"(?:from\s+)([0-9]{1,3}(?:\.[0-9]{1,3}){3})", "i"),
+        "event_type": (r"\s+(\w+?)(?:\[\d+\])?:", "i"),
+    },
+    "jsonlog": {
+        "timestamp": (r'"ts"\s*:\s*"([^"]+)"', "i"),
+        "source_ip": (r'"src_ip"\s*:\s*"([^"]+)"', "i"),
+        "status_code": (r'"status"\s*:\s*(\d+)', "i"),
+        "event_type": (r'"component"\s*:\s*"([^"]+)"', "i"),
+    },
+    "ambiguous": {
+        "timestamp": (r"\[(\d{2}:\d{2}:\d{2})\]", ""),
+        "source_ip": (r"([0-9]{1,3}(?:\.[0-9]{1,3}){3})", ""),
+        "status_code": (r"code=(\d+)", ""),
+    },
+}
 
 
-def build_samples(tmp_path: Path, size: int = 5000) -> list[LogSample]:
-    return [
-        write_sample(tmp_path, "web_access", generate_web_access_logs, size),
-        write_sample(tmp_path, "syslog", generate_syslog_lines, size),
-        write_sample(tmp_path, "jsonlog", generate_jsonlog_lines, size),
-        write_sample(tmp_path, "ambiguous", generate_ambiguous_lines, size),
+def _duckdb_regex_native(sample: LogSample) -> BenchmarkResult:
+    prefix = next(
+        (key for key in ("web", "syslog", "jsonlog", "ambiguous") if sample.name.startswith(key)),
+        "ambiguous",
+    )
+    patterns = _DUCKDB_NATIVE_PATTERNS.get(prefix, _DUCKDB_NATIVE_PATTERNS["ambiguous"])
+    hits = {k: 0 for k in ["timestamp", "source_ip", "status_code", "event_type"]}
+    columns = ["timestamp", "source_ip", "status_code", "event_type"]
+
+    def _process(conn: duckdb.DuckDBPyConnection) -> int:
+        log = validate_log_file(sample.path)
+        load_result = load_text_log(log, conn, table_name="raw")
+        rows = load_result.row_count
+        for col in columns:
+            try:
+                conn.execute(f'ALTER TABLE "raw" ADD COLUMN "{col}" VARCHAR')
+            except duckdb.BinderException:
+                pass
+        set_clauses = []
+        for col, (pat, flags) in patterns.items():
+            set_clauses.append(
+                f"{col} = COALESCE(regexp_extract(line, '{pat}', 1, '{flags}'), '')"
+            )
+        conn.execute(f'UPDATE "raw" SET {", ".join(set_clauses)}')
+        counts = conn.execute(
+            "SELECT "
+            + ", ".join(f'COUNT_IF("{col}" <> \'\')' for col in columns)
+            + ' FROM "raw"'
+        ).fetchone()
+        for key, value in zip(columns, counts):
+            hits[key] = value or 0
+        reloaded = _reload_result(conn, "raw")
+        NormalizationEngine().normalize_table(conn, reloaded)
+        return rows
+
+    with Database(":memory:") as db:
+        rows, elapsed, peak = _measure(_process, db)
+        return BenchmarkResult(
+            strategy="duckdb_regex_native",
+            sample_name=sample.name,
+            rows=rows,
+            elapsed_seconds=elapsed,
+            peak_kb=round(peak / 1024),
+            regex_hits=hits,
+        )
+
+
+# ---------------------------------------------------------------------------
+# Report writer
+# ---------------------------------------------------------------------------
+
+def write_markdown_report(rows: list[dict], dest: Path) -> None:
+    lines = [
+        "# OVS-Log Text-Log Parsing Benchmark Report",
+        "",
+        "## Matrix",
+        "",
+        "| strategy | sample | rows | elapsed_s | peak_kb |",
+        "| -- | -- | --: | --: | --: |",
     ]
+    for row in rows:
+        lines.append(
+            f"| {row['strategy']} | {row['sample']} | {row['rows']} | "
+            f"{row['elapsed_seconds']:.3f} | {row['peak_kb']} |"
+        )
+    lines += ["", "---", f"Generated: {time.strftime('%Y-%m-%d %H:%M:%S')}", ""]
+    report = "\n".join(lines)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text(report, encoding="utf-8")
+    print(report)
+    print(f"\n[report] Written to {dest}")
 
+
+# ---------------------------------------------------------------------------
+# Fixtures and tests
+# ---------------------------------------------------------------------------
 
 @pytest.fixture
 def log_samples(tmp_path: Path) -> list[LogSample]:
-    return build_samples(tmp_path, size=5000)
+    return build_samples(tmp_path, sizes=[5000])[5000]
+
+
+@pytest.fixture
+def large_log_samples(tmp_path: Path) -> dict[int, list[LogSample]]:
+    return build_samples(tmp_path, sizes=[20_000, 100_000])
 
 
 @pytest.mark.parametrize(
     "bench_fn",
-    [_baseline, _regex_python_loop, _parser_based, _hybrid],
+    [_baseline, _regex_python_loop, _parser_based, _hybrid, _duckdb_regex_native],
     ids=lambda fn: fn.__name__.lstrip("_"),
 )
 def test_benchmark_strategies(bench_fn, log_samples, tmp_path: Path) -> None:
@@ -428,6 +570,7 @@ def test_benchmark_strategies(bench_fn, log_samples, tmp_path: Path) -> None:
     for sample in log_samples:
         result = bench_fn(sample)
         results.append(result)
+        suffix = f" | hits={result.regex_hits}" if result.regex_hits else ""
         logger.info(
             "%s | %s | rows=%d | %.3fs | %dKB%s",
             result.strategy,
@@ -435,13 +578,37 @@ def test_benchmark_strategies(bench_fn, log_samples, tmp_path: Path) -> None:
             result.rows,
             result.elapsed_seconds,
             result.peak_kb,
-            f" | hits={result.regex_hits}" if result.regex_hits else "",
+            suffix,
         )
     assert len(results) == len(log_samples)
 
 
+@pytest.mark.skipif(
+    os.environ.get("OVD68_LARGE_BENCHMARKS", "").lower() not in ("1", "true", "yes"),
+    reason="Set OVD68_LARGE_BENCHMARKS=1 to run 20k/100k benchmarks",
+)
+def test_benchmark_large(large_log_samples: dict[int, list[LogSample]], tmp_path: Path) -> None:
+    strategies = [_baseline, _regex_python_loop, _parser_based, _hybrid, _duckdb_regex_native]
+    rows: list[dict] = []
+    for size, samples in sorted(large_log_samples.items()):
+        for bench_fn in strategies:
+            for sample in samples:
+                result = bench_fn(sample)
+                rows.append({
+                    "strategy": result.strategy,
+                    "sample": result.sample_name,
+                    "rows": result.rows,
+                    "elapsed_seconds": result.elapsed_seconds,
+                    "peak_kb": result.peak_kb,
+                })
+    report_path = tmp_path / "benchmark_large_report.md"
+    write_markdown_report(rows, report_path)
+    assert report_path.exists()
+    assert report_path.read_text(encoding="utf-8").startswith("# OVS-Log Text-Log")
+
+
 def test_report_summary(log_samples, tmp_path: Path) -> None:
-    strategies = [_baseline, _regex_python_loop, _parser_based, _hybrid]
+    strategies = [_baseline, _regex_python_loop, _parser_based, _hybrid, _duckdb_regex_native]
     rows: list[dict] = []
     for fn in strategies:
         for sample in log_samples:
@@ -453,10 +620,6 @@ def test_report_summary(log_samples, tmp_path: Path) -> None:
                 "elapsed_seconds": result.elapsed_seconds,
                 "peak_kb": result.peak_kb,
             })
-    print("\n=== OVD-33 benchmark summary ===")
-    for row in rows:
-        print(
-            f"{row['strategy']:20} {row['sample']:20} "
-            f"rows={row['rows']:5} time={row['elapsed_seconds']:7.3f}s peak={row['peak_kb']:6}KB"
-        )
+    report_path = Path(tmp_path) / "benchmark_report.md"
+    write_markdown_report(rows, report_path)
     assert rows

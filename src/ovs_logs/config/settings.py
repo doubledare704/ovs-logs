@@ -97,6 +97,21 @@ def _load_database_settings() -> DatabaseSettings:
 
 
 @dataclass(frozen=True)
+class TextParseConfig:
+    """Runtime tuneables for text-log structured extraction."""
+
+    structured: bool = True
+    max_lines_per_file: int = 0
+
+
+def _load_text_parse_settings() -> TextParseConfig:
+    return TextParseConfig(
+        structured=_str_env("OVS_LOG_STRUCTURED", "true").lower() != "false",
+        max_lines_per_file=_int_env("OVS_LOG_PARSE_LIMIT", 0),
+    )
+
+
+@dataclass(frozen=True)
 class Settings:
     """Project-wide configuration singleton."""
 
@@ -104,6 +119,7 @@ class Settings:
     llm: LLMSettings = field(default_factory=_load_llm_settings)
     thresholds: AnalysisThresholds = field(default_factory=_load_thresholds)
     database: DatabaseSettings = field(default_factory=_load_database_settings)
+    text_parse: TextParseConfig = field(default_factory=_load_text_parse_settings)
 
 
 settings = Settings()

@@ -11,6 +11,7 @@ from pathlib import Path
 
 import duckdb
 
+from ovs_logs.config.settings import TextParseConfig
 from ovs_logs.core.ingestion.adapters import (
     LoadResult,
     load_text_log,
@@ -147,22 +148,35 @@ def parse_text_log(
     connection: duckdb.DuckDBPyConnection,
     table_name: str | None = None,
     *,
-    structured: bool = True,
+    config: TextParseConfig | None = None,
 ) -> LoadResult:
     """Ingest a text log into DuckDB, with optional structured field extraction.
 
-    When ``structured=True``, the function detects the log format from the
-    file content and runs a hybrid regex pass to populate ``timestamp``,
-    ``source_ip``, ``status_code``, and ``event_type``. When ``structured=False``,
-    the raw table is returned immediately.
+    When ``config.structured`` is true, the function detects the log format
+    from the file content and runs a hybrid regex pass to populate
+    ``timestamp``, ``source_ip``, ``status_code``, and ``event_type``. When
+    false, the raw table is returned immediately.
     """
+    if config is None:
+        from ovs_logs.config.settings import settings
+
+        config = settings.text_parse
+
     name = _resolve_table_name(log_file, table_name)
     quoted = _quote_identifier(name)
 
     load_result = load_text_log(log_file, connection, table_name=name)
 
-    if not structured:
+    if not config.structured:
         return load_result
+
+    if config.max_lines_per_file > 0:
+        connection.execute(
+            f"CREATE OR REPLACE TABLE {quoted} AS "
+            f"SELECT * FROM {quoted} LIMIT ?",
+            [config.max_lines_per_file],
+        )
+        load_result = _reload_result(connection, name)
 
     fmt = _detect_text_format(log_file.path)
 
@@ -204,7 +218,7 @@ def parse_text_log(
             [tmp_path],
         )
         result = _reload_result(connection, name)
-        if structured and result.row_count > 0 and hit_count == 0:
+        if config.structured and result.row_count > 0 and hit_count == 0:
             raise ValueError("No structured fields matched")
         return result
     finally:
