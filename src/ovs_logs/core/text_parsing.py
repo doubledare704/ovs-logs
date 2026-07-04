@@ -59,7 +59,7 @@ def _detect_text_format(path: Path) -> str:
         return "web"
     if re.search(r"^[A-Z][a-z]{2}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}", text, re.MULTILINE):
         return "syslog"
-    if re.search(r'^\s*\{.*"ts"\s*:\s*"', text, re.MULTILINE):
+    if re.search(r'^\s*\{.*"(ts|timestamp)"\s*:', text, re.MULTILINE):
         return "jsonline"
     return "ambiguous"
 
@@ -73,10 +73,10 @@ _SYSLOG_TS_RE = re.compile(r"^([A-Z][a-z]{2}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2})")
 _SYSLOG_IP_RE = re.compile(r"(?:from\s+)([0-9]{1,3}(?:\.[0-9]{1,3}){3})")
 _SYSLOG_EVENT_RE = re.compile(r"^[A-Z][a-z]{2}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}\s+\S+\s+([A-Za-z0-9_.-]+)(?:\[\d+\])?:")
 
-_JSON_TS_RE = re.compile(r'"ts"\s*:\s*"([^"]+)"')
-_JSON_IP_RE = re.compile(r'"src_ip"\s*:\s*"([^"]+)"')
-_JSON_STATUS_RE = re.compile(r'"status"\s*:\s*(\d+)')
-_JSON_EVENT_RE = re.compile(r'"component"\s*:\s*"([^"]+)"')
+_JSON_TS_RE = re.compile(r'"(?:ts|timestamp)"\s*:\s*"([^"]+)"')
+_JSON_IP_RE = re.compile(r'"(?:src_ip|source_ip|ip)"\s*:\s*"([^"]+)"')
+_JSON_STATUS_RE = re.compile(r'"(?:status|status_code)"\s*:\s*(\d+)')
+_JSON_EVENT_RE = re.compile(r'"(?:component|event_type|event|method)"\s*:\s*"([^"]+)"')
 
 _AMBIGUOUS_TS_RE = re.compile(r"\[(\d{2}:\d{2}:\d{2})\]")
 _AMBIGUOUS_IP_RE = re.compile(r"([0-9]{1,3}(?:\.[0-9]{1,3}){3})")
