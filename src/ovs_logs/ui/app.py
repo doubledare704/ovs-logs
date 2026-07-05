@@ -23,6 +23,7 @@ if TYPE_CHECKING:
 from ovs_logs.config.settings import settings
 from ovs_logs.core.database import Database
 from ovs_logs.core.ingestion import adapters
+from ovs_logs.core.normalization import NormalizationEngine
 from ovs_logs.core.text_parsing import parse_text_log
 from ovs_logs.core.validation import SUPPORTED_FORMATS, LogFile, validate_log_file
 
@@ -184,12 +185,12 @@ def _validate_uploaded_file(file_state: dict[str, Any]) -> None:
 
 def _ingest_text_log_structured(
     log_file: LogFile,
-    connection: "duckdb.DuckDBPyConnection",
+    connection: duckdb.DuckDBPyConnection,
     table_name: str | None = None,
-):
+) -> adapters.LoadResult:
     try:
         return parse_text_log(log_file, connection, table_name=table_name)
-    except Exception:
+    except ValueError:
         return adapters.load_text_log(log_file, connection, table_name=table_name)
 
 
@@ -251,11 +252,21 @@ def _process_ready_files(db_path: str) -> None:
                 with Database(db_path) as connection:
                     tables_to_union = [f["ingest_table"] for f in ingested_files if f["ingest_table"]]
                     if tables_to_union:
-                        union_parts = " UNION ALL ".join(
-                            f'SELECT * FROM "{t.replace(chr(34), chr(34) * 2)}"' for t in tables_to_union
-                        )
+                        engine = NormalizationEngine()
+                        select_queries = []
+                        for file_state in ingested_files:
+                            t = file_state["ingest_table"]
+                            if not t or "schema" not in file_state or not file_state["schema"]:
+                                continue
+                            columns = [name for name, _ in file_state["schema"]]
+                            sql, _ = engine.build_sql(t, columns)
+                            # Extract the SELECT query portion after 'AS '
+                            select_query = sql.split("AS ", 1)[1]
+                            select_queries.append(select_query)
+
+                        union_query = " UNION ALL ".join(select_queries)
                         connection.execute(
-                            f"CREATE OR REPLACE TABLE events AS {union_parts}"
+                            f"CREATE OR REPLACE TABLE events AS {union_query}"
                         )
 
                         row_count = connection.execute(

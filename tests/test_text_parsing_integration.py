@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from streamlit.testing.v1 import AppTest
-from typer.testing import CliRunner
+from typer.testing import CliRunner, Result
 
 from ovs_logs.cli.main import app
 from ovs_logs.core.database import Database
@@ -31,7 +31,7 @@ def _make_temp_file(tmp_path: Path, name: str, content: str) -> Path:
     return path
 
 
-def _invoke_ingest(file_path: Path, file_type: str, db: Path, table: str):
+def _invoke_ingest(file_path: Path, file_type: str, db: Path, table: str) -> Result:
     return runner.invoke(
         app,
         [
@@ -223,7 +223,11 @@ def test_ui_upload_web_access_log_structured_preview(tmp_path: Path) -> None:
     dataframes = at.dataframe
     assert len(dataframes) > 0, "Should have dataframe preview of ingested table"
 
-    preview_df = dataframes[0].value
+    preview_df = next(
+        df.value
+        for df in dataframes
+        if any(c in df.value.columns for c in ("timestamp", "source_ip", "status_code", "event_type"))
+    )
     assert "timestamp" in preview_df.columns
     assert "source_ip" in preview_df.columns
     assert "status_code" in preview_df.columns
@@ -248,7 +252,11 @@ def test_ui_upload_ambiguous_text_fallback_warning(tmp_path: Path) -> None:
     dataframes = at.dataframe
     assert len(dataframes) > 0, "Should have dataframe preview of raw table"
 
-    preview_df = dataframes[0].value
+    preview_df = next(
+        df.value
+        for df in dataframes
+        if "line" in df.value.columns
+    )
     assert "line" in preview_df.columns
     assert "timestamp" not in preview_df.columns
     assert "source_ip" not in preview_df.columns
@@ -274,7 +282,11 @@ def test_ui_upload_syslog_structured_preview(tmp_path: Path) -> None:
     dataframes = at.dataframe
     assert len(dataframes) > 0
 
-    preview_df = dataframes[0].value
+    preview_df = next(
+        df.value
+        for df in dataframes
+        if any(c in df.value.columns for c in ("timestamp", "source_ip", "event_type"))
+    )
     assert "timestamp" in preview_df.columns
     assert "source_ip" in preview_df.columns
     assert "event_type" in preview_df.columns
@@ -298,7 +310,11 @@ def test_ui_upload_jsonline_structured_preview(tmp_path: Path) -> None:
     dataframes = at.dataframe
     assert len(dataframes) > 0
 
-    preview_df = dataframes[0].value
+    preview_df = next(
+        df.value
+        for df in dataframes
+        if any(c in df.value.columns for c in ("timestamp", "source_ip", "status_code", "event_type"))
+    )
     assert "timestamp" in preview_df.columns
     assert "source_ip" in preview_df.columns
     assert "status_code" in preview_df.columns
