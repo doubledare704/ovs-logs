@@ -81,7 +81,7 @@ def test_ingest_evtx_success(tmp_path: Path, monkeypatch) -> None:
                     "identifier": "1",
                     "timestamp": "2024-01-01T00:00:00Z",
                     "data": '{"System":{"EventID":4624,"TimeCreated":{"SystemTime":"2024-01-01T00:00:00Z"}}'
-                            ',"EventData":{"IpAddress":"1.2.3.4","TargetUserName":"alice"}}',
+                    ',"EventData":{"IpAddress":"1.2.3.4","TargetUserName":"alice"}}',
                 }
             ]
 
@@ -339,6 +339,51 @@ def test_analyze_invalid_abuseipdb_key(tmp_path: Path) -> None:
 
     assert result.exit_code != 0
     assert "AbuseIPDB lookup failed" in str(result.exception) or "Unexpected error" in result.output
+
+
+def test_process_csv_success(tmp_path: Path) -> None:
+    _write_events_csv(tmp_path / "events.csv", rows=5)
+    db = tmp_path / "test.db"
+
+    result = runner.invoke(
+        app,
+        [
+            "process",
+            "--file",
+            str(tmp_path / "events.csv"),
+            "--db",
+            str(db),
+            "--table",
+            "raw_events",
+        ],
+    )
+
+    assert result.exit_code == EXIT_CODE_SUCCESS, result.output
+    assert "Loaded 5 rows" in result.output
+    assert "Suspicious Indicators" in result.output
+
+
+def test_process_no_indicators(tmp_path: Path) -> None:
+    csv = tmp_path / "events.csv"
+    csv.write_text("event_timestamp,source_ip,event_type,status_code\n")
+    db = tmp_path / "test.db"
+
+    result = runner.invoke(
+        app,
+        [
+            "process",
+            "--file",
+            str(csv),
+            "--db",
+            str(db),
+            "--table",
+            "raw_events",
+        ],
+    )
+
+    assert result.exit_code == EXIT_CODE_SUCCESS, result.output
+    assert "Loaded 0 rows" in result.output
+    assert "No suspicious indicators found" in result.output
 
 
 def test_ui_spawns_streamlit_run(monkeypatch) -> None:
