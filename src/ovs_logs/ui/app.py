@@ -24,7 +24,8 @@ from ovs_logs.config.settings import settings
 from ovs_logs.core.database import Database
 from ovs_logs.core.ingestion import adapters
 from ovs_logs.core.normalization import NormalizationEngine
-from ovs_logs.core.validation import SUPPORTED_FORMATS, validate_log_file
+from ovs_logs.core.text_parsing import parse_text_log
+from ovs_logs.core.validation import SUPPORTED_FORMATS, LogFile, validate_log_file
 
 _SYSTEM_TABLE_PREFIXES: tuple[str, ...] = (
     "sqlite_",
@@ -182,6 +183,17 @@ def _validate_uploaded_file(file_state: dict[str, Any]) -> None:
         file_state["preview"] = None
 
 
+def _ingest_text_log_structured(
+    log_file: LogFile,
+    connection: duckdb.DuckDBPyConnection,
+    table_name: str | None = None,
+) -> adapters.LoadResult:
+    try:
+        return parse_text_log(log_file, connection, table_name=table_name)
+    except ValueError:
+        return adapters.load_text_log(log_file, connection, table_name=table_name)
+
+
 def _get_adapter(format_name: str):
     from typing import Callable
 
@@ -190,8 +202,8 @@ def _get_adapter(format_name: str):
     adapter_map: dict[str, Callable[..., LoadResult]] = {
         "csv": adapters.load_csv,
         "json": adapters.load_json,
-        "txt": adapters.load_text_log,
-        "log": adapters.load_text_log,
+        "txt": _ingest_text_log_structured,
+        "log": _ingest_text_log_structured,
         "evtx": adapters.load_evtx,
     }
     return adapter_map.get(format_name)
@@ -240,15 +252,25 @@ def _process_ready_files(db_path: str) -> None:
                 with Database(db_path) as connection:
                     tables_to_union = [f["ingest_table"] for f in ingested_files if f["ingest_table"]]
                     if tables_to_union:
-                        union_parts = " UNION ALL ".join(
-                            f'SELECT * FROM "{t.replace('"', '""')}"' for t in tables_to_union
+                        engine = NormalizationEngine()
+                        select_queries = []
+                        for file_state in ingested_files:
+                            t = file_state["ingest_table"]
+                            if not t or "schema" not in file_state or not file_state["schema"]:
+                                continue
+                            columns = [name for name, _ in file_state["schema"]]
+                            select_query, _ = engine.build_select_query(t, columns)
+                            select_queries.append(select_query)
+
+                        union_query = " UNION ALL ".join(select_queries)
+                        connection.execute(
+                            f"CREATE OR REPLACE TABLE events AS {union_query}"
                         )
-                        connection.execute(f"CREATE OR REPLACE TABLE events AS {union_parts}")
-                        
-                        row_count = connection.execute("SELECT COUNT(*) FROM events").fetchone()[0]
-                        schema_rows = connection.execute("DESCRIBE events").fetchall()
-                        schema = [(row[0], row[1]) for row in schema_rows]
-                        
+
+                        row_count = connection.execute(
+                            "SELECT COUNT(*) FROM events"
+                        ).fetchone()[0]
+
                         for file_state in ingested_files:
                             file_state["normalized_table"] = "events"
                             file_state["normalized_row_count"] = row_count

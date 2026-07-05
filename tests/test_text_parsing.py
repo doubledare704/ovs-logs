@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import csv
 import tempfile
 from pathlib import Path
 
@@ -12,10 +11,11 @@ import pytest
 
 import duckdb
 
+from ovs_logs.config.settings import TextParseConfig
 from ovs_logs.core.database import Database
 from ovs_logs.core.ingestion.adapters import load_text_log
 from ovs_logs.core.text_parsing import parse_text_log
-from ovs_logs.core.validation import LogFile, validate_log_file
+from ovs_logs.core.validation import validate_log_file
 
 
 @pytest.fixture
@@ -98,11 +98,32 @@ def test_structured_false_returns_raw(db, tmp_path: Path) -> None:
     path = tmp_path / "plain.txt"
     _write_lines(path, ["line one", "line two"])
     log = validate_log_file(path)
-    result = parse_text_log(log, db, table_name="raw_table", structured=False)
+    result = parse_text_log(log, db, table_name="raw_table", config=TextParseConfig(structured=False))
     assert result.row_count == 2
     assert _schema_columns(result.schema) == {"line"}
     rows = db.execute('SELECT line FROM "raw_table"').fetchall()
     assert rows[0][0] == "line one"
+
+
+def test_max_lines_per_file_respected_when_structured_false(db, tmp_path: Path) -> None:
+    """Regression: line limit must apply even when structured parsing is off.
+
+    Previously, ``max_lines_per_file`` was bypassed whenever
+    ``config.structured`` was false because the early-return path ran before
+    the LIMIT rebuild. See PR #9 review feedback (gemini-code-assist).
+    """
+    path = tmp_path / "many.txt"
+    _write_lines(path, [f"line {i}" for i in range(10)])
+    log = validate_log_file(path)
+    result = parse_text_log(
+        log,
+        db,
+        table_name="limited_table",
+        config=TextParseConfig(structured=False, max_lines_per_file=3),
+    )
+    assert result.row_count == 3
+    rows = db.execute('SELECT line FROM "limited_table"').fetchall()
+    assert [r[0] for r in rows] == ["line 0", "line 1", "line 2"]
 
 
 def test_no_matching_pattern_returns_raw_table(db, tmp_path: Path) -> None:

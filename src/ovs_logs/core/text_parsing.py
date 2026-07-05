@@ -11,11 +11,11 @@ from pathlib import Path
 
 import duckdb
 
+from ovs_logs.config.settings import TextParseConfig
 from ovs_logs.core.ingestion.adapters import (
     LoadResult,
     load_text_log,
 )
-from ovs_logs.core.normalization import NormalizationEngine
 from ovs_logs.core.validation import LogFile
 
 
@@ -59,7 +59,7 @@ def _detect_text_format(path: Path) -> str:
         return "web"
     if re.search(r"^[A-Z][a-z]{2}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}", text, re.MULTILINE):
         return "syslog"
-    if re.search(r'^\s*\{.*"ts"\s*:\s*"', text, re.MULTILINE):
+    if re.search(r'^\s*\{.*"(ts|timestamp)"\s*:', text, re.MULTILINE):
         return "jsonline"
     return "ambiguous"
 
@@ -73,10 +73,10 @@ _SYSLOG_TS_RE = re.compile(r"^([A-Z][a-z]{2}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2})")
 _SYSLOG_IP_RE = re.compile(r"(?:from\s+)([0-9]{1,3}(?:\.[0-9]{1,3}){3})")
 _SYSLOG_EVENT_RE = re.compile(r"^[A-Z][a-z]{2}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}\s+\S+\s+([A-Za-z0-9_.-]+)(?:\[\d+\])?:")
 
-_JSON_TS_RE = re.compile(r'"ts"\s*:\s*"([^"]+)"')
-_JSON_IP_RE = re.compile(r'"src_ip"\s*:\s*"([^"]+)"')
-_JSON_STATUS_RE = re.compile(r'"status"\s*:\s*(\d+)')
-_JSON_EVENT_RE = re.compile(r'"component"\s*:\s*"([^"]+)"')
+_JSON_TS_RE = re.compile(r'"(?:ts|timestamp)"\s*:\s*"([^"]+)"')
+_JSON_IP_RE = re.compile(r'"(?:src_ip|source_ip|ip)"\s*:\s*"([^"]+)"')
+_JSON_STATUS_RE = re.compile(r'"(?:status|status_code)"\s*:\s*(\d+)')
+_JSON_EVENT_RE = re.compile(r'"(?:component|event_type|event|method)"\s*:\s*"([^"]+)"')
 
 _AMBIGUOUS_TS_RE = re.compile(r"\[(\d{2}:\d{2}:\d{2})\]")
 _AMBIGUOUS_IP_RE = re.compile(r"([0-9]{1,3}(?:\.[0-9]{1,3}){3})")
@@ -147,21 +147,34 @@ def parse_text_log(
     connection: duckdb.DuckDBPyConnection,
     table_name: str | None = None,
     *,
-    structured: bool = True,
+    config: TextParseConfig | None = None,
 ) -> LoadResult:
     """Ingest a text log into DuckDB, with optional structured field extraction.
 
-    When ``structured=True``, the function detects the log format from the
-    file content and runs a hybrid regex pass to populate ``timestamp``,
-    ``source_ip``, ``status_code``, and ``event_type``. When ``structured=False``,
-    the raw table is returned immediately.
+    When ``config.structured`` is true, the function detects the log format
+    from the file content and runs a hybrid regex pass to populate
+    ``timestamp``, ``source_ip``, ``status_code``, and ``event_type``. When
+    false, the raw table is returned immediately.
     """
+    if config is None:
+        from ovs_logs.config.settings import settings
+
+        config = settings.text_parse
+
     name = _resolve_table_name(log_file, table_name)
     quoted = _quote_identifier(name)
 
     load_result = load_text_log(log_file, connection, table_name=name)
 
-    if not structured:
+    if config.max_lines_per_file > 0:
+        connection.execute(
+            f"CREATE OR REPLACE TABLE {quoted} AS "
+            f"SELECT * FROM {quoted} LIMIT ?",
+            [config.max_lines_per_file],
+        )
+        load_result = _reload_result(connection, name)
+
+    if not config.structured:
         return load_result
 
     fmt = _detect_text_format(log_file.path)
@@ -204,8 +217,6 @@ def parse_text_log(
             [tmp_path],
         )
         result = _reload_result(connection, name)
-        if structured and result.row_count > 0 and hit_count == 0:
-            raise ValueError("No structured fields matched")
         return result
     finally:
         if tmp_path is not None and os.path.exists(tmp_path):

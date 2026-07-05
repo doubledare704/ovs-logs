@@ -6,6 +6,7 @@ from ovs_logs.config.settings import (
     _load_abuseipdb_settings,
     _load_database_settings,
     _load_llm_settings,
+    _load_text_parse_settings,
     _load_thresholds,
     settings,
 )
@@ -17,6 +18,8 @@ def test_singleton_has_expected_defaults() -> None:
     assert settings.llm.model == "gpt-4o-mini"
     assert settings.thresholds.top_talkers == 100
     assert settings.database.path == ".ovs_logs/ovs_logs.db"
+    assert settings.text_parse.structured is True
+    assert settings.text_parse.max_lines_per_file == 0
 
 
 def test_environment_variables_override_defaults() -> None:
@@ -34,6 +37,8 @@ def test_environment_variables_override_defaults() -> None:
         "OVS_LOGS_EVENT_DISTRIBUTION_THRESHOLD": "200",
         "OVS_LOGS_TEMPORAL_BUCKET_THRESHOLD": "150",
         "OVS_LOGS_DB_PATH": "/tmp/ovs_logs.db",
+        "OVS_LOGS_STRUCTURED": "false",
+        "OVS_LOGS_PARSE_LIMIT": "500",
     }
 
     with patch.dict("os.environ", env, clear=False):
@@ -41,6 +46,7 @@ def test_environment_variables_override_defaults() -> None:
         llm = _load_llm_settings()
         thresholds = _load_thresholds()
         db = _load_database_settings()
+        text_parse = _load_text_parse_settings()
 
     assert abuse.api_url == env["ABUSEIPDB_API_URL"]
     assert abuse.timeout == 20
@@ -58,3 +64,6 @@ def test_environment_variables_override_defaults() -> None:
     assert thresholds.temporal_anomaly == 150
 
     assert db.path == env["OVS_LOGS_DB_PATH"]
+
+    assert text_parse.structured is False
+    assert text_parse.max_lines_per_file == 500

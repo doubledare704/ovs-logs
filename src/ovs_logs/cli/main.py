@@ -49,7 +49,7 @@ def _ingest_text_log_structured(
     table_name: str | None = None,
 ) -> LoadResult:
     try:
-        return parse_text_log(log_file, connection, table_name=table_name, structured=True)
+        return parse_text_log(log_file, connection, table_name=table_name)
     except Exception:
         return load_text_log(log_file, connection, table_name=table_name)
 
