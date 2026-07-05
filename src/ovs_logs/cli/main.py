@@ -50,7 +50,7 @@ def _ingest_text_log_structured(
 ) -> LoadResult:
     try:
         return parse_text_log(log_file, connection, table_name=table_name)
-    except Exception:
+    except ValueError:
         return load_text_log(log_file, connection, table_name=table_name)
 
 
@@ -102,8 +102,10 @@ def ingest(
             with console.status("[bold green]Loading into DuckDB..."):
                 load_result = adapter(log_file, connection, table_name=table)
 
-            with console.status("[bold green]Normalizing into events table..."):
-                NormalizationEngine().normalize_table(connection, load_result)
+            is_unstructured = len(load_result.schema) == 1 and load_result.schema[0][0] == "line"
+            if not is_unstructured:
+                with console.status("[bold green]Normalizing into events table..."):
+                    NormalizationEngine().normalize_table(connection, load_result)
 
         console.print(f"[bold]Loaded[/bold] {load_result.row_count} rows into {load_result.table_name}")
         schema = ", ".join(name for name, _ in load_result.schema)

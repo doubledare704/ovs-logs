@@ -12,7 +12,7 @@ import hashlib
 import os
 import tempfile
 from pathlib import Path
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Callable
 
 import duckdb
 import streamlit as st
@@ -23,6 +23,7 @@ if TYPE_CHECKING:
 from ovs_logs.config.settings import settings
 from ovs_logs.core.database import Database
 from ovs_logs.core.ingestion import adapters
+from ovs_logs.core.ingestion.adapters import LoadResult, load_text_log
 from ovs_logs.core.normalization import NormalizationEngine
 from ovs_logs.core.text_parsing import parse_text_log
 from ovs_logs.core.validation import SUPPORTED_FORMATS, LogFile, validate_log_file
@@ -187,18 +188,14 @@ def _ingest_text_log_structured(
     log_file: LogFile,
     connection: duckdb.DuckDBPyConnection,
     table_name: str | None = None,
-) -> adapters.LoadResult:
+) -> LoadResult:
     try:
         return parse_text_log(log_file, connection, table_name=table_name)
     except ValueError:
-        return adapters.load_text_log(log_file, connection, table_name=table_name)
+        return load_text_log(log_file, connection, table_name=table_name)
 
 
-def _get_adapter(format_name: str):
-    from typing import Callable
-
-    from ovs_logs.core.ingestion.adapters import LoadResult
-
+def _get_adapter(format_name: str) -> Callable[..., LoadResult] | None:
     adapter_map: dict[str, Callable[..., LoadResult]] = {
         "csv": adapters.load_csv,
         "json": adapters.load_json,
