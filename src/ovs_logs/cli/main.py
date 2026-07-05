@@ -50,7 +50,7 @@ def _ingest_text_log_structured(
 ) -> LoadResult:
     try:
         return parse_text_log(log_file, connection, table_name=table_name)
-    except Exception:
+    except ValueError:
         return load_text_log(log_file, connection, table_name=table_name)
 
 
