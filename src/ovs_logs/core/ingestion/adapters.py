@@ -18,7 +18,7 @@ import duckdb
 try:
     from evtx import PyEvtxParser
 except ImportError:  # pragma: no cover - depends on optional runtime dependency
-    PyEvtxParser = None  # type: ignore[assignment]
+    PyEvtxParser: type | None = None  # type: ignore[assignment]
 
 from ovs_logs.core.validation import LogFile
 
@@ -58,7 +58,8 @@ def _quote_identifier(identifier: str) -> str:
 def _build_result(connection: duckdb.DuckDBPyConnection, table_name: str) -> LoadResult:
     """Query the loaded table for row count and schema."""
     quoted_name = _quote_identifier(table_name)
-    row_count = connection.execute(f"SELECT COUNT(*) FROM {quoted_name}").fetchone()[0]
+    row = connection.execute(f"SELECT COUNT(*) FROM {quoted_name}").fetchone()
+    row_count = row[0] if row is not None else 0
     schema_rows = connection.execute(f"DESCRIBE {quoted_name}").fetchall()
     schema = [(row[0], row[1]) for row in schema_rows]
     return LoadResult(table_name=table_name, row_count=row_count, schema=schema)
@@ -221,16 +222,21 @@ def load_evtx(
             try:
                 records = parser.records_json()
                 for record in records:
+                    if record is None:
+                        continue
                     payload = record.get("data")
                     if isinstance(payload, str):
                         try:
-                            event_data = json.loads(payload)
+                            event_data: dict[str, Any] = json.loads(payload)
                         except json.JSONDecodeError as exc:
                             raise RuntimeError(f"Unable to parse EVTX record {record.get('identifier')}") from exc
                     elif isinstance(payload, dict):
                         event_data = payload
                     else:
                         event_data = {"raw": payload}
+
+                    if "Event" in event_data and set(event_data.keys()) == {"Event"}:
+                        event_data = event_data["Event"]
 
                     row = _extract_evtx_fields(event_data, record)
                     writer.writerow(row)

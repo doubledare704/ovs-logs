@@ -8,7 +8,6 @@ import duckdb
 
 from .templates import TEMPLATES, SQLTemplate
 
-
 _ALIAS_MAP: dict[str, str] = {
     "event_timestamp": "timestamp",
 }
@@ -46,6 +45,10 @@ class AnalysisEngine:
                 expressions.append(f'"{target}"')
             elif target == "event_timestamp" and "timestamp" in lower_columns:
                 expressions.append('TRY_CAST("timestamp" AS TIMESTAMP) AS "event_timestamp"')
+            elif target == "event_type" and "event" in lower_columns:
+                expressions.append('"event"::VARCHAR AS "event_type"')
+            elif target == "raw_message" and "message" in lower_columns:
+                expressions.append('"message"::VARCHAR AS "raw_message"')
             else:
                 expressions.append(f'NULL::{_column_dtype(target, columns)} AS "{target}"')
                 missing.append(target)

@@ -86,14 +86,16 @@ def test_load_evtx_converts_to_csv(db, tmp_path: Path, monkeypatch: pytest.Monke
                     "timestamp": "2024-01-01T00:00:00Z",
                     "data": json.dumps(
                         {
-                            "System": {
-                                "EventID": 4624,
-                                "TimeCreated": {"SystemTime": "2024-01-01T00:00:00Z"},
-                            },
-                            "EventData": {
-                                "IpAddress": "1.2.3.4",
-                                "TargetUserName": "alice",
-                            },
+                            "Event": {
+                                "System": {
+                                    "EventID": 4624,
+                                    "TimeCreated": {"SystemTime": "2024-01-01T00:00:00Z"},
+                                },
+                                "EventData": {
+                                    "IpAddress": "1.2.3.4",
+                                    "TargetUserName": "alice",
+                                },
+                            }
                         }
                     ),
                 }
