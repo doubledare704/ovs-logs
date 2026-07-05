@@ -53,7 +53,11 @@ Maintain a strict separation of concerns between layers:
 ## 5. Documentation
 
 - **Update Docs:** If a change affects the architecture or user interface, update the corresponding files in `docs/` (e.g., `architecture.md`, `PRD.md`).
-- **Inline Comments:** Add comments for non-obvious logic, but prefer self-documenting code.
+- **Code Comments:** Minimize inline comments. Variable, function, and class names should be self-descriptive and reveal intent. Comments are only justified for:
+  - Business logic decisions that aren't obvious from the code
+  - Complex algorithms or non-trivial control flows
+  - Workarounds for external system limitations
+  - Security or compliance considerations
 
 ## 6. Git & Commits
 
