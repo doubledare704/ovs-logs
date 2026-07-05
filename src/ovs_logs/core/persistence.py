@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import duckdb
 
@@ -27,13 +27,11 @@ class ReportStore:
             """
         )
 
-    def save_report(
-        self, connection: duckdb.DuckDBPyConnection, report: IncidentReport
-    ) -> str:
+    def save_report(self, connection: duckdb.DuckDBPyConnection, report: IncidentReport) -> str:
         """Serialize a report and return its generated report_id."""
         self._ensure_table(connection)
         report_id = str(uuid.uuid4())
-        created_at = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
+        created_at = datetime.now(UTC).replace(tzinfo=None).isoformat()
         payload = json.dumps(report.to_dict(), ensure_ascii=False, default=str)
         connection.execute(
             f"""
@@ -44,9 +42,7 @@ class ReportStore:
         )
         return report_id
 
-    def get_report(
-        self, connection: duckdb.DuckDBPyConnection, report_id: str
-    ) -> IncidentReport:
+    def get_report(self, connection: duckdb.DuckDBPyConnection, report_id: str) -> IncidentReport:
         """Retrieve a report by its id."""
         row = connection.execute(
             f"SELECT report_json FROM {self.TABLE_NAME} WHERE report_id = ?",

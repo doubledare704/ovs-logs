@@ -46,9 +46,7 @@ def detect_format(path: Path) -> str:
     try:
         text = sample.decode("utf-8")
     except UnicodeDecodeError as exc:
-        raise ValueError(
-            f"Unsupported binary file format for {path}"
-        ) from exc
+        raise ValueError(f"Unsupported binary file format for {path}") from exc
 
     first_line = text.lstrip().splitlines()[0] if text else ""
     if first_line.startswith(("{", "[")):

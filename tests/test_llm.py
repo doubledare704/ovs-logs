@@ -1,7 +1,5 @@
 """Tests for the LLM synthesis layer."""
 
-from typing import Any
-
 import pytest
 
 from ovs_logs.core.analysis.indicators import SuspiciousIndicator
@@ -113,9 +111,7 @@ def test_openai_provider_sends_request() -> None:
 
     mock_response = Mock()
     mock_response.raise_for_status.return_value = None
-    mock_response.json.return_value = {
-        "choices": [{"message": {"content": '{"title": "T"}'}}]
-    }
+    mock_response.json.return_value = {"choices": [{"message": {"content": '{"title": "T"}'}}]}
 
     with patch("ovs_logs.core.llm.requests.post", return_value=mock_response) as mock_post:
         provider = OpenAICompatibleProvider(api_key="sk-test")

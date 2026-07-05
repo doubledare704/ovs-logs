@@ -24,9 +24,7 @@ def _schema_types(schema: list[tuple[str, str]]) -> dict[str, str]:
 def test_normalize_csv(db, tmp_path: Path) -> None:
     file = tmp_path / "web.csv"
     file.write_text(
-        "timestamp,client_ip,status,method\n"
-        "2024-01-01T00:00:00,1.2.3.4,200,GET\n"
-        "2024-01-01T00:01:00,5.6.7.8,404,POST\n"
+        "timestamp,client_ip,status,method\n2024-01-01T00:00:00,1.2.3.4,200,GET\n2024-01-01T00:01:00,5.6.7.8,404,POST\n"
     )
 
     log = validate_log_file(file)
@@ -45,9 +43,7 @@ def test_normalize_csv(db, tmp_path: Path) -> None:
     assert "timestamp" in types["event_timestamp"].lower()
     assert "integer" in types["status_code"].lower()
 
-    rows = db.execute(
-        "SELECT source_ip, status_code, event_type FROM events ORDER BY event_timestamp"
-    ).fetchall()
+    rows = db.execute("SELECT source_ip, status_code, event_type FROM events ORDER BY event_timestamp").fetchall()
     assert rows[0] == ("1.2.3.4", 200, "GET")
     assert rows[1] == ("5.6.7.8", 404, "POST")
 
@@ -70,9 +66,7 @@ def test_normalize_json(db, tmp_path: Path) -> None:
     assert result.mapping["event_timestamp"] == "time"
     assert result.mapping["raw_message"] == "message"
 
-    rows = db.execute(
-        "SELECT source_ip, status_code, event_type, raw_message FROM events"
-    ).fetchall()
+    rows = db.execute("SELECT source_ip, status_code, event_type, raw_message FROM events").fetchall()
     assert rows[0] == ("9.8.7.6", 201, "login", "User logged in")
 
 

@@ -32,6 +32,48 @@ Maintain a strict separation of concerns between layers:
 - **Error Handling:** Use specific exception types. Avoid broad `except Exception:` blocks unless logging and re-raising.
 - **Data Structures:** Prefer `dataclasses` (with `frozen=True` where possible) for simple data containers.
 
+## 2.1 Linting & Formatting (Ruff & Pyrefly)
+
+- **Ruff** is the primary linter and formatter (replaces flake8, isort, black, pyupgrade, etc.)
+- **Pyrefly** is the type checker (fast, Facebook's new type checker)
+- **Pre-commit hooks** are configured to run automatically on commit
+
+### Running linting and formatting manually
+
+```bash
+# Run ruff linter with auto-fix
+uv run ruff check --fix src tests
+
+# Run ruff formatter
+uv run ruff format src tests
+
+# Run pyrefly type checker
+uv run pyrefly check
+
+# Run all pre-commit hooks manually
+uv run pre-commit run --all-files
+```
+
+### Configuration
+
+- Ruff configuration: `pyproject.toml` under `[tool.ruff]`, `[tool.ruff.lint]`, `[tool.ruff.format]`, `[tool.ruff.isort]`
+- Pyrefly configuration: `pyproject.toml` under `[tool.pyrefly]`
+- Pre-commit configuration: `.pre-commit-config.yaml`
+
+### Pre-commit setup
+
+```bash
+# Install pre-commit hooks (run once after cloning)
+uv run pre-commit install
+
+# Run on all files (useful for CI or initial setup)
+uv run pre-commit run --all-files
+```
+
+### IDE Integration
+
+For VS Code, install the **Ruff** extension (charliermarsh.ruff) and **Pyrefly** extension for real-time linting and type checking.
+
 ## 3. Database & Ingestion Rules (DuckDB)
 
 - **SQL Identifiers:** Always sanitize and quote table/column names using `"` to avoid SQL injection and handle special characters.

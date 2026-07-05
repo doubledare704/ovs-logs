@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import dataclasses
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any
 
 import requests
 
@@ -39,9 +40,7 @@ class RateLimiter:
         time_source: Callable[[], float] | None = None,
         sleep_func: Callable[[float], None] | None = None,
     ) -> None:
-        self.min_interval = (
-            60.0 / max_requests_per_minute if max_requests_per_minute > 0 else 0.0
-        )
+        self.min_interval = 60.0 / max_requests_per_minute if max_requests_per_minute > 0 else 0.0
         self.time_source = time_source or time.monotonic
         self.sleep_func = sleep_func or time.sleep
         self._last_request_time: float | None = None
@@ -131,15 +130,13 @@ class ThreatIntelClient:
             except requests.Timeout as exc:
                 last_error = exc
                 if attempt < self.max_retries:
-                    time.sleep(self.backoff_seconds * (2 ** attempt))
+                    time.sleep(self.backoff_seconds * (2**attempt))
                     continue
                 raise ThreatIntelError(
                     f"AbuseIPDB lookup for {ip} timed out after {self.max_retries + 1} attempts"
                 ) from exc
             except requests.RequestException as exc:
-                raise ThreatIntelError(
-                    f"AbuseIPDB lookup for {ip} failed: {exc}"
-                ) from exc
+                raise ThreatIntelError(f"AbuseIPDB lookup for {ip} failed: {exc}") from exc
 
             if response.status_code == 200:
                 data = response.json().get("data", {})
@@ -148,22 +145,15 @@ class ThreatIntelClient:
                 return result
 
             if self._is_transient(response.status_code):
-                last_error = ThreatIntelError(
-                    f"AbuseIPDB lookup for {ip} returned HTTP {response.status_code}"
-                )
+                last_error = ThreatIntelError(f"AbuseIPDB lookup for {ip} returned HTTP {response.status_code}")
                 if attempt < self.max_retries:
-                    time.sleep(self.backoff_seconds * (2 ** attempt))
+                    time.sleep(self.backoff_seconds * (2**attempt))
                     continue
 
-            raise ThreatIntelError(
-                f"AbuseIPDB lookup failed for {ip}: "
-                f"HTTP {response.status_code} - {response.text}"
-            )
+            raise ThreatIntelError(f"AbuseIPDB lookup failed for {ip}: HTTP {response.status_code} - {response.text}")
 
         # Exhausted retries on transient errors.
-        raise last_error or ThreatIntelError(
-            f"AbuseIPDB lookup failed for {ip} after retries"
-        )
+        raise last_error or ThreatIntelError(f"AbuseIPDB lookup failed for {ip} after retries")
 
     def lookup_many(self, ips: list[str]) -> dict[str, ReputationResult]:
         """Return reputation data for a list of unique IPs."""

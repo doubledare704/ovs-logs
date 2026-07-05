@@ -69,7 +69,7 @@ def generate_web_access_logs(line_count: int = 5000) -> str:
     methods = ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"]
     paths = ["/", "/api/v1/users", "/api/v1/auth/login", "/assets/main.js", "/health", "/api/v1/search", "/dashboard"]
     statuses = [200, 200, 200, 301, 400, 401, 403, 404, 500, 503]
-    ips = [f"10.0.{random.randint(0,255)}.{random.randint(1,254)}" for _ in range(50)]
+    ips = [f"10.0.{random.randint(0, 255)}.{random.randint(1, 254)}" for _ in range(50)]
     buf = StringIO()
     for i in range(line_count):
         ts = time.strftime("%d/%b/%Y:%H:%M:%S %z", time.gmtime(1700000000 + i))
@@ -96,12 +96,12 @@ def generate_syslog_lines(line_count: int = 5000) -> str:
     for i in range(line_count):
         month = time.strftime("%b", time.gmtime(1700000000 + i))
         day = random.randint(1, 28)
-        ts = f"{month}  {day} 12:{random.randint(0,59):02d}:{random.randint(0,59):02d}"
-        host = f"srv-{random.randint(1,20):02d}"
+        ts = f"{month}  {day} 12:{random.randint(0, 59):02d}:{random.randint(0, 59):02d}"
+        host = f"srv-{random.randint(1, 20):02d}"
         fac = random.choice(facilities)
         pid = random.randint(100, 9999)
         user = f"user{random.randint(1, 500)}"
-        ip = f"10.0.{random.randint(0,255)}.{random.randint(1,254)}"
+        ip = f"10.0.{random.randint(0, 255)}.{random.randint(1, 254)}"
         port = random.randint(30000, 60000)
         event = random.choice(["Started", "Failed", "Accepted", "Closed", "Backup", "Error"])
         buf.write(f"{ts} {host} {fac}[{pid}]: {event} {user} {ip} port {port}\n")
@@ -127,7 +127,7 @@ def generate_jsonlog_lines(line_count: int = 5000) -> str:
             "level": random.choice(levels),
             "component": random.choice(components),
             "msg": f"event sequence {i}",
-            "src_ip": f"10.0.{random.randint(0,255)}.{random.randint(1,254)}",
+            "src_ip": f"10.0.{random.randint(0, 255)}.{random.randint(1, 254)}",
             "status": random.choice([200, 201, 400, 401, 403, 404, 500, 502]),
             "duration_ms": random.randint(1, 2500),
         }
@@ -151,7 +151,9 @@ def generate_ambiguous_lines(line_count: int = 5000) -> str:
         w2 = random.choice(words)
         marker = random.choice(["OK", "FAIL", "WARN", ""])
         if random.random() > 0.3:
-            buf.write(f"[{time.strftime('%H:%M:%S', time.gmtime(1700000000 + i))}] {w1}-{w2} {marker} code={random.randint(0, 999)} len={random.randint(10, 9000)}\n")
+            buf.write(
+                f"[{time.strftime('%H:%M:%S', time.gmtime(1700000000 + i))}] {w1}-{w2} {marker} code={random.randint(0, 999)} len={random.randint(10, 9000)}\n"
+            )
         else:
             buf.write(f"{w1} {w2} {marker}\n")
     return buf.getvalue()
@@ -232,15 +234,11 @@ def _baseline(sample: LogSample) -> BenchmarkResult:
     )
 
 
-# ---------------------------------------------------------------------------
-# Strategy 2: python regex loop
-# ---------------------------------------------------------------------------
-
 _WEB_RE = re.compile(r'(?P<ip>(?:\d{1,3}\.){3}\d{1,3})[^[]*\[(?P<ts>[^\]]+)\]\s+"[^"]*"\s+(?P<status>\d{3})\s+(?P<size>\d+)', re.IGNORECASE)
 _SYSLOG_RE = re.compile(r'(?P<ts>[A-Z][a-z]{2}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2})\s+(?P<host>\S+)\s+(?P<proc>\S+?)(?:\[(?P<pid>\d+)\])?: (?P<msg>.+)', re.IGNORECASE)
 _JSON_LINE_RE = re.compile(r'"ts"\s*:\s*"(?P<ts>[^"]+)"', re.IGNORECASE)
-_IP_RE = re.compile(r'(?P<ip>(?:\d{1,3}\.){3}\d{1,3})')
-_STATUS_RE = re.compile(r'\b(?P<status>(?:200|201|301|400|401|403|404|500|502|503))\b')
+_IP_RE = re.compile(r"(?P<ip>(?:\d{1,3}\.){3}\d{1,3})")
+_STATUS_RE = re.compile(r"\b(?P<status>(?:200|201|301|400|401|403|404|500|502|503))\b")
 
 
 def _regex_python_loop(sample: LogSample) -> BenchmarkResult:
@@ -337,21 +335,23 @@ def _regex_python_loop(sample: LogSample) -> BenchmarkResult:
 def _parser_based(sample: LogSample) -> BenchmarkResult:
     if sample.name.startswith("web"):
         pattern = re.compile(
-            r'(?P<ip>(?:\d{1,3}\.){3}\d{1,3})\s+'
-            r'(?P<ident>\S+)\s+(?P<authuser>\S+)\s+'
+            r"(?P<ip>(?:\d{1,3}\.){3}\d{1,3})\s+"
+            r"(?P<ident>\S+)\s+(?P<authuser>\S+)\s+"
             r'\[(?P<ts>[^\]]+)\]\s+"(?P<method>\S+)\s+(?P<path>\S+)\s+\S+"\s+'
-            r'(?P<status>\d{3})\s+(?P<size>\d+)'
+            r"(?P<status>\d{3})\s+(?P<size>\d+)"
         )
     elif sample.name.startswith("syslog"):
         pattern = re.compile(
-            r'^(?P<ts>[A-Z][a-z]{2}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2})\s+'
-            r'(?P<host>\S+)\s+(?P<process>\S+?)(?:\[(?P<pid>\d+)\])?:\s+'
-            r'(?P<msg>.+)$'
+            r"^(?P<ts>[A-Z][a-z]{2}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2})\s+"
+            r"(?P<host>\S+)\s+(?P<process>\S+?)(?:\[(?P<pid>\d+)\])?:\s+"
+            r"(?P<msg>.+)$"
         )
     elif sample.name.startswith("jsonlog"):
         pattern = re.compile(r'^\{"ts":"(?P<ts>[^"]+)"')
     elif sample.name.startswith("ambiguous"):
-        pattern = re.compile(r'^\[(?P<ts>\d{2}:\d{2}:\d{2})\]\s+(?P<event>[^ ]+(?:-[^ ]+)?)\s+(?P<status>WARN|FAIL|OK)?\s+code=(?P<code>\d+)')
+        pattern = re.compile(
+            r"^\[(?P<ts>\d{2}:\d{2}:\d{2})\]\s+(?P<event>[^ ]+(?:-[^ ]+)?)\s+(?P<status>WARN|FAIL|OK)?\s+code=(?P<code>\d+)"
+        )
     else:
         pattern = None
 

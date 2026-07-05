@@ -52,11 +52,7 @@ def _read_user_tables(db_path: str) -> list[str]:
     ``pg_catalog``) are excluded so the navigator only surfaces application
     tables created by OVS-Log ingestion.
     """
-    query = (
-        "SELECT table_schema, table_name "
-        "FROM information_schema.tables "
-        "WHERE table_type = 'BASE TABLE'"
-    )
+    query = "SELECT table_schema, table_name FROM information_schema.tables WHERE table_type = 'BASE TABLE'"
     with duckdb.connect(database=db_path, read_only=True) as conn:
         rows = conn.execute(query).fetchall()
 
@@ -83,7 +79,7 @@ def _format_size(size: int) -> str:
     return f"{size} B"
 
 
-def _save_uploaded_file(uploaded_file: "UploadedFile") -> tuple[Path, str]:
+def _save_uploaded_file(uploaded_file: UploadedFile) -> tuple[Path, str]:
     uploaded_file.seek(0)
     suffix = Path(uploaded_file.name).suffix
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix or ".tmp")
@@ -128,7 +124,7 @@ def _find_uploaded_file(uploaded_files: list[dict[str, Any]], content_hash: str)
     return any(file["content_hash"] == content_hash for file in uploaded_files)
 
 
-def _register_uploaded_file(uploaded_file: "UploadedFile") -> tuple[bool, str | None]:
+def _register_uploaded_file(uploaded_file: UploadedFile) -> tuple[bool, str | None]:
     upload_id = f"{uploaded_file.name}:{uploaded_file.size}"
     if upload_id in st.session_state.get("consumed_uploads", set()):
         return False, None
@@ -211,38 +207,33 @@ def _process_ready_files(db_path: str) -> None:
         st.error("Set a valid database path in the sidebar before ingesting files.")
         return
 
-    ready_files = [
-        file_state
-        for file_state in st.session_state["uploaded_files"]
-        if file_state["status"] == "ready"
-    ]
+    ready_files = [file_state for file_state in st.session_state["uploaded_files"] if file_state["status"] == "ready"]
     if not ready_files:
         st.warning("No validated uploads are ready for ingestion.")
         return
 
     errors: list[str] = []
-    with st.spinner("Ingesting files into DuckDB and normalizing..."):
-        with Database(db_path) as connection:
-            for file_state in ready_files:
-                try:
-                    log_file = validate_log_file(file_state["temp_path"])
-                    adapter = _get_adapter(log_file.format)
-                    if adapter is None:
-                        raise ValueError(f"No ingestion adapter for format '{log_file.format}'")
+    with st.spinner("Ingesting files into DuckDB and normalizing..."), Database(db_path) as connection:
+        for file_state in ready_files:
+            try:
+                log_file = validate_log_file(file_state["temp_path"])
+                adapter = _get_adapter(log_file.format)
+                if adapter is None:
+                    raise ValueError(f"No ingestion adapter for format '{log_file.format}'")
 
-                    load_result = adapter(log_file, connection)
+                load_result = adapter(log_file, connection)
 
-                    file_state["status"] = "ingested"
-                    file_state["ingest_table"] = load_result.table_name
-                    file_state["row_count"] = load_result.row_count
-                    file_state["schema"] = load_result.schema
-                    file_state["validation_error"] = None
-                except (OSError, duckdb.Error, RuntimeError, ValueError) as exc:
-                    file_state["status"] = "error"
-                    file_state["validation_error"] = str(exc)
-                    errors.append(f"{file_state['name']}: {exc}")
-                finally:
-                    Path(file_state["temp_path"]).unlink(missing_ok=True)
+                file_state["status"] = "ingested"
+                file_state["ingest_table"] = load_result.table_name
+                file_state["row_count"] = load_result.row_count
+                file_state["schema"] = load_result.schema
+                file_state["validation_error"] = None
+            except (OSError, duckdb.Error, RuntimeError, ValueError) as exc:
+                file_state["status"] = "error"
+                file_state["validation_error"] = str(exc)
+                errors.append(f"{file_state['name']}: {exc}")
+            finally:
+                Path(file_state["temp_path"]).unlink(missing_ok=True)
 
             ingested_files = [f for f in ready_files if f["status"] == "ingested"]
             if ingested_files:
@@ -304,9 +295,7 @@ def _render_uploaded_files_overview() -> None:
             st.write(f"**Status:** {file_state['status']}")
             st.write(f"**Format:** {file_state['format'] or 'unknown'}")
             if file_state["size"] > _LARGE_FILE_BYTES:
-                st.warning(
-                    "This is a large upload. Preview is limited to the first 200 lines."
-                )
+                st.warning("This is a large upload. Preview is limited to the first 200 lines.")
             if file_state["preview"]:
                 st.code(file_state["preview"], language="text")
             elif file_state["status"] == "invalid":
@@ -345,25 +334,21 @@ def _render_upload_status_summary() -> None:
 
 def _render_ingested_table_preview() -> None:
     ingested_files = [
-        file_state
-        for file_state in st.session_state["uploaded_files"]
-        if file_state["status"] == "ingested"
+        file_state for file_state in st.session_state["uploaded_files"] if file_state["status"] == "ingested"
     ]
     if not ingested_files:
         return
 
     st.subheader("Ingested raw table preview")
     for file_state in ingested_files:
-        with st.expander(
-            f"{file_state['name']} loaded into {file_state['ingest_table']}", expanded=False
-        ):
+        with st.expander(f"{file_state['name']} loaded into {file_state['ingest_table']}", expanded=False):
             st.write(f"Row count: {file_state['row_count']}")
-            st.write(f"Normalized events table: {file_state['normalized_table']} ({file_state['normalized_row_count']} rows)")
+            st.write(
+                f"Normalized events table: {file_state['normalized_table']} ({file_state['normalized_row_count']} rows)"
+            )
             if file_state["schema"]:
                 st.write("**Raw schema:**")
-                st.table(
-                    [{"column": col, "type": dtype} for col, dtype in file_state["schema"]]
-                )
+                st.table([{"column": col, "type": dtype} for col, dtype in file_state["schema"]])
             db_path = st.session_state.get("db_path", settings.database.path)
             if db_path and file_state["ingest_table"]:
                 try:

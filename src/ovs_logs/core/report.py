@@ -55,28 +55,22 @@ class IncidentReport:
 
     def __post_init__(self) -> None:
         if self.severity not in {"Low", "Medium", "High"}:
-            raise ValueError(
-                f"Incident severity must be Low, Medium, or High; got {self.severity!r}"
-            )
+            raise ValueError(f"Incident severity must be Low, Medium, or High; got {self.severity!r}")
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize the report to a JSON-friendly dictionary."""
         return dataclasses.asdict(self)
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "IncidentReport":
+    def from_dict(cls, data: dict[str, Any]) -> IncidentReport:
         """Reconstruct an incident report from a dictionary."""
         return cls(
             title=data["title"],
             summary=data["summary"],
             severity=data["severity"],
             timeline=[TimelineEvent(**item) for item in data.get("timeline", [])],
-            mitre_mappings=[
-                MitreMapping(**item) for item in data.get("mitre_mappings", [])
-            ],
+            mitre_mappings=[MitreMapping(**item) for item in data.get("mitre_mappings", [])],
             mitigation=MitigationArtifact(**data["mitigation"]),
-            indicators=[
-                SuspiciousIndicator(**item) for item in data.get("indicators", [])
-            ],
+            indicators=[SuspiciousIndicator(**item) for item in data.get("indicators", [])],
             metadata=data.get("metadata", {}),
         )

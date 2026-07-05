@@ -2,13 +2,11 @@
 
 from __future__ import annotations
 
-import duckdb
-import os
 from pathlib import Path
 
+import duckdb
 import pytest
 from streamlit.testing.v1 import AppTest
-
 
 APP_PATH = Path(__file__).resolve().parents[1] / "src" / "ovs_logs" / "ui" / "app.py"
 
@@ -57,8 +55,9 @@ def test_db_path_defaults_to_settings(monkeypatch: pytest.MonkeyPatch) -> None:
     if any(".ovs_logs/ovs_logs.db" in e.value for e in at.sidebar.error):
         assert at.session_state.get("selected_table") is None
     else:
-        assert any("No application tables" in i.value for i in at.sidebar.info) or \
-               any("not found" in e.value for e in at.sidebar.error)
+        assert any("No application tables" in i.value for i in at.sidebar.info) or any(
+            "not found" in e.value for e in at.sidebar.error
+        )
 
 
 def test_missing_db_shows_error(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -68,9 +67,7 @@ def test_missing_db_shows_error(monkeypatch: pytest.MonkeyPatch, tmp_path: Path)
     assert any(str(missing) in e.value for e in at.sidebar.error)
 
 
-def test_recent_tables_lists_user_tables_only(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_recent_tables_lists_user_tables_only(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     db = _make_db(
         tmp_path,
         [
@@ -92,9 +89,7 @@ def test_recent_tables_lists_user_tables_only(
     assert at.session_state["selected_table"] == sb.value
 
 
-def test_changing_db_path_refreshes_tables(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_changing_db_path_refreshes_tables(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     db_a = _make_db(tmp_path, [("alpha", "SELECT 1")])
     db_b_dir = tmp_path / "other"
     db_b_dir.mkdir()
@@ -124,9 +119,7 @@ def test_changing_db_path_clears_stale_table_selection(tmp_path: Path) -> None:
     assert len(at.sidebar.selectbox) == 0
 
 
-def test_selecting_table_persists_to_session_state(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_selecting_table_persists_to_session_state(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     db = _make_db(
         tmp_path,
         [("alpha", "SELECT 1"), ("beta", "SELECT 2")],
@@ -188,14 +181,8 @@ def test_raw_preview_displays_preview_text(tmp_path: Path) -> None:
         file_state["name"] == "raw.log" and file_state["status"] == "ready"
         for file_state in at.session_state["uploaded_files"]
     )
-    assert any(
-        "first line" in (file_state["preview"] or "")
-        for file_state in at.session_state["uploaded_files"]
-    )
-    assert any(
-        "Upload status:" in info.value and "ready" in info.value
-        for info in at.info
-    )
+    assert any("first line" in (file_state["preview"] or "") for file_state in at.session_state["uploaded_files"])
+    assert any("Upload status:" in info.value and "ready" in info.value for info in at.info)
 
 
 def test_ingested_table_preview_after_process(tmp_path: Path) -> None:

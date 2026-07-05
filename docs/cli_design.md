@@ -25,9 +25,9 @@ Queries DuckDB for statistical anomalies, queries external reputation APIs, chun
 * **Parameters:** * `--threat-intel` (bool, default true): Toggles live enrichment calls via AbuseIPDB API keys.
 * **Sample Core DuckDB Query (Anomalous IP Detection Pattern):**
   ```sql
-  SELECT 
-      client_ip, 
-      COUNT(*) as request_count, 
+  SELECT
+      client_ip,
+      COUNT(*) as request_count,
       COUNT(CASE WHEN status_code >= 400 THEN 1 END) as error_count,
       ROUND(error_count * 100.0 / request_count, 2) as error_rate,
       ARRAY_AGG(DISTINCT request_path) FILTER (WHERE status_code >= 400)[:5] as targeted_endpoints
@@ -36,7 +36,7 @@ Queries DuckDB for statistical anomalies, queries external reputation APIs, chun
   HAVING request_count > 100 AND error_rate > 70.0
   ORDER BY error_count DESC;
   ```
-  
+
 ### 2.3. Command: ovs-log export-rule
 Extracts only the generated mitigation signatures out of the database local cache.
 

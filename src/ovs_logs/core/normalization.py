@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Sequence
 
 import duckdb
 
@@ -84,9 +84,7 @@ class NormalizationEngine:
         candidates = self.aliases.get(target, [])
         return [lower_map[alias] for alias in candidates if alias in lower_map]
 
-    def _build_expression(
-        self, target: str, dtype: str, matches: list[str]
-    ) -> tuple[str, str | None]:
+    def _build_expression(self, target: str, dtype: str, matches: list[str]) -> tuple[str, str | None]:
         """Return a SQL select expression and the source column used (if any)."""
         if not matches:
             return f'NULL::{dtype} AS "{target}"', None
@@ -97,7 +95,7 @@ class NormalizationEngine:
         else:
             casts = ", ".join(f'"{col}"::{dtype}' for col in matches)
 
-        return f"COALESCE({casts}) AS \"{target}\"", source_column
+        return f'COALESCE({casts}) AS "{target}"', source_column
 
     def build_select_query(
         self, raw_table: str, columns: Sequence[str]
@@ -108,9 +106,7 @@ class NormalizationEngine:
 
         for target in TARGET_TYPES:
             matches = self._find_matches(columns, target)
-            expr, source = self._build_expression(
-                target, TARGET_TYPES[target], matches
-            )
+            expr, source = self._build_expression(target, TARGET_TYPES[target], matches)
             expressions.append(expr)
             mapping[target] = source
 
@@ -126,9 +122,7 @@ class NormalizationEngine:
             mapping,
         )
 
-    def normalize_table(
-        self, connection: duckdb.DuckDBPyConnection, load_result: LoadResult
-    ) -> NormalizeResult:
+    def normalize_table(self, connection: duckdb.DuckDBPyConnection, load_result: LoadResult) -> NormalizeResult:
         """Create or replace the unified `events` table from a raw load result."""
         raw_columns = [name for name, _ in load_result.schema]
         sql, mapping = self.build_sql(load_result.table_name, raw_columns)

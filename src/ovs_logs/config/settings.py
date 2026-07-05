@@ -60,9 +60,7 @@ def _load_abuseipdb_settings() -> AbuseIPDBSettings:
             "ABUSEIPDB_MAX_REQUESTS_PER_MINUTE", AbuseIPDBSettings.max_requests_per_minute
         ),
         max_retries=_int_env("ABUSEIPDB_MAX_RETRIES", AbuseIPDBSettings.max_retries),
-        backoff_seconds=_int_env(
-            "ABUSEIPDB_BACKOFF_SECONDS", AbuseIPDBSettings.backoff_seconds
-        ),
+        backoff_seconds=_int_env("ABUSEIPDB_BACKOFF_SECONDS", AbuseIPDBSettings.backoff_seconds),
     )
 
 
@@ -76,19 +74,13 @@ def _load_llm_settings() -> LLMSettings:
 
 def _load_thresholds() -> AnalysisThresholds:
     return AnalysisThresholds(
-        top_talkers=_int_env(
-            "OVS_LOGS_TALKER_THRESHOLD", AnalysisThresholds.top_talkers
-        ),
-        error_spikes=_int_env(
-            "OVS_LOGS_ERROR_THRESHOLD", AnalysisThresholds.error_spikes
-        ),
+        top_talkers=_int_env("OVS_LOGS_TALKER_THRESHOLD", AnalysisThresholds.top_talkers),
+        error_spikes=_int_env("OVS_LOGS_ERROR_THRESHOLD", AnalysisThresholds.error_spikes),
         event_distribution=_int_env(
             "OVS_LOGS_EVENT_DISTRIBUTION_THRESHOLD",
             AnalysisThresholds.event_distribution,
         ),
-        temporal_anomaly=_int_env(
-            "OVS_LOGS_TEMPORAL_BUCKET_THRESHOLD", AnalysisThresholds.temporal_anomaly
-        ),
+        temporal_anomaly=_int_env("OVS_LOGS_TEMPORAL_BUCKET_THRESHOLD", AnalysisThresholds.temporal_anomaly),
     )
 
 

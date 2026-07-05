@@ -6,7 +6,7 @@ from typing import Any
 
 import duckdb
 
-from .templates import SQLTemplate, TEMPLATES
+from .templates import TEMPLATES, SQLTemplate
 
 
 class AnalysisEngine:
@@ -15,15 +15,10 @@ class AnalysisEngine:
     def __init__(self, templates: dict[str, SQLTemplate] | None = None) -> None:
         self.templates = templates or TEMPLATES
 
-    def _resolve_parameters(
-        self, template: SQLTemplate, thresholds: dict[str, int] | None
-    ) -> list[int]:
+    def _resolve_parameters(self, template: SQLTemplate, thresholds: dict[str, int] | None) -> list[int]:
         """Build the ordered parameter list for a template."""
         thresholds = thresholds or {}
-        return [
-            thresholds.get(param, template.default_thresholds[param])
-            for param in template.parameters
-        ]
+        return [thresholds.get(param, template.default_thresholds[param]) for param in template.parameters]
 
     def run_queries(
         self,

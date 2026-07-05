@@ -2,8 +2,8 @@
 
 import json
 import tempfile
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Sequence
 
 import pytest
 
@@ -16,7 +16,7 @@ from ovs_logs.core.ingestion.adapters import (
     load_json,
     load_text_log,
 )
-from ovs_logs.core.validation import LogFile, validate_log_file
+from ovs_logs.core.validation import validate_log_file
 
 
 @pytest.fixture
@@ -45,10 +45,7 @@ def test_load_csv(db, tmp_path: Path) -> None:
 
 def test_load_json(db, tmp_path: Path) -> None:
     file = tmp_path / "sample.json"
-    file.write_text(
-        '[{"id":1,"event":"login","ip":"1.2.3.4"},'
-        '{"id":2,"event":"logout","ip":"5.6.7.8"}]'
-    )
+    file.write_text('[{"id":1,"event":"login","ip":"1.2.3.4"},{"id":2,"event":"logout","ip":"5.6.7.8"}]')
 
     log = validate_log_file(file)
     result = load_json(log, db, table_name="test_json")
@@ -111,9 +108,7 @@ def test_load_evtx_converts_to_csv(db, tmp_path: Path, monkeypatch: pytest.Monke
     assert {"timestamp", "event", "message"}.issubset(_schema_columns(result.schema))
 
 
-def test_load_evtx_raises_for_unparseable_file(
-    db, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_load_evtx_raises_for_unparseable_file(db, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     file = tmp_path / "sample.evtx"
     file.write_bytes(b"EVT\x00...")
 
@@ -141,9 +136,7 @@ def test_extract_evtx_fields_preserves_list_values_as_json_arrays() -> None:
     assert '"EventData_Tags": ["alpha", "beta"]' in row["message"]
 
 
-def test_load_evtx_cleans_up_temporary_csv_on_parser_error(
-    db, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_load_evtx_cleans_up_temporary_csv_on_parser_error(db, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     file = tmp_path / "sample.evtx"
     file.write_bytes(b"EVT\x00...")
     created_paths: list[str] = []

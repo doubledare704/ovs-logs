@@ -3,7 +3,6 @@
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
 from typer.testing import CliRunner
 
 from ovs_logs.cli.main import app
@@ -46,9 +45,7 @@ def test_ingest_unsupported_type(tmp_path: Path) -> None:
     csv = tmp_path / "sample.csv"
     csv.write_text("a\n1\n")
 
-    result = runner.invoke(
-        app, ["ingest", "--file", str(csv), "--type", "unknown"]
-    )
+    result = runner.invoke(app, ["ingest", "--file", str(csv), "--type", "unknown"])
 
     assert result.exit_code == 3
     assert "Unsupported type" in result.output
@@ -119,9 +116,7 @@ def test_ingest_log_structured_success(tmp_path: Path) -> None:
 
 def test_ingest_log_fallback_to_raw_on_no_matches(tmp_path: Path) -> None:
     ambiguous = tmp_path / "ambiguous.txt"
-    ambiguous.write_text(
-        "This is just some random text.\nNothing here matches any pattern.\n"
-    )
+    ambiguous.write_text("This is just some random text.\nNothing here matches any pattern.\n")
     db = tmp_path / "test.db"
 
     result = runner.invoke(
@@ -208,9 +203,7 @@ def test_analyze_with_intel_no_api_key(tmp_path: Path) -> None:
     db = tmp_path / "test.db"
     _ingest_csv(csv, db)
 
-    result = runner.invoke(
-        app, ["analyze", "--table", "events", "--db", str(db), "--intel"]
-    )
+    result = runner.invoke(app, ["analyze", "--table", "events", "--db", str(db), "--intel"])
 
     assert result.exit_code == 0, result.output
     assert "Suspicious Indicators" in result.output
@@ -218,9 +211,7 @@ def test_analyze_with_intel_no_api_key(tmp_path: Path) -> None:
 
 def test_analyze_missing_table(tmp_path: Path) -> None:
     db = tmp_path / "test.db"
-    result = runner.invoke(
-        app, ["analyze", "--table", "missing_table", "--db", str(db)]
-    )
+    result = runner.invoke(app, ["analyze", "--table", "missing_table", "--db", str(db)])
 
     assert result.exit_code != 0
     assert "Unexpected error" in result.output
@@ -282,9 +273,7 @@ def test_analyze_with_llm_and_output(tmp_path: Path) -> None:
 
     mock_response = Mock()
     mock_response.raise_for_status.return_value = None
-    mock_response.json.return_value = {
-        "choices": [{"message": {"content": llm_response}}]
-    }
+    mock_response.json.return_value = {"choices": [{"message": {"content": llm_response}}]}
 
     with patch("ovs_logs.core.llm.requests.post", return_value=mock_response):
         result = runner.invoke(

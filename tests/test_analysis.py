@@ -39,9 +39,7 @@ def analysis_engine(db, tmp_path: Path):
 
 
 def test_top_talkers(analysis_engine, db) -> None:
-    results = analysis_engine.run_queries(
-        db, thresholds={"top_talkers": {"min_events": 2, "limit": 10}}
-    )
+    results = analysis_engine.run_queries(db, thresholds={"top_talkers": {"min_events": 2, "limit": 10}})
 
     top = results["top_talkers"]
     assert len(top) == 2
@@ -52,9 +50,7 @@ def test_top_talkers(analysis_engine, db) -> None:
 
 
 def test_error_spikes(analysis_engine, db) -> None:
-    results = analysis_engine.run_queries(
-        db, thresholds={"error_spikes": {"min_errors": 1, "limit": 10}}
-    )
+    results = analysis_engine.run_queries(db, thresholds={"error_spikes": {"min_errors": 1, "limit": 10}})
 
     errors = results["error_spikes"]
     assert len(errors) == 2
@@ -74,9 +70,7 @@ def test_event_distribution(analysis_engine, db) -> None:
 
 
 def test_temporal_anomaly(analysis_engine, db) -> None:
-    results = analysis_engine.run_queries(
-        db, thresholds={"temporal_anomaly": {"min_events": 1, "limit": 10}}
-    )
+    results = analysis_engine.run_queries(db, thresholds={"temporal_anomaly": {"min_events": 1, "limit": 10}})
 
     buckets = results["temporal_anomaly"]
     assert len(buckets) == 2

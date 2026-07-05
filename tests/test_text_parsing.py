@@ -3,13 +3,11 @@
 from __future__ import annotations
 
 import tempfile
+from collections.abc import Iterator
 from pathlib import Path
 
-from collections.abc import Iterator
-
-import pytest
-
 import duckdb
+import pytest
 
 from ovs_logs.config.settings import TextParseConfig
 from ovs_logs.core.database import Database
@@ -34,10 +32,13 @@ def _schema_columns(schema: list[tuple[str, str]]) -> set[str]:
 
 def test_parse_web_access_log(db, tmp_path: Path) -> None:
     path = tmp_path / "access.log"
-    _write_lines(path, [
-        "10.0.0.1 - - [14/Nov/2023:12:00:00 +0000] \"GET /index.html HTTP/1.1\" 200 1024",
-        "10.0.0.2 - - [14/Nov/2023:12:01:00 +0000] \"POST /api/login HTTP/1.1\" 401 512",
-    ])
+    _write_lines(
+        path,
+        [
+            '10.0.0.1 - - [14/Nov/2023:12:00:00 +0000] "GET /index.html HTTP/1.1" 200 1024',
+            '10.0.0.2 - - [14/Nov/2023:12:01:00 +0000] "POST /api/login HTTP/1.1" 401 512',
+        ],
+    )
     log = validate_log_file(path)
     result = parse_text_log(log, db, table_name="web_events")
     assert result.row_count == 2
@@ -52,10 +53,13 @@ def test_parse_web_access_log(db, tmp_path: Path) -> None:
 
 def test_parse_syslog(db, tmp_path: Path) -> None:
     path = tmp_path / "syslog"
-    _write_lines(path, [
-        "Jan 15 08:00:00 srv-01 sshd[1234]: Failed password for alice from 10.0.0.5 port 22 ssh2",
-        "Jan 15 08:01:00 srv-01 systemd[1]: Started Session 1 of user root.",
-    ])
+    _write_lines(
+        path,
+        [
+            "Jan 15 08:00:00 srv-01 sshd[1234]: Failed password for alice from 10.0.0.5 port 22 ssh2",
+            "Jan 15 08:01:00 srv-01 systemd[1]: Started Session 1 of user root.",
+        ],
+    )
     log = validate_log_file(path)
     result = parse_text_log(log, db, table_name="syslog_events")
     assert result.row_count == 2
@@ -140,7 +144,7 @@ def test_no_matching_pattern_returns_raw_table(db, tmp_path: Path) -> None:
 def test_temp_csv_cleanup_on_success(db, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(tempfile, "gettempdir", lambda: str(tmp_path))
     path = tmp_path / "clean.log"
-    _write_lines(path, ["10.0.0.1 - - [14/Nov/2023:12:00:00 +0000] \"GET / HTTP/1.1\" 200 10"])
+    _write_lines(path, ['10.0.0.1 - - [14/Nov/2023:12:00:00 +0000] "GET / HTTP/1.1" 200 10'])
     log = validate_log_file(path)
     parse_text_log(log, db, table_name="clean_table")
     tmp_files = list(tmp_path.glob("*.csv"))
@@ -149,15 +153,23 @@ def test_temp_csv_cleanup_on_success(db, tmp_path: Path, monkeypatch: pytest.Mon
 
 def test_existing_table_replaced(db, tmp_path: Path) -> None:
     path = tmp_path / "dup.log"
-    _write_lines(path, ['{"ts":"2024-01-01T00:00:00Z","level":"INFO","component":"api","msg":"hi","src_ip":"1.2.3.4","status":200,"duration_ms":1}'])
+    _write_lines(
+        path,
+        [
+            '{"ts":"2024-01-01T00:00:00Z","level":"INFO","component":"api","msg":"hi","src_ip":"1.2.3.4","status":200,"duration_ms":1}'
+        ],
+    )
     log = validate_log_file(path)
     parse_text_log(log, db, table_name="reuse_table")
     first_count = db.execute('SELECT COUNT(*) FROM "reuse_table"').fetchone()[0]
     assert first_count == 1
-    _write_lines(path, [
-        '{"ts":"2024-01-01T00:00:00Z","level":"INFO","component":"api","msg":"hi","src_ip":"1.2.3.4","status":200,"duration_ms":1}',
-        '{"ts":"2024-01-01T00:01:00Z","level":"ERROR","component":"ingest","msg":"bye","src_ip":"5.6.7.8","status":500,"duration_ms":2}',
-    ])
+    _write_lines(
+        path,
+        [
+            '{"ts":"2024-01-01T00:00:00Z","level":"INFO","component":"api","msg":"hi","src_ip":"1.2.3.4","status":200,"duration_ms":1}',
+            '{"ts":"2024-01-01T00:01:00Z","level":"ERROR","component":"ingest","msg":"bye","src_ip":"5.6.7.8","status":500,"duration_ms":2}',
+        ],
+    )
     log = validate_log_file(path)
     parse_text_log(log, db, table_name="reuse_table")
     count = db.execute('SELECT COUNT(*) FROM "reuse_table"').fetchone()[0]

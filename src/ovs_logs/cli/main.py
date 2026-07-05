@@ -2,14 +2,15 @@
 
 from __future__ import annotations
 
-import duckdb
 import json
 import os
 import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
+import duckdb
 import typer
 from rich.console import Console
 from rich.table import Table
@@ -66,9 +67,7 @@ def _resolve_log_file(file: Path, file_type: str | None) -> LogFile:
 
     normalized = file_type.lower()
     if normalized not in SUPPORTED_FORMATS:
-        raise ValueError(
-            f"Unsupported type '{file_type}'. Supported: {', '.join(sorted(SUPPORTED_FORMATS))}"
-        )
+        raise ValueError(f"Unsupported type '{file_type}'. Supported: {', '.join(sorted(SUPPORTED_FORMATS))}")
     return LogFile(
         path=log_file.path,
         format=normalized,
@@ -82,12 +81,8 @@ def ingest(
     file_type: str | None = typer.Option(
         None, "--type", help="Override file type detection (csv, json, txt, log, evtx)"
     ),
-    db: Path = typer.Option(
-        Path(settings.database.path), "--db", help="DuckDB database path"
-    ),
-    table: str | None = typer.Option(
-        None, "--table", help="Destination raw table name (auto-generated if omitted)"
-    ),
+    db: Path = typer.Option(Path(settings.database.path), "--db", help="DuckDB database path"),
+    table: str | None = typer.Option(None, "--table", help="Destination raw table name (auto-generated if omitted)"),
 ) -> None:
     """Ingest a log file into DuckDB and normalize it into the events table."""
     try:
@@ -179,29 +174,19 @@ def _render_report(report: IncidentReport) -> None:
         mitre_table.add_column("Technique")
         mitre_table.add_column("Tactic")
         for mapping in report.mitre_mappings:
-            mitre_table.add_row(
-                mapping.technique_id, mapping.technique_name, mapping.tactic
-            )
+            mitre_table.add_row(mapping.technique_id, mapping.technique_name, mapping.tactic)
         console.print(mitre_table)
 
 
 @app.command()
 def analyze(
     table: str = typer.Option(..., "--table", help="DuckDB table to analyze"),
-    db: Path = typer.Option(
-        Path(settings.database.path), "--db", help="DuckDB database path"
-    ),
+    db: Path = typer.Option(Path(settings.database.path), "--db", help="DuckDB database path"),
     intel: bool = typer.Option(False, "--intel", help="Enable AbuseIPDB enrichment"),
     llm: bool = typer.Option(False, "--llm", help="Enable LLM synthesis"),
-    abuseipdb_api_key: str | None = typer.Option(
-        None, "--abuseipdb-api-key", help="AbuseIPDB API key"
-    ),
-    llm_api_key: str | None = typer.Option(
-        None, "--llm-api-key", help="LLM API key"
-    ),
-    output: Path | None = typer.Option(
-        None, "--output", help="Write JSON report to file"
-    ),
+    abuseipdb_api_key: str | None = typer.Option(None, "--abuseipdb-api-key", help="AbuseIPDB API key"),
+    llm_api_key: str | None = typer.Option(None, "--llm-api-key", help="LLM API key"),
+    output: Path | None = typer.Option(None, "--output", help="Write JSON report to file"),
 ) -> None:
     """Analyze a DuckDB table to extract indicators and optionally synthesize a report."""
     try:
@@ -220,32 +205,22 @@ def analyze(
             if intel:
                 with console.status("[bold green]Enriching with threat intelligence..."):
                     ips = _extract_unique_ips(indicators)
-                    client = ThreatIntelClient(
-                        api_key=abuseipdb_api_key or os.getenv("ABUSEIPDB_API_KEY")
-                    )
+                    client = ThreatIntelClient(api_key=abuseipdb_api_key or os.getenv("ABUSEIPDB_API_KEY"))
                     threat_intel = client.lookup_many(ips) if ips else {}
 
             report: IncidentReport | None = None
             if llm:
                 with console.status("[bold green]Synthesizing incident report..."):
-                    provider = OpenAICompatibleProvider(
-                        api_key=llm_api_key or os.getenv("LLM_API_KEY")
-                    )
-                    report = LLMSynthesizer(provider).synthesize(
-                        indicators, threat_intel=threat_intel
-                    )
+                    provider = OpenAICompatibleProvider(api_key=llm_api_key or os.getenv("LLM_API_KEY"))
+                    report = LLMSynthesizer(provider).synthesize(indicators, threat_intel=threat_intel)
                 report_id = ReportStore().save_report(connection, report)
                 console.print(f"[bold]Report saved:[/bold] {report_id}")
                 _render_report(report)
 
             if output:
                 if report is None:
-                    raise ValueError(
-                        "--output requires --llm so a synthesized report is available"
-                    )
-                output.write_text(
-                    json.dumps(report.to_dict(), indent=2), encoding="utf-8"
-                )
+                    raise ValueError("--output requires --llm so a synthesized report is available")
+                output.write_text(json.dumps(report.to_dict(), indent=2), encoding="utf-8")
                 console.print(f"[bold]Report written to:[/bold] {output}")
     except Exception as exc:
         exit_code = _classify_error(exc)
@@ -305,9 +280,7 @@ def ui(
 def export_rule(
     report_id: str = typer.Option(..., "--report-id", help="Report ID to export"),
     rule_format: str = typer.Option("sigma", "--format", help="Rule format, e.g. sigma"),
-    db: Path = typer.Option(
-        Path(settings.database.path), "--db", help="DuckDB database path"
-    ),
+    db: Path = typer.Option(Path(settings.database.path), "--db", help="DuckDB database path"),
     output: Path = typer.Option(..., "--output", help="Write rule to file"),
 ) -> None:
     """Export a mitigation rule from a saved report.

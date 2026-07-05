@@ -4,7 +4,6 @@ from typing import Any
 
 import pytest
 
-from ovs_logs.config.settings import settings
 from ovs_logs.core.analysis.indicators import (
     IndicatorProcessor,
     SuspiciousIndicator,
@@ -17,15 +16,9 @@ def _sample_results() -> dict[str, list[dict[str, Any]]]:
             {"source_ip": "1.2.3.4", "event_count": 250},
             {"source_ip": "5.6.7.8", "event_count": 125},
         ],
-        "error_spikes": [
-            {"source_ip": "1.2.3.4", "status_code": 404, "error_count": 120}
-        ],
-        "event_distribution": [
-            {"event_type": "GET", "event_count": 120}
-        ],
-        "temporal_anomaly": [
-            {"time_bucket": "2024-01-01 00:00:00", "event_count": 30}
-        ],
+        "error_spikes": [{"source_ip": "1.2.3.4", "status_code": 404, "error_count": 120}],
+        "event_distribution": [{"event_type": "GET", "event_count": 120}],
+        "temporal_anomaly": [{"time_bucket": "2024-01-01 00:00:00", "event_count": 30}],
     }
 
 

@@ -1,6 +1,6 @@
 # OVS-Log Streamlit Dashboard Interface Design
 
-Streamlit serves as the presentation layer for high-impact visual proof of concept (the 10-second "Before vs After" expert demo). 
+Streamlit serves as the presentation layer for high-impact visual proof of concept (the 10-second "Before vs After" expert demo).
 
 ## 1. Scope Constraints for the MVP UI
 * **Single-Page Application (SPA):** To maximize speed and avoid fragmentation, a multipage routing framework is omitted. Instead, state variables control a seamless top-to-bottom layout transition.

@@ -9,8 +9,9 @@ import os
 import re
 import tempfile
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, Sequence
+from typing import Any
 
 import duckdb
 
@@ -57,8 +58,8 @@ def _quote_identifier(identifier: str) -> str:
 def _build_result(connection: duckdb.DuckDBPyConnection, table_name: str) -> LoadResult:
     """Query the loaded table for row count and schema."""
     quoted_name = _quote_identifier(table_name)
-    row_count = connection.execute(f'SELECT COUNT(*) FROM {quoted_name}').fetchone()[0]
-    schema_rows = connection.execute(f'DESCRIBE {quoted_name}').fetchall()
+    row_count = connection.execute(f"SELECT COUNT(*) FROM {quoted_name}").fetchone()[0]
+    schema_rows = connection.execute(f"DESCRIBE {quoted_name}").fetchall()
     schema = [(row[0], row[1]) for row in schema_rows]
     return LoadResult(table_name=table_name, row_count=row_count, schema=schema)
 
@@ -72,7 +73,7 @@ def load_csv(
     name = _resolve_table_name(log_file, table_name)
     quoted_name = _quote_identifier(name)
     connection.execute(
-        f'CREATE OR REPLACE TABLE {quoted_name} AS SELECT * FROM read_csv_auto(?, header=true, delim=\',\', all_varchar=true)',
+        f"CREATE OR REPLACE TABLE {quoted_name} AS SELECT * FROM read_csv_auto(?, header=true, delim=',', all_varchar=true)",
         [str(log_file.path.resolve())],
     )
     return _build_result(connection, name)
@@ -87,7 +88,7 @@ def load_json(
     name = _resolve_table_name(log_file, table_name)
     quoted_name = _quote_identifier(name)
     connection.execute(
-        f'CREATE OR REPLACE TABLE {quoted_name} AS SELECT * FROM read_json_auto(?)',
+        f"CREATE OR REPLACE TABLE {quoted_name} AS SELECT * FROM read_json_auto(?)",
         [str(log_file.path.resolve())],
     )
     return _build_result(connection, name)
@@ -102,13 +103,11 @@ def load_text_log(
     """Load an unstructured text or log file into a single-column DuckDB table."""
     name = _resolve_table_name(log_file, table_name)
     quoted_name = _quote_identifier(name)
-    connection.execute(f'CREATE OR REPLACE TABLE {quoted_name} (line VARCHAR)')
+    connection.execute(f"CREATE OR REPLACE TABLE {quoted_name} (line VARCHAR)")
     logging.info("Loading text log into table %s from %s", name, log_file.path)
     tmp_path: str | None = None
     try:
-        with tempfile.NamedTemporaryFile(
-            mode="w", encoding="utf-8", suffix=".csv", delete=False, newline=""
-        ) as tmp:
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", suffix=".csv", delete=False, newline="") as tmp:
             writer = csv.writer(tmp)
             writer.writerow(["line"])
             with log_file.path.open("r", encoding="utf-8", errors="replace") as fh:
@@ -119,7 +118,7 @@ def load_text_log(
 
         logging.info("Inserting data from temporary CSV into table %s", name)
         connection.execute(
-            f'INSERT INTO {quoted_name} SELECT * FROM read_csv_auto(?, header=true, delim=\',\', all_varchar=true)',
+            f"INSERT INTO {quoted_name} SELECT * FROM read_csv_auto(?, header=true, delim=',', all_varchar=true)",
             [tmp_path],
         )
     finally:
@@ -202,17 +201,13 @@ def load_evtx(
 ) -> LoadResult:
     """Convert an EVTX file into a temporary CSV and load it into DuckDB."""
     if PyEvtxParser is None:  # pragma: no cover - depends on optional runtime dependency
-        raise RuntimeError(
-            "EVTX support requires the optional 'evtx' dependency to be installed."
-        )
+        raise RuntimeError("EVTX support requires the optional 'evtx' dependency to be installed.")
 
     name = _resolve_table_name(log_file, table_name)
     tmp_path: str | None = None
 
     try:
-        with tempfile.NamedTemporaryFile(
-            mode="w", encoding="utf-8", suffix=".csv", delete=False, newline=""
-        ) as tmp:
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", suffix=".csv", delete=False, newline="") as tmp:
             tmp_path = tmp.name
             writer = csv.DictWriter(
                 tmp,
@@ -230,9 +225,7 @@ def load_evtx(
                         try:
                             event_data = json.loads(payload)
                         except json.JSONDecodeError as exc:
-                            raise RuntimeError(
-                                f"Unable to parse EVTX record {record.get('identifier')}"
-                            ) from exc
+                            raise RuntimeError(f"Unable to parse EVTX record {record.get('identifier')}") from exc
                     elif isinstance(payload, dict):
                         event_data = payload
                     else:

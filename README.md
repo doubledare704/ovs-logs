@@ -31,7 +31,27 @@ Install the package with development extras:
 uv sync --frozen --all-extras
 ```
 
-This installs `pytest` in addition to the runtime dependencies.
+This installs `pytest`, `ruff`, `pyrefly`, and `pre-commit` in addition to the runtime dependencies.
+
+### Pre-commit hooks
+
+Set up pre-commit hooks to automatically run linting and formatting on commit:
+
+```bash
+uv run pre-commit install
+```
+
+The hooks will run:
+- **Ruff** - Fast Python linter and formatter (replaces flake8, isort, black, etc.)
+- **Pyrefly** - Fast Python type checker
+- **Basic checks** - Merge conflicts, debug statements, large files, YAML/TOML/JSON syntax, trailing whitespace, line endings
+- **Gitleaks** - Secret scanning
+
+Run manually on all files:
+
+```bash
+uv run pre-commit run --all-files
+```
 
 ### Verify the installation
 
