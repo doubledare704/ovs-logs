@@ -46,6 +46,6 @@ class AnalysisEngine:
             params = self._resolve_parameters(template, thresholds.get(name))
             cursor = connection.execute(sql, params)
             columns = [desc[0] for desc in cursor.description]
-            results[name] = [dict(zip(columns, row)) for row in cursor.fetchall()]
+            results[name] = [dict(zip(columns, row, strict=True)) for row in cursor.fetchall()]
 
         return results

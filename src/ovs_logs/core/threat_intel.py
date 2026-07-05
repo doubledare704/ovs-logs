@@ -17,6 +17,11 @@ class ThreatIntelError(Exception):
     """Raised when a threat-intel lookup fails."""
 
 
+_TRANSIENT_STATUS_MIN = 500
+_RATE_LIMIT_STATUS = 429
+_SUCCESS_STATUS = 200
+
+
 @dataclass(frozen=True)
 class ReputationResult:
     """Normalized IP reputation data from AbuseIPDB."""
@@ -57,7 +62,7 @@ class RateLimiter:
 class ThreatIntelClient:
     """Client for querying AbuseIPDB IP reputation data with caching, rate limiting, and retries."""
 
-    def __init__(
+    def __init__(  # noqa: PLR0913
         self,
         api_key: str | None = None,
         endpoint: str = settings.abuseipdb.api_url,
@@ -100,7 +105,7 @@ class ThreatIntelClient:
         )
 
     def _is_transient(self, status_code: int) -> bool:
-        return status_code >= 500 or status_code == 429
+        return status_code >= _TRANSIENT_STATUS_MIN or status_code == _RATE_LIMIT_STATUS
 
     def _execute(self, ip: str) -> requests.Response:
         """Make a single rate-limited HTTP request."""
@@ -138,7 +143,7 @@ class ThreatIntelClient:
             except requests.RequestException as exc:
                 raise ThreatIntelError(f"AbuseIPDB lookup for {ip} failed: {exc}") from exc
 
-            if response.status_code == 200:
+            if response.status_code == _SUCCESS_STATUS:
                 data = response.json().get("data", {})
                 result = self._build_result(ip, data)
                 self._cache[ip] = result

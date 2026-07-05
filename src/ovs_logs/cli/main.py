@@ -33,6 +33,7 @@ from ovs_logs.core.report import IncidentReport
 from ovs_logs.core.text_parsing import parse_text_log
 from ovs_logs.core.threat_intel import ThreatIntelClient
 from ovs_logs.core.validation import SUPPORTED_FORMATS, LogFile, validate_log_file
+from ovs_logs.ui import app as _app_module
 
 app = typer.Typer(help="OVS-Log: local AI-powered log tracer and DFIR assistant")
 console = Console()
@@ -75,6 +76,20 @@ def _resolve_log_file(file: Path, file_type: str | None) -> LogFile:
     )
 
 
+def _raise_no_adapter(fmt: str) -> None:
+    raise ValueError(f"No ingestion adapter for format '{fmt}'")
+
+
+def _raise_output_requires_llm() -> None:
+    raise ValueError("--output requires --llm so a synthesized report is available")
+
+
+def _raise_format_mismatch(rule_format: str, report_format: str) -> None:
+    raise ValueError(
+        f"Requested format '{rule_format}' does not match report mitigation format '{report_format}'"
+    )
+
+
 @app.command()
 def ingest(
     file: Path = typer.Option(..., "--file", help="Path to the log file to ingest"),
@@ -91,7 +106,7 @@ def ingest(
 
         adapter = ADAPTER_MAP.get(log_file.format)
         if adapter is None:
-            raise ValueError(f"No ingestion adapter for format '{log_file.format}'")
+            _raise_no_adapter(log_file.format)
 
         with Database(db) as connection:
             with console.status("[bold green]Loading into DuckDB..."):
@@ -179,7 +194,7 @@ def _render_report(report: IncidentReport) -> None:
 
 
 @app.command()
-def analyze(
+def analyze(  # noqa: PLR0913
     table: str = typer.Option(..., "--table", help="DuckDB table to analyze"),
     db: Path = typer.Option(Path(settings.database.path), "--db", help="DuckDB database path"),
     intel: bool = typer.Option(False, "--intel", help="Enable AbuseIPDB enrichment"),
@@ -219,7 +234,7 @@ def analyze(
 
             if output:
                 if report is None:
-                    raise ValueError("--output requires --llm so a synthesized report is available")
+                    _raise_output_requires_llm()
                 output.write_text(json.dumps(report.to_dict(), indent=2), encoding="utf-8")
                 console.print(f"[bold]Report written to:[/bold] {output}")
     except Exception as exc:
@@ -254,9 +269,8 @@ def ui(
     The target is passed as a `.py` filesystem path resolved via the module's
     ``__file__`` attribute, which is what Streamlit's CLI accepts.
     """
-    import ovs_logs.ui.app as _app_module
-
     target = str(Path(_app_module.__file__).resolve())
+
 
     cmd: list[str] = [
         sys.executable,
@@ -293,9 +307,7 @@ def export_rule(
             report = ReportStore().get_report(connection, report_id)
 
         if report.mitigation.format.lower() != rule_format.lower():
-            raise ValueError(
-                f"Requested format '{rule_format}' does not match report mitigation format '{report.mitigation.format}'"
-            )
+            _raise_format_mismatch(rule_format, report.mitigation.format)
 
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text(report.mitigation.content, encoding="utf-8")

@@ -5,12 +5,12 @@ from __future__ import annotations
 import csv
 import json
 import logging
-import os
 import re
 import tempfile
 import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import duckdb
@@ -73,7 +73,8 @@ def load_csv(
     name = _resolve_table_name(log_file, table_name)
     quoted_name = _quote_identifier(name)
     connection.execute(
-        f"CREATE OR REPLACE TABLE {quoted_name} AS SELECT * FROM read_csv_auto(?, header=true, delim=',', all_varchar=true)",
+        f"CREATE OR REPLACE TABLE {quoted_name} AS SELECT * "
+        "FROM read_csv_auto(?, header=true, delim=',', all_varchar=true)",
         [str(log_file.path.resolve())],
     )
     return _build_result(connection, name)
@@ -122,8 +123,8 @@ def load_text_log(
             [tmp_path],
         )
     finally:
-        if tmp_path is not None and os.path.exists(tmp_path):
-            os.unlink(tmp_path)
+        if tmp_path is not None and Path(tmp_path).exists():
+            Path(tmp_path).unlink()
 
     return _build_result(connection, name)
 
@@ -245,7 +246,7 @@ def load_evtx(
             [tmp_path],
         )
     finally:
-        if tmp_path is not None and os.path.exists(tmp_path):
-            os.unlink(tmp_path)
+        if tmp_path is not None and Path(tmp_path).exists():
+            Path(tmp_path).unlink()
 
     return _build_result(connection, name)

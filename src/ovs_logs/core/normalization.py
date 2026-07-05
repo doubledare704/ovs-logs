@@ -97,16 +97,14 @@ class NormalizationEngine:
 
         return f'COALESCE({casts}) AS "{target}"', source_column
 
-    def build_select_query(
-        self, raw_table: str, columns: Sequence[str]
-    ) -> tuple[str, dict[str, str | None]]:
+    def build_select_query(self, raw_table: str, columns: Sequence[str]) -> tuple[str, dict[str, str | None]]:
         """Build the `SELECT ... FROM "raw_table"` SQL statement."""
         expressions: list[str] = []
         mapping: dict[str, str | None] = {}
 
-        for target in TARGET_TYPES:
+        for target, dtype in TARGET_TYPES.items():
             matches = self._find_matches(columns, target)
-            expr, source = self._build_expression(target, TARGET_TYPES[target], matches)
+            expr, source = self._build_expression(target, dtype, matches)
             expressions.append(expr)
             mapping[target] = source
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import re
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import Any, ClassVar
 
 import requests
 
@@ -98,7 +98,7 @@ class PromptBuilder:
 class ResponseParser:
     """Extracts a JSON incident report from an LLM response."""
 
-    REQUIRED_FIELDS = {
+    REQUIRED_FIELDS: ClassVar[set[str]] = {
         "title",
         "summary",
         "severity",

@@ -5,8 +5,10 @@ This file explores different patterns for managing session state and triggering
 reruns in Streamlit apps, specifically for the OVS-Log UI.
 """
 
+import tempfile
 from pathlib import Path
 
+import duckdb
 import pytest
 from streamlit.testing.v1 import AppTest
 
@@ -60,9 +62,6 @@ class TestSessionStatePatterns:
 
     def test_selectbox_session_state_sync(self):
         """Test selectbox selection syncs with session state."""
-        import tempfile
-
-        import duckdb
 
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = Path(tmpdir) / "test.db"
@@ -206,9 +205,6 @@ class TestConditionalRendering:
 
     def test_conditional_widget_rendering(self):
         """Test widgets that are conditionally rendered."""
-        import tempfile
-
-        import duckdb
 
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = Path(tmpdir) / "test.db"
@@ -250,8 +246,8 @@ class TestPerformancePatterns:
         at.sidebar.text_input[2].set_value("/tmp/test.db").run()
 
         # API keys should not be affected
-        original_abuse = at.session_state["ABUSEIPDB_API_KEY"] if "ABUSEIPDB_API_KEY" in at.session_state else ""
-        original_llm = at.session_state["LLM_API_KEY"] if "LLM_API_KEY" in at.session_state else ""
+        original_abuse = at.session_state["ABUSEIPDB_API_KEY"] if "ABUSEIPDB_API_KEY" in at.session_state else ""  # noqa: SIM401
+        original_llm = at.session_state["LLM_API_KEY"] if "LLM_API_KEY" in at.session_state else ""  # noqa: SIM401
 
         # They should remain unchanged
         assert at.session_state["ABUSEIPDB_API_KEY"] == original_abuse

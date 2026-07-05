@@ -49,8 +49,9 @@ def test_lookup_success_and_cache() -> None:
 
     # Second lookup should be served from cache without another HTTP call.
     cached = client.lookup("1.2.3.4")
+    expected_score = 75
     assert cached.cached is True
-    assert cached.abuse_confidence_score == 75
+    assert cached.abuse_confidence_score == expected_score
     assert mock_get.call_count == 1
 
 
@@ -60,7 +61,8 @@ def test_lookup_many_deduplicates_ips() -> None:
         results = client.lookup_many(["1.2.3.4", "1.2.3.4", "5.6.7.8"])
 
     assert set(results.keys()) == {"1.2.3.4", "5.6.7.8"}
-    assert mock_get.call_count == 2
+    expected_count = 2
+    assert mock_get.call_count == expected_count
 
 
 def test_lookup_without_api_key_returns_neutral_result() -> None:
@@ -87,7 +89,7 @@ def test_rate_limiter_enforces_delay(monkeypatch) -> None:
     sleeps: list[float] = []
     times = [0.0, 0.5, 0.5]
     monkeypatch.setattr("ovs_logs.core.threat_intel.time.monotonic", lambda: times.pop(0))
-    monkeypatch.setattr("ovs_logs.core.threat_intel.time.sleep", lambda s: sleeps.append(s))
+    monkeypatch.setattr("ovs_logs.core.threat_intel.time.sleep", sleeps.append)
 
     limiter = RateLimiter(max_requests_per_minute=2)
     limiter.wait()
@@ -109,8 +111,10 @@ def test_lookup_retries_on_transient_error() -> None:
         client = ThreatIntelClient(api_key="test-key", max_retries=1)
         result = client.lookup("1.2.3.4")
 
-    assert result.abuse_confidence_score == 75
-    assert mock_get.call_count == 2
+    expected_score = 75
+    expected_calls = 2
+    assert result.abuse_confidence_score == expected_score
+    assert mock_get.call_count == expected_calls
 
 
 def test_lookup_raises_after_timeout_retries() -> None:
@@ -122,7 +126,8 @@ def test_lookup_raises_after_timeout_retries() -> None:
         with pytest.raises(ThreatIntelError, match="timed out"):
             client.lookup("1.2.3.4")
 
-    assert mock_get.call_count == 2
+    expected_calls = 2
+    assert mock_get.call_count == expected_calls
 
 
 def test_lookup_raises_after_rate_limit_retries() -> None:
@@ -138,4 +143,5 @@ def test_lookup_raises_after_rate_limit_retries() -> None:
         with pytest.raises(ThreatIntelError, match="HTTP 429"):
             client.lookup("1.2.3.4")
 
-    assert mock_get.call_count == 2
+    expected_calls = 2
+    assert mock_get.call_count == expected_calls

@@ -27,7 +27,8 @@ def test_app_renders_without_errors(monkeypatch: pytest.MonkeyPatch) -> None:
     at = AppTest.from_file(str(APP_PATH)).run()
     assert not at.exception
     # 2 password inputs (AbuseIPDB + LLM) + 1 text input (db path) = 3 in sidebar
-    assert len(at.sidebar.text_input) == 3
+    expected_sidebar_inputs = 3
+    assert len(at.sidebar.text_input) == expected_sidebar_inputs
     assert at.sidebar.text_input[0].label == "AbuseIPDB API Key"
     assert at.sidebar.text_input[1].label == "LLM API Key"
     assert at.sidebar.text_input[2].label == "Database path"

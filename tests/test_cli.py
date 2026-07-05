@@ -1,13 +1,18 @@
 """Tests for the Typer CLI."""
 
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from typer.testing import CliRunner
 
 from ovs_logs.cli.main import app
 
 runner = CliRunner()
+
+EXIT_CODE_SUCCESS = 0
+EXIT_CODE_PARAM_ERROR = 2
+EXIT_CODE_VALIDATION_ERROR = 3
+EXIT_CODE_PROPAGATED_STREAMLIT = 42
 
 
 def test_ingest_csv_success(tmp_path: Path) -> None:
@@ -28,7 +33,7 @@ def test_ingest_csv_success(tmp_path: Path) -> None:
         ],
     )
 
-    assert result.exit_code == 0, result.output
+    assert result.exit_code == EXIT_CODE_SUCCESS, result.output
     assert "Loaded 1 rows" in result.output
     assert "raw_sample" in result.output
     assert "timestamp" in result.output
@@ -37,7 +42,7 @@ def test_ingest_csv_success(tmp_path: Path) -> None:
 def test_ingest_missing_file() -> None:
     result = runner.invoke(app, ["ingest", "--file", "nonexistent.csv"])
 
-    assert result.exit_code == 2
+    assert result.exit_code == EXIT_CODE_PARAM_ERROR
     assert "File error" in result.output
 
 
@@ -47,7 +52,7 @@ def test_ingest_unsupported_type(tmp_path: Path) -> None:
 
     result = runner.invoke(app, ["ingest", "--file", str(csv), "--type", "unknown"])
 
-    assert result.exit_code == 3
+    assert result.exit_code == EXIT_CODE_VALIDATION_ERROR
     assert "Unsupported type" in result.output
 
 
@@ -57,7 +62,7 @@ def test_ingest_empty_file(tmp_path: Path) -> None:
 
     result = runner.invoke(app, ["ingest", "--file", str(empty)])
 
-    assert result.exit_code == 3
+    assert result.exit_code == EXIT_CODE_VALIDATION_ERROR
     assert "Validation error" in result.output
 
 
@@ -75,7 +80,8 @@ def test_ingest_evtx_success(tmp_path: Path, monkeypatch) -> None:
                 {
                     "identifier": "1",
                     "timestamp": "2024-01-01T00:00:00Z",
-                    "data": '{"System":{"EventID":4624,"TimeCreated":{"SystemTime":"2024-01-01T00:00:00Z"}},"EventData":{"IpAddress":"1.2.3.4","TargetUserName":"alice"}}',
+                    "data": '{"System":{"EventID":4624,"TimeCreated":{"SystemTime":"2024-01-01T00:00:00Z"}}'
+                            ',"EventData":{"IpAddress":"1.2.3.4","TargetUserName":"alice"}}',
                 }
             ]
 
@@ -83,7 +89,7 @@ def test_ingest_evtx_success(tmp_path: Path, monkeypatch) -> None:
 
     result = runner.invoke(app, ["ingest", "--file", str(evtx), "--type", "evtx", "--db", str(db)])
 
-    assert result.exit_code == 0, result.output
+    assert result.exit_code == EXIT_CODE_SUCCESS, result.output
     assert "Loaded 1 rows" in result.output
 
 
@@ -110,7 +116,7 @@ def test_ingest_log_structured_success(tmp_path: Path) -> None:
         ],
     )
 
-    assert result.exit_code == 0, result.output
+    assert result.exit_code == EXIT_CODE_SUCCESS, result.output
     assert "Loaded 2 rows" in result.output
 
 
@@ -134,7 +140,7 @@ def test_ingest_log_fallback_to_raw_on_no_matches(tmp_path: Path) -> None:
         ],
     )
 
-    assert result.exit_code == 0, result.output
+    assert result.exit_code == EXIT_CODE_SUCCESS, result.output
     assert "Loaded 2 rows" in result.output
 
 
@@ -169,7 +175,7 @@ def _ingest_csv(csv: Path, db: Path) -> None:
             "raw_events",
         ],
     )
-    assert result.exit_code == 0, result.output
+    assert result.exit_code == EXIT_CODE_SUCCESS, result.output
 
 
 def test_analyze_csv_success(tmp_path: Path) -> None:
@@ -180,7 +186,7 @@ def test_analyze_csv_success(tmp_path: Path) -> None:
 
     result = runner.invoke(app, ["analyze", "--table", "events", "--db", str(db)])
 
-    assert result.exit_code == 0, result.output
+    assert result.exit_code == EXIT_CODE_SUCCESS, result.output
     assert "Suspicious Indicators" in result.output
     assert "top_talkers" in result.output
 
@@ -193,7 +199,7 @@ def test_analyze_no_indicators(tmp_path: Path) -> None:
 
     result = runner.invoke(app, ["analyze", "--table", "events", "--db", str(db)])
 
-    assert result.exit_code == 0, result.output
+    assert result.exit_code == EXIT_CODE_SUCCESS, result.output
     assert "No suspicious indicators found" in result.output
 
 
@@ -205,7 +211,7 @@ def test_analyze_with_intel_no_api_key(tmp_path: Path) -> None:
 
     result = runner.invoke(app, ["analyze", "--table", "events", "--db", str(db), "--intel"])
 
-    assert result.exit_code == 0, result.output
+    assert result.exit_code == EXIT_CODE_SUCCESS, result.output
     assert "Suspicious Indicators" in result.output
 
 
@@ -237,13 +243,11 @@ def test_analyze_output_requires_llm(tmp_path: Path) -> None:
         ],
     )
 
-    assert result.exit_code == 3
+    assert result.exit_code == EXIT_CODE_VALIDATION_ERROR
     assert "Validation error" in result.output
 
 
 def test_analyze_with_llm_and_output(tmp_path: Path) -> None:
-    from unittest.mock import Mock, patch
-
     csv = tmp_path / "events.csv"
     _write_events_csv(csv, rows=5)
     db = tmp_path / "test.db"
@@ -257,14 +261,24 @@ def test_analyze_with_llm_and_output(tmp_path: Path) -> None:
       "summary": "Multiple failed logins from a single IP.",
       "severity": "High",
       "timeline": [
-        {"timestamp": "2024-01-01T00:00:00", "description": "Failed login", "source_ip": "1.2.3.4", "event_type": "POST", "status_code": 401, "raw_message": null}
+        {"timestamp": "2024-01-01T00:00:00", "description": "Failed login",
+         "source_ip": "1.2.3.4", "event_type": "POST", "status_code": 401,
+         "raw_message": null}
       ],
       "mitre_mappings": [
-        {"technique_id": "T1110", "technique_name": "Brute Force", "tactic": "Credential Access", "description": "Repeated failed auth attempts."}
+        {"technique_id": "T1110", "technique_name": "Brute Force",
+         "tactic": "Credential Access",
+         "description": "Repeated failed auth attempts."}
       ],
-      "mitigation": {"format": "Sigma", "title": "Detect repeated failed logins", "content": "title: repeated failed logins"},
+      "mitigation": {
+        "format": "Sigma",
+        "title": "Detect repeated failed logins",
+        "content": "title: repeated failed logins"
+      },
       "indicators": [
-        {"type": "top_talkers", "severity": "High", "description": "IP 1.2.3.4 generated 250 events", "evidence": {"source_ip": "1.2.3.4", "event_count": 250}}
+        {"type": "top_talkers", "severity": "High",
+         "description": "IP 1.2.3.4 generated 250 events",
+         "evidence": {"source_ip": "1.2.3.4", "event_count": 250}}
       ],
       "metadata": {"source_file": "auth.log"}
     }
@@ -292,15 +306,13 @@ def test_analyze_with_llm_and_output(tmp_path: Path) -> None:
             ],
         )
 
-    assert result.exit_code == 0, result.output
+    assert result.exit_code == EXIT_CODE_SUCCESS, result.output
     assert "Report saved" in result.output
     assert "Report written to" in result.output
     assert output.exists()
 
 
 def test_analyze_invalid_abuseipdb_key(tmp_path: Path) -> None:
-    from unittest.mock import Mock, patch
-
     csv = tmp_path / "events.csv"
     _write_events_csv(csv, rows=5)
     db = tmp_path / "test.db"
@@ -334,7 +346,7 @@ def test_ui_spawns_streamlit_run(monkeypatch) -> None:
     with patch("ovs_logs.cli.main.subprocess.call", return_value=0) as mock_call:
         result = runner.invoke(app, ["ui", "--port", "9000"])
 
-    assert result.exit_code == 0
+    assert result.exit_code == EXIT_CODE_SUCCESS
     cmd = mock_call.call_args[0][0]
     assert cmd[0] == "/fake/python"
     assert cmd[1:3] == ["-m", "streamlit"]
@@ -349,7 +361,7 @@ def test_ui_headless_flag() -> None:
     with patch("ovs_logs.cli.main.subprocess.call", return_value=0) as mock_call:
         result = runner.invoke(app, ["ui", "--headless"])
 
-    assert result.exit_code == 0
+    assert result.exit_code == EXIT_CODE_SUCCESS
     cmd = mock_call.call_args[0][0]
     assert "--server.headless" in cmd
     assert "true" in cmd
@@ -359,4 +371,4 @@ def test_ui_propagates_streamlit_exit_code() -> None:
     with patch("ovs_logs.cli.main.subprocess.call", return_value=42):
         result = runner.invoke(app, ["ui"])
 
-    assert result.exit_code == 42
+    assert result.exit_code == EXIT_CODE_PROPAGATED_STREAMLIT

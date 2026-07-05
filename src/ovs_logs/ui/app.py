@@ -11,8 +11,9 @@ from __future__ import annotations
 import hashlib
 import os
 import tempfile
+from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any
 
 import duckdb
 import streamlit as st
@@ -40,9 +41,11 @@ _SYSTEM_SCHEMAS: tuple[str, ...] = (
 
 _ALLOWED_UPLOAD_TYPES: tuple[str, ...] = tuple(sorted(SUPPORTED_FORMATS))
 
-_LARGE_FILE_BYTES = 100 * 1024 * 1024
+_KB = 1024
+_MB = 1024 * 1024
+_LARGE_FILE_BYTES = 100 * _MB
 _MAX_PREVIEW_LINES = 200
-_MAX_PREVIEW_BYTES = 64 * 1024
+_MAX_PREVIEW_BYTES = 64 * _KB
 
 
 def _read_user_tables(db_path: str) -> list[str]:
@@ -72,29 +75,30 @@ def _initialize_session_state() -> None:
 
 
 def _format_size(size: int) -> str:
-    if size >= 1024 * 1024:
-        return f"{size / (1024 * 1024):.1f} MB"
-    if size >= 1024:
-        return f"{size / 1024:.1f} KB"
+    if size >= _MB:
+        return f"{size / _MB:.1f} MB"
+    if size >= _KB:
+        return f"{size / _KB:.1f} KB"
     return f"{size} B"
 
 
 def _save_uploaded_file(uploaded_file: UploadedFile) -> tuple[Path, str]:
     uploaded_file.seek(0)
     suffix = Path(uploaded_file.name).suffix
-    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix or ".tmp")
-    temp_path = Path(tmp.name)
+    temp_path: Path | None = None
     try:
-        hasher = hashlib.sha256()
-        while chunk := uploaded_file.read(8192):
-            tmp.write(chunk)
-            hasher.update(chunk)
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix or ".tmp") as tmp:
+            temp_path = Path(tmp.name)
+            hasher = hashlib.sha256()
+            while chunk := uploaded_file.read(8192):
+                tmp.write(chunk)
+                hasher.update(chunk)
     except Exception:
-        tmp.close()
-        temp_path.unlink(missing_ok=True)
+        if temp_path is not None:
+            temp_path.unlink(missing_ok=True)
         raise
-    finally:
-        tmp.close()
+    if temp_path is None:
+        raise RuntimeError("Failed to create temporary file")
     uploaded_file.seek(0)
     return temp_path, hasher.hexdigest()
 
@@ -191,7 +195,7 @@ def _ingest_text_log_structured(
         return load_text_log(log_file, connection, table_name=table_name)
 
 
-def _get_adapter(format_name: str) -> Callable[..., LoadResult] | None:
+def _get_adapter(format_name: str) -> Callable[..., LoadResult]:
     adapter_map: dict[str, Callable[..., LoadResult]] = {
         "csv": adapters.load_csv,
         "json": adapters.load_json,
@@ -199,10 +203,13 @@ def _get_adapter(format_name: str) -> Callable[..., LoadResult] | None:
         "log": _ingest_text_log_structured,
         "evtx": adapters.load_evtx,
     }
-    return adapter_map.get(format_name)
+    adapter = adapter_map.get(format_name)
+    if adapter is None:
+        raise ValueError(f"No ingestion adapter for format '{format_name}'")
+    return adapter
 
 
-def _process_ready_files(db_path: str) -> None:
+def _process_ready_files(db_path: str) -> None:  # noqa: PLR0912
     if not db_path:
         st.error("Set a valid database path in the sidebar before ingesting files.")
         return
@@ -218,8 +225,6 @@ def _process_ready_files(db_path: str) -> None:
             try:
                 log_file = validate_log_file(file_state["temp_path"])
                 adapter = _get_adapter(log_file.format)
-                if adapter is None:
-                    raise ValueError(f"No ingestion adapter for format '{log_file.format}'")
 
                 load_result = adapter(log_file, connection)
 
@@ -237,31 +242,27 @@ def _process_ready_files(db_path: str) -> None:
 
             ingested_files = [f for f in ready_files if f["status"] == "ingested"]
             if ingested_files:
-                with Database(db_path) as connection:
+                with Database(db_path) as norm_connection:
                     tables_to_union = [f["ingest_table"] for f in ingested_files if f["ingest_table"]]
                     if tables_to_union:
                         engine = NormalizationEngine()
                         select_queries = []
-                        for file_state in ingested_files:
-                            t = file_state["ingest_table"]
-                            if not t or "schema" not in file_state or not file_state["schema"]:
+                        for ingested_file in ingested_files:
+                            t = ingested_file["ingest_table"]
+                            if not t or "schema" not in ingested_file or not ingested_file["schema"]:
                                 continue
-                            columns = [name for name, _ in file_state["schema"]]
+                            columns = [name for name, _ in ingested_file["schema"]]
                             select_query, _ = engine.build_select_query(t, columns)
                             select_queries.append(select_query)
 
                         union_query = " UNION ALL ".join(select_queries)
-                        connection.execute(
-                            f"CREATE OR REPLACE TABLE events AS {union_query}"
-                        )
+                        norm_connection.execute(f"CREATE OR REPLACE TABLE events AS {union_query}")
 
-                        row_count = connection.execute(
-                            "SELECT COUNT(*) FROM events"
-                        ).fetchone()[0]
+                        row_count = norm_connection.execute("SELECT COUNT(*) FROM events").fetchone()[0]
 
-                        for file_state in ingested_files:
-                            file_state["normalized_table"] = "events"
-                            file_state["normalized_row_count"] = row_count
+                        for ingested_file in ingested_files:
+                            ingested_file["normalized_table"] = "events"
+                            ingested_file["normalized_row_count"] = row_count
 
     if errors:
         for error in errors:
@@ -358,7 +359,7 @@ def _render_ingested_table_preview() -> None:
                         cursor = connection.execute(sql)
                         rows = cursor.fetchall()
                         columns = [desc[0] for desc in cursor.description]
-                        preview_rows = [dict(zip(columns, row)) for row in rows]
+                        preview_rows = [dict(zip(columns, row, strict=True)) for row in rows]
                         if preview_rows:
                             st.dataframe(preview_rows)
                         else:

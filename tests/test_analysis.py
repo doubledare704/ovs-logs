@@ -10,6 +10,18 @@ from ovs_logs.core.ingestion.adapters import load_csv
 from ovs_logs.core.normalization import NormalizationEngine
 from ovs_logs.core.validation import validate_log_file
 
+TOP_TALKERS_COUNT = 2
+TOP_TALKER_1_COUNT = 3
+TOP_TALKER_2_COUNT = 2
+ERROR_SPIKES_COUNT = 2
+ERROR_STATUS_404 = 404
+ERROR_STATUS_500 = 500
+GET_COUNT = 4
+POST_COUNT = 1
+TEMPORAL_BUCKETS_COUNT = 2
+TEMPORAL_BUCKET_0_COUNT = 4
+TEMPORAL_BUCKET_1_COUNT = 1
+
 
 @pytest.fixture
 def db():
@@ -42,22 +54,22 @@ def test_top_talkers(analysis_engine, db) -> None:
     results = analysis_engine.run_queries(db, thresholds={"top_talkers": {"min_events": 2, "limit": 10}})
 
     top = results["top_talkers"]
-    assert len(top) == 2
+    assert len(top) == TOP_TALKERS_COUNT
     assert top[0]["source_ip"] == "1.2.3.4"
-    assert top[0]["event_count"] == 3
+    assert top[0]["event_count"] == TOP_TALKER_1_COUNT
     assert top[1]["source_ip"] == "5.6.7.8"
-    assert top[1]["event_count"] == 2
+    assert top[1]["event_count"] == TOP_TALKER_2_COUNT
 
 
 def test_error_spikes(analysis_engine, db) -> None:
     results = analysis_engine.run_queries(db, thresholds={"error_spikes": {"min_errors": 1, "limit": 10}})
 
     errors = results["error_spikes"]
-    assert len(errors) == 2
+    assert len(errors) == ERROR_SPIKES_COUNT
     ips = {row["source_ip"] for row in errors}
     assert "1.2.3.4" in ips
-    assert any(row["status_code"] == 404 for row in errors)
-    assert any(row["status_code"] == 500 for row in errors)
+    assert any(row["status_code"] == ERROR_STATUS_404 for row in errors)
+    assert any(row["status_code"] == ERROR_STATUS_500 for row in errors)
 
 
 def test_event_distribution(analysis_engine, db) -> None:
@@ -65,14 +77,14 @@ def test_event_distribution(analysis_engine, db) -> None:
 
     distribution = results["event_distribution"]
     types = {row["event_type"]: row["event_count"] for row in distribution}
-    assert types["GET"] == 4
-    assert types["POST"] == 1
+    assert types["GET"] == GET_COUNT
+    assert types["POST"] == POST_COUNT
 
 
 def test_temporal_anomaly(analysis_engine, db) -> None:
     results = analysis_engine.run_queries(db, thresholds={"temporal_anomaly": {"min_events": 1, "limit": 10}})
 
     buckets = results["temporal_anomaly"]
-    assert len(buckets) == 2
-    assert buckets[0]["event_count"] == 4
-    assert buckets[1]["event_count"] == 1
+    assert len(buckets) == TEMPORAL_BUCKETS_COUNT
+    assert buckets[0]["event_count"] == TEMPORAL_BUCKET_0_COUNT
+    assert buckets[1]["event_count"] == TEMPORAL_BUCKET_1_COUNT

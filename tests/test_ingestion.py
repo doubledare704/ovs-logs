@@ -18,6 +18,10 @@ from ovs_logs.core.ingestion.adapters import (
 )
 from ovs_logs.core.validation import validate_log_file
 
+EXPECTED_CSV_ROW_COUNT = 2
+EXPECTED_JSON_ROW_COUNT = 2
+EXPECTED_LOG_ROW_COUNT = 3
+
 
 @pytest.fixture
 def db():
@@ -39,7 +43,7 @@ def test_load_csv(db, tmp_path: Path) -> None:
 
     assert isinstance(result, LoadResult)
     assert result.table_name == "test_csv"
-    assert result.row_count == 2
+    assert result.row_count == EXPECTED_CSV_ROW_COUNT
     assert {"timestamp", "client_ip", "status"}.issubset(_schema_columns(result.schema))
 
 
@@ -51,7 +55,7 @@ def test_load_json(db, tmp_path: Path) -> None:
     result = load_json(log, db, table_name="test_json")
 
     assert result.table_name == "test_json"
-    assert result.row_count == 2
+    assert result.row_count == EXPECTED_JSON_ROW_COUNT
     assert {"id", "event", "ip"}.issubset(_schema_columns(result.schema))
 
 
@@ -63,7 +67,7 @@ def test_load_text_log(db, tmp_path: Path) -> None:
     result = load_text_log(log, db, table_name="test_log")
 
     assert result.table_name == "test_log"
-    assert result.row_count == 3
+    assert result.row_count == EXPECTED_LOG_ROW_COUNT
     assert "line" in _schema_columns(result.schema)
 
 

@@ -9,6 +9,9 @@ from ovs_logs.core.analysis.indicators import (
     SuspiciousIndicator,
 )
 
+INDICATORS_TOTAL_COUNT = 5
+EXPECTED_EVENT_COUNT = 250
+
 
 def _sample_results() -> dict[str, list[dict[str, Any]]]:
     return {
@@ -28,12 +31,12 @@ def test_default_thresholds_produce_expected_severity() -> None:
 
     indicators = processor.process(results)
 
-    assert len(indicators) == 5
+    assert len(indicators) == INDICATORS_TOTAL_COUNT
 
     top_high = next(i for i in indicators if i.type == "top_talkers" and i.evidence["source_ip"] == "1.2.3.4")
     assert top_high.severity == "High"
     assert "1.2.3.4" in top_high.description
-    assert top_high.evidence["event_count"] == 250
+    assert top_high.evidence["event_count"] == EXPECTED_EVENT_COUNT
 
     top_medium = next(i for i in indicators if i.type == "top_talkers" and i.evidence["source_ip"] == "5.6.7.8")
     assert top_medium.severity == "Medium"

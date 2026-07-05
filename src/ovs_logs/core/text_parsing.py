@@ -3,15 +3,15 @@
 from __future__ import annotations
 
 import csv
-import os
 import re
 import tempfile
 import uuid
+from collections.abc import Callable
 from pathlib import Path
 
 import duckdb
 
-from ovs_logs.config.settings import TextParseConfig
+from ovs_logs.config.settings import TextParseConfig, settings
 from ovs_logs.core.ingestion.adapters import (
     LoadResult,
     load_text_log,
@@ -79,65 +79,84 @@ _JSON_EVENT_RE = re.compile(r'"(?:component|event_type|event|method)"\s*:\s*"([^
 _AMBIGUOUS_TS_RE = re.compile(r"\[(\d{2}:\d{2}:\d{2})\]")
 _AMBIGUOUS_IP_RE = re.compile(r"([0-9]{1,3}(?:\.[0-9]{1,3}){3})")
 _AMBIGUOUS_STATUS_RE = re.compile(r"code=(\d+)")
+_AMBIGUOUS_EVENT_MAX_LENGTH = 64
+
+
+def _apply_extractors(text: str, patterns: dict[str, re.Pattern[str]]) -> dict[str, str]:
+    result: dict[str, str] = {}
+    for key, pattern in patterns.items():
+        m = pattern.search(text)
+        result[key] = m.group(1) if m else ""
+    return result
+
+
+def _extract_web(text: str) -> dict[str, str]:
+    return _apply_extractors(
+        text,
+        {
+            "timestamp": _WEB_TS_RE,
+            "source_ip": _WEB_IP_RE,
+            "status_code": _WEB_STATUS_RE,
+            "event_type": _WEB_EVENT_RE,
+        },
+    )
+
+
+def _extract_syslog(text: str) -> dict[str, str]:
+    base = _apply_extractors(
+        text,
+        {
+            "timestamp": _SYSLOG_TS_RE,
+            "source_ip": _SYSLOG_IP_RE,
+            "event_type": _SYSLOG_EVENT_RE,
+        },
+    )
+    base["status_code"] = ""
+    return base
+
+
+def _extract_jsonline(text: str) -> dict[str, str]:
+    return _apply_extractors(
+        text,
+        {
+            "timestamp": _JSON_TS_RE,
+            "source_ip": _JSON_IP_RE,
+            "status_code": _JSON_STATUS_RE,
+            "event_type": _JSON_EVENT_RE,
+        },
+    )
+
+
+def _extract_ambiguous(text: str) -> dict[str, str]:
+    ts = ip = status = ""
+    m = _AMBIGUOUS_TS_RE.search(text)
+    if m:
+        ts = m.group(1)
+    m = _AMBIGUOUS_IP_RE.search(text)
+    if m:
+        ip = m.group(1)
+    m = _AMBIGUOUS_STATUS_RE.search(text)
+    if m:
+        status = m.group(1)
+    event = "-".join(text.split()[:2])
+    if len(event) > _AMBIGUOUS_EVENT_MAX_LENGTH:
+        event = event[: _AMBIGUOUS_EVENT_MAX_LENGTH - 3] + "..."
+    return {"timestamp": ts, "source_ip": ip, "status_code": status, "event_type": event}
+
+
+_FORMAT_EXTRACTORS: dict[str, Callable[[str], dict[str, str]]] = {
+    "web": _extract_web,
+    "syslog": _extract_syslog,
+    "jsonline": _extract_jsonline,
+    "ambiguous": _extract_ambiguous,
+}
 
 
 def _extract_hybrid(text: str, fmt: str) -> dict[str, str]:
-    ts = ip = status = event = ""
-
-    if fmt == "web":
-        m = _WEB_TS_RE.search(text)
-        if m:
-            ts = m.group(1)
-        m = _WEB_IP_RE.search(text)
-        if m:
-            ip = m.group(1)
-        m = _WEB_STATUS_RE.search(text)
-        if m:
-            status = m.group(1)
-        m = _WEB_EVENT_RE.search(text)
-        if m:
-            event = m.group(1)
-
-    elif fmt == "syslog":
-        m = _SYSLOG_TS_RE.search(text)
-        if m:
-            ts = m.group(1)
-        m = _SYSLOG_IP_RE.search(text)
-        if m:
-            ip = m.group(1)
-        m = _SYSLOG_EVENT_RE.search(text)
-        if m:
-            event = m.group(1)
-
-    elif fmt == "jsonline":
-        m = _JSON_TS_RE.search(text)
-        if m:
-            ts = m.group(1)
-        m = _JSON_IP_RE.search(text)
-        if m:
-            ip = m.group(1)
-        m = _JSON_STATUS_RE.search(text)
-        if m:
-            status = m.group(1)
-        m = _JSON_EVENT_RE.search(text)
-        if m:
-            event = m.group(1)
-
-    elif fmt == "ambiguous":
-        m = _AMBIGUOUS_TS_RE.search(text)
-        if m:
-            ts = m.group(1)
-        m = _AMBIGUOUS_IP_RE.search(text)
-        if m:
-            ip = m.group(1)
-        m = _AMBIGUOUS_STATUS_RE.search(text)
-        if m:
-            status = m.group(1)
-        event = "-".join(text.split()[:2])
-        if len(event) > 64:
-            event = event[:61] + "..."
-
-    return {"timestamp": ts, "source_ip": ip, "status_code": status, "event_type": event}
+    extractor = _FORMAT_EXTRACTORS.get(fmt)
+    if extractor is None:
+        return {"timestamp": "", "source_ip": "", "status_code": "", "event_type": ""}
+    return extractor(text)
 
 
 def parse_text_log(
@@ -155,8 +174,6 @@ def parse_text_log(
     false, the raw table is returned immediately.
     """
     if config is None:
-        from ovs_logs.config.settings import settings
-
         config = settings.text_parse
 
     name = _resolve_table_name(log_file, table_name)
@@ -166,8 +183,7 @@ def parse_text_log(
 
     if config.max_lines_per_file > 0:
         connection.execute(
-            f"CREATE OR REPLACE TABLE {quoted} AS "
-            f"SELECT * FROM {quoted} LIMIT ?",
+            f"CREATE OR REPLACE TABLE {quoted} AS SELECT * FROM {quoted} LIMIT ?",
             [config.max_lines_per_file],
         )
         load_result = _reload_result(connection, name)
@@ -217,5 +233,5 @@ def parse_text_log(
         result = _reload_result(connection, name)
         return result
     finally:
-        if tmp_path is not None and os.path.exists(tmp_path):
-            os.unlink(tmp_path)
+        if tmp_path is not None and Path(tmp_path).exists():
+            Path(tmp_path).unlink()

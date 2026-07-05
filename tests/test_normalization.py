@@ -9,6 +9,9 @@ from ovs_logs.core.ingestion.adapters import load_csv, load_json, load_text_log
 from ovs_logs.core.normalization import NormalizationEngine
 from ovs_logs.core.validation import validate_log_file
 
+NORMALIZED_CSV_ROW_COUNT = 2
+NORMALIZED_LOG_ROW_COUNT = 2
+
 
 @pytest.fixture
 def db():
@@ -32,7 +35,7 @@ def test_normalize_csv(db, tmp_path: Path) -> None:
     result = NormalizationEngine().normalize_table(db, load_result)
 
     assert result.table_name == "events"
-    assert result.row_count == 2
+    assert result.row_count == NORMALIZED_CSV_ROW_COUNT
     assert result.mapping["source_ip"] == "client_ip"
     assert result.mapping["event_type"] == "method"
     assert result.mapping["status_code"] == "status"
@@ -78,7 +81,7 @@ def test_normalize_text_log(db, tmp_path: Path) -> None:
     load_result = load_text_log(log, db, table_name="raw_app")
     result = NormalizationEngine().normalize_table(db, load_result)
 
-    assert result.row_count == 2
+    assert result.row_count == NORMALIZED_LOG_ROW_COUNT
     assert result.mapping["raw_message"] == "line"
     assert result.mapping["source_ip"] is None
     assert result.mapping["event_timestamp"] is None
