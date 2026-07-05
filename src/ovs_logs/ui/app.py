@@ -259,9 +259,7 @@ def _process_ready_files(db_path: str) -> None:
                             if not t or "schema" not in file_state or not file_state["schema"]:
                                 continue
                             columns = [name for name, _ in file_state["schema"]]
-                            sql, _ = engine.build_sql(t, columns)
-                            # Extract the SELECT query portion after 'AS '
-                            select_query = sql.split("AS ", 1)[1]
+                            select_query, _ = engine.build_select_query(t, columns)
                             select_queries.append(select_query)
 
                         union_query = " UNION ALL ".join(select_queries)

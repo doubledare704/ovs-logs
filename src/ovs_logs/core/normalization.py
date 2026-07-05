@@ -99,8 +99,10 @@ class NormalizationEngine:
 
         return f"COALESCE({casts}) AS \"{target}\"", source_column
 
-    def build_sql(self, raw_table: str, columns: Sequence[str]) -> tuple[str, dict[str, str | None]]:
-        """Build the `CREATE OR REPLACE TABLE events AS ...` SQL statement."""
+    def build_select_query(
+        self, raw_table: str, columns: Sequence[str]
+    ) -> tuple[str, dict[str, str | None]]:
+        """Build the `SELECT ... FROM "raw_table"` SQL statement."""
         expressions: list[str] = []
         mapping: dict[str, str | None] = {}
 
@@ -113,8 +115,14 @@ class NormalizationEngine:
             mapping[target] = source
 
         select_sql = ",\n    ".join(expressions)
+        query = f'SELECT\n    {select_sql}\nFROM "{raw_table}"'
+        return query, mapping
+
+    def build_sql(self, raw_table: str, columns: Sequence[str]) -> tuple[str, dict[str, str | None]]:
+        """Build the `CREATE OR REPLACE TABLE events AS ...` SQL statement."""
+        select_query, mapping = self.build_select_query(raw_table, columns)
         return (
-            f'CREATE OR REPLACE TABLE events AS SELECT\n    {select_sql}\nFROM "{raw_table}"',
+            f"CREATE OR REPLACE TABLE events AS {select_query}",
             mapping,
         )
 
