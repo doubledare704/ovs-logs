@@ -20,7 +20,14 @@ repos:
       - id: pyrefly-check
         name: Pyrefly Type Check
         types_or: [python, pyi]
-        additional_dependencies: []
+        additional_dependencies:
+          - duckdb>=1.0.0
+          - requests>=2.32.0
+          - streamlit>=1.35.0
+          - evtx==0.12.1
+          - typer>=0.12.0
+          - rich
+          - pytest>=8.0.0
 
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0

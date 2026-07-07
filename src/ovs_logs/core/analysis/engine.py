@@ -2,15 +2,19 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 import duckdb
 
+from ..ingestion.adapters import _quote_identifier
 from .templates import TEMPLATES, SQLTemplate
 
 _ALIAS_MAP: dict[str, str] = {
     "event_timestamp": "timestamp",
 }
+
+logger = logging.getLogger(__name__)
 
 
 class AnalysisEngine:
@@ -33,12 +37,12 @@ class AnalysisEngine:
         failing at bind time.
         """
         try:
-            columns = [row[0] for row in connection.execute(f'DESCRIBE "{table_name}"').fetchall()]
-        except Exception:
-            return sql.replace("FROM events", f'FROM "{table_name}"')
+            columns = [row[0] for row in connection.execute(f"DESCRIBE {_quote_identifier(table_name)}").fetchall()]
+        except duckdb.Error:
+            logger.warning("DESCRIBE failed for table %s; using raw table reference", table_name)
+            return sql.replace("FROM events", f"FROM {_quote_identifier(table_name)}")
 
         lower_columns = {c.lower() for c in columns}
-        missing: list[str] = []
         expressions: list[str] = []
         for target in ("event_timestamp", "source_ip", "event_type", "status_code", "raw_message"):
             if target in lower_columns:
@@ -50,13 +54,12 @@ class AnalysisEngine:
             elif target == "raw_message" and "message" in lower_columns:
                 expressions.append('"message"::VARCHAR AS "raw_message"')
             else:
-                expressions.append(f'NULL::{_column_dtype(target, columns)} AS "{target}"')
-                missing.append(target)
+                expressions.append(f'NULL::{_column_dtype(target)} AS "{target}"')
 
-        if not missing:
-            return sql.replace("FROM events", f'FROM (SELECT {", ".join(expressions)} FROM "{table_name}")')
-
-        return sql.replace("FROM events", f'FROM "{table_name}"')
+        return sql.replace(
+            "FROM events",
+            f"FROM (SELECT {', '.join(expressions)} FROM {_quote_identifier(table_name)})",
+        )
 
     def run_queries(
         self,
@@ -92,7 +95,7 @@ class AnalysisEngine:
         return results
 
 
-def _column_dtype(target: str, columns: list[str]) -> str:
+def _column_dtype(target: str) -> str:
     if target == "event_timestamp":
         return "TIMESTAMP"
     if target == "status_code":

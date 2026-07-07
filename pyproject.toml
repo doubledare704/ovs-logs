@@ -55,20 +55,15 @@ select = [
     "RUF", # ruff-specific
 ]
 ignore = [
-    "S101",  # assert statements (allowed in tests)
-    "S106",  # hardcoded password (allowed in tests/config)
-    "S107",  # hardcoded password (allowed in tests/config)
-    "S311",  # random module (allowed in tests)
     "T201",  # print statements (allowed in CLI)
     "T203",  # print statements (allowed in CLI)
     "ARG001", # unused argument (allowed in callbacks)
     "ARG002", # unused argument (allowed in callbacks)
     "B008",  # function calls in default arguments (allowed in some cases)
-    "C408",  # comprehension can be generator (allowed for readability)
-    "ERA001", # commented out code (allowed temporarily)
+    "C408",  # unnecessary dict()/list()/tuple() call (allowed for readability)
     "TRY003", # avoid specifying long messages (allowed for clarity)
 ]
-per-file-ignores."tests/*" = ["S101", "S106", "S107", "S311", "T201", "T203", "ARG001", "ARG002"]
+per-file-ignores."tests/*" = ["T201", "T203"]
 per-file-ignores."src/ovs_logs/cli/*" = ["T201", "T203"]
 
 [tool.ruff.format]

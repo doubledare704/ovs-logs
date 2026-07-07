@@ -38,6 +38,7 @@ Queries DuckDB for statistical anomalies, queries external reputation APIs, chun
   ```
 
 ### 2.3. Command: ovs-log export-rule
+
 Extracts only the generated mitigation signatures out of the database local cache.
 
 Usage: ovs-log export-rule --format sigma

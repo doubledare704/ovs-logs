@@ -93,7 +93,7 @@ def _save_uploaded_file(uploaded_file: UploadedFile) -> tuple[Path, str]:
             while chunk := uploaded_file.read(8192):
                 tmp.write(chunk)
                 hasher.update(chunk)
-    except Exception:
+    except OSError:
         if temp_path is not None:
             temp_path.unlink(missing_ok=True)
         raise
@@ -242,27 +242,24 @@ def _process_ready_files(db_path: str) -> None:  # noqa: PLR0912
 
             ingested_files = [f for f in ready_files if f["status"] == "ingested"]
             if ingested_files:
-                with Database(db_path) as norm_connection:
-                    tables_to_union = [f["ingest_table"] for f in ingested_files if f["ingest_table"]]
-                    if tables_to_union:
-                        engine = NormalizationEngine()
-                        select_queries = []
-                        for ingested_file in ingested_files:
-                            t = ingested_file["ingest_table"]
-                            if not t or "schema" not in ingested_file or not ingested_file["schema"]:
-                                continue
-                            columns = [name for name, _ in ingested_file["schema"]]
-                            select_query, _ = engine.build_select_query(t, columns)
-                            select_queries.append(select_query)
+                engine = NormalizationEngine()
+                select_queries: list[str] = []
+                for ingested_file in ingested_files:
+                    t = ingested_file["ingest_table"]
+                    if not t or not ingested_file.get("schema"):
+                        continue
+                    columns = [name for name, _ in ingested_file["schema"]]
+                    select_query, _ = engine.build_select_query(t, columns)
+                    select_queries.append(select_query)
 
-                        union_query = " UNION ALL ".join(select_queries)
-                        norm_connection.execute(f"CREATE OR REPLACE TABLE events AS {union_query}")
-
-                        row_count = norm_connection.execute("SELECT COUNT(*) FROM events").fetchone()[0]
-
-                        for ingested_file in ingested_files:
-                            ingested_file["normalized_table"] = "events"
-                            ingested_file["normalized_row_count"] = row_count
+                if select_queries:
+                    union_query = " UNION ALL ".join(select_queries)
+                    connection.execute(f"CREATE OR REPLACE TABLE events AS {union_query}")
+                    row = connection.execute("SELECT COUNT(*) FROM events").fetchone()
+                    row_count = row[0] if row is not None else 0
+                    for ingested_file in ingested_files:
+                        ingested_file["normalized_table"] = "events"
+                        ingested_file["normalized_row_count"] = row_count
 
     if errors:
         for error in errors:

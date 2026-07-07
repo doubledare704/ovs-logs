@@ -654,8 +654,9 @@ def _duckdb_regex_native(sample: LogSample) -> BenchmarkResult:
         conn.execute(f"UPDATE {raw_table} SET {', '.join(set_clauses)}", params)
         count_exprs = ", ".join(f"COUNT_IF({_quote_identifier(col)} <> '')" for col in columns)
         counts = conn.execute(f"SELECT {count_exprs} FROM {raw_table}").fetchone()
-        for key, value in zip(columns, counts, strict=True):
-            hits[key] = value or 0
+        if counts is not None:
+            for key, value in zip(columns, counts, strict=True):
+                hits[key] = value or 0
         reloaded = _reload_result(conn, "raw")
         NormalizationEngine().normalize_table(conn, reloaded)
         return rows

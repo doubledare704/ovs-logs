@@ -226,7 +226,8 @@ def parse_text_log(
             return load_result
 
         connection.execute(
-            f"CREATE OR REPLACE TABLE {quoted} AS SELECT * FROM read_csv_auto(?, header=true, delim=',')",
+            f"CREATE OR REPLACE TABLE {quoted} AS SELECT * "
+            "FROM read_csv_auto(?, header=true, delim=',', all_varchar=true)",
             [tmp_path],
         )
         result = _reload_result(connection, name)

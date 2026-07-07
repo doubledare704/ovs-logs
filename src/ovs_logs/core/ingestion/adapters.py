@@ -11,7 +11,7 @@ import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import duckdb
 
@@ -19,6 +19,9 @@ try:
     from evtx import PyEvtxParser
 except ImportError:  # pragma: no cover - depends on optional runtime dependency
     PyEvtxParser: type | None = None  # type: ignore[assignment]
+
+if TYPE_CHECKING:
+    from evtx import PyEvtxParser as EvtxParser
 
 from ovs_logs.core.validation import LogFile
 
@@ -196,6 +199,35 @@ def _extract_evtx_fields(event_data: dict[str, Any], record: dict[str, Any]) -> 
     return row
 
 
+def _write_evtx_records(
+    parser: EvtxParser,
+    writer: csv.DictWriter,
+) -> None:
+    """Parse EVTX records and write them as rows to the CSV writer.
+
+    Raises RuntimeError when a record cannot be parsed.
+    """
+    records = parser.records_json()
+    for record in records:
+        if record is None:
+            continue
+        payload = record.get("data")
+        if isinstance(payload, str):
+            try:
+                event_data: dict[str, Any] = json.loads(payload)
+            except json.JSONDecodeError as exc:
+                raise RuntimeError(f"Unable to parse EVTX record {record.get('identifier')}") from exc
+        elif isinstance(payload, dict):
+            event_data = payload
+        else:
+            event_data = {"raw": payload}
+
+        if "Event" in event_data and set(event_data.keys()) == {"Event"}:
+            event_data = event_data["Event"]
+
+        writer.writerow(_extract_evtx_fields(event_data, record))
+
+
 def load_evtx(
     log_file: LogFile,
     connection: duckdb.DuckDBPyConnection,
@@ -220,26 +252,7 @@ def load_evtx(
 
             parser = PyEvtxParser(str(log_file.path.resolve()))
             try:
-                records = parser.records_json()
-                for record in records:
-                    if record is None:
-                        continue
-                    payload = record.get("data")
-                    if isinstance(payload, str):
-                        try:
-                            event_data: dict[str, Any] = json.loads(payload)
-                        except json.JSONDecodeError as exc:
-                            raise RuntimeError(f"Unable to parse EVTX record {record.get('identifier')}") from exc
-                    elif isinstance(payload, dict):
-                        event_data = payload
-                    else:
-                        event_data = {"raw": payload}
-
-                    if "Event" in event_data and set(event_data.keys()) == {"Event"}:
-                        event_data = event_data["Event"]
-
-                    row = _extract_evtx_fields(event_data, record)
-                    writer.writerow(row)
+                _write_evtx_records(parser, writer)
             except RuntimeError as exc:
                 if "Unable to parse EVTX record" in str(exc):
                     raise

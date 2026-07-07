@@ -53,7 +53,7 @@ def test_parse_web_access_log(db, tmp_path: Path) -> None:
     rows = db.execute('SELECT timestamp, source_ip, status_code, event_type FROM "web_events"').fetchall()
     assert rows[0][0] == "14/Nov/2023:12:00:00 +0000"
     assert rows[0][1] == "10.0.0.1"
-    assert rows[0][2] == 200
+    assert rows[0][2] == "200"
     assert rows[0][3] == "GET"
 
 
@@ -89,7 +89,7 @@ def test_parse_jsonline(db, tmp_path: Path) -> None:
     rows = db.execute('SELECT timestamp, source_ip, status_code, event_type FROM "json_events"').fetchall()
     assert rows[0][0] == "2024-01-01T00:00:00Z"
     assert rows[0][1] == "1.2.3.4"
-    assert rows[0][2] == 200
+    assert rows[0][2] == "200"
     assert rows[0][3] == "api"
 
 

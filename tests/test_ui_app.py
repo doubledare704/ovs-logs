@@ -61,14 +61,14 @@ def test_db_path_defaults_to_settings(monkeypatch: pytest.MonkeyPatch) -> None:
         )
 
 
-def test_missing_db_shows_error(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_missing_db_shows_error(tmp_path: Path) -> None:
     missing = tmp_path / "nope.db"
     at = AppTest.from_file(str(APP_PATH)).run()
     at.sidebar.text_input[2].set_value(str(missing)).run()
     assert any(str(missing) in e.value for e in at.sidebar.error)
 
 
-def test_recent_tables_lists_user_tables_only(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_recent_tables_lists_user_tables_only(tmp_path: Path) -> None:
     db = _make_db(
         tmp_path,
         [
@@ -90,7 +90,7 @@ def test_recent_tables_lists_user_tables_only(monkeypatch: pytest.MonkeyPatch, t
     assert at.session_state["selected_table"] == sb.value
 
 
-def test_changing_db_path_refreshes_tables(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_changing_db_path_refreshes_tables(tmp_path: Path) -> None:
     db_a = _make_db(tmp_path, [("alpha", "SELECT 1")])
     db_b_dir = tmp_path / "other"
     db_b_dir.mkdir()
@@ -120,7 +120,7 @@ def test_changing_db_path_clears_stale_table_selection(tmp_path: Path) -> None:
     assert len(at.sidebar.selectbox) == 0
 
 
-def test_selecting_table_persists_to_session_state(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_selecting_table_persists_to_session_state(tmp_path: Path) -> None:
     db = _make_db(
         tmp_path,
         [("alpha", "SELECT 1"), ("beta", "SELECT 2")],

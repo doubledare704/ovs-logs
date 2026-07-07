@@ -33,7 +33,6 @@ from ovs_logs.core.report import IncidentReport
 from ovs_logs.core.text_parsing import parse_text_log
 from ovs_logs.core.threat_intel import ThreatIntelClient
 from ovs_logs.core.validation import SUPPORTED_FORMATS, LogFile, validate_log_file
-from ovs_logs.ui import app as _app_module
 
 app = typer.Typer(help="OVS-Log: local AI-powered log tracer and DFIR assistant")
 console = Console()
@@ -80,11 +79,11 @@ def _raise_no_adapter(fmt: str) -> NoReturn:
     raise ValueError(f"No ingestion adapter for format '{fmt}'")
 
 
-def _raise_output_requires_llm() -> None:
+def _raise_output_requires_llm() -> NoReturn:
     raise ValueError("--output requires --llm so a synthesized report is available")
 
 
-def _raise_format_mismatch(rule_format: str, report_format: str) -> None:
+def _raise_format_mismatch(rule_format: str, report_format: str) -> NoReturn:
     raise ValueError(f"Requested format '{rule_format}' does not match report mitigation format '{report_format}'")
 
 
@@ -113,6 +112,7 @@ def _perform_ingest(
 def _perform_analysis(  # noqa: PLR0913
     db: Path,
     table: str,
+    *,
     intel: bool,
     llm: bool,
     abuseipdb_api_key: str | None,
@@ -140,7 +140,10 @@ def _perform_analysis(  # noqa: PLR0913
         report: IncidentReport | None = None
         if llm:
             with console.status("[bold green]Synthesizing incident report..."):
-                provider = OpenAICompatibleProvider(api_key=llm_api_key or os.getenv("LLM_API_KEY"))
+                api_key = llm_api_key or os.getenv("LLM_API_KEY")
+                if api_key is None:
+                    raise ValueError("--llm requires an LLM API key (set --llm-api-key or LLM_API_KEY)")
+                provider = OpenAICompatibleProvider(api_key=api_key)
                 report = LLMSynthesizer(provider).synthesize(indicators, threat_intel=threat_intel)
             report_id = ReportStore().save_report(connection, report)
             console.print(f"[bold]Report saved:[/bold] {report_id}")
@@ -149,6 +152,7 @@ def _perform_analysis(  # noqa: PLR0913
         if output:
             if report is None:
                 _raise_output_requires_llm()
+            output.parent.mkdir(parents=True, exist_ok=True)
             output.write_text(json.dumps(report.to_dict(), indent=2), encoding="utf-8")
             console.print(f"[bold]Report written to:[/bold] {output}")
 
@@ -198,7 +202,15 @@ def process(  # noqa: PLR0913
             console.print("[yellow]Skipping analysis: unstructured log (single 'line' column).[/yellow]")
             return
 
-        _perform_analysis(db, "events", intel, llm, abuseipdb_api_key, llm_api_key, output)
+        _perform_analysis(
+            db,
+            "events",
+            intel=intel,
+            llm=llm,
+            abuseipdb_api_key=abuseipdb_api_key,
+            llm_api_key=llm_api_key,
+            output=output,
+        )
     except Exception as exc:
         exit_code = _classify_error(exc)
         raise typer.Exit(code=exit_code) from exc
@@ -216,7 +228,15 @@ def analyze(  # noqa: PLR0913
 ) -> None:
     """Analyze a DuckDB table to extract indicators and optionally synthesize a report."""
     try:
-        _perform_analysis(db, table, intel, llm, abuseipdb_api_key, llm_api_key, output)
+        _perform_analysis(
+            db,
+            table,
+            intel=intel,
+            llm=llm,
+            abuseipdb_api_key=abuseipdb_api_key,
+            llm_api_key=llm_api_key,
+            output=output,
+        )
     except Exception as exc:
         exit_code = _classify_error(exc)
         raise typer.Exit(code=exit_code) from exc
@@ -317,6 +337,8 @@ def ui(
     The target is passed as a `.py` filesystem path resolved via the module's
     ``__file__`` attribute, which is what Streamlit's CLI accepts.
     """
+    from ovs_logs.ui import app as _app_module  # noqa: PLC0415
+
     target = str(Path(_app_module.__file__).resolve())
 
     cmd: list[str] = [

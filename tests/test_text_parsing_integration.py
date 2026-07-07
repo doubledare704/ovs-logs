@@ -94,13 +94,12 @@ def test_cli_ingest_structured_web_access_log(tmp_path: Path) -> None:
         assert "event_type" in columns
 
         rows = conn.execute("SELECT event_timestamp, source_ip, status_code, event_type FROM events").fetchall()
-        expected_rows = 2
-        expected_status_codes: set[int] = {200, 404}
-        assert len(rows) == expected_rows
-        assert rows[0][1] == "192.168.1.1"
-        assert rows[0][2] == expected_status_codes.pop()
-        assert rows[1][1] == "192.168.1.2"
-        assert rows[1][2] == expected_status_codes.pop()
+        expected_row_count = 2
+        expected_status_codes = {200, 404}
+        expected_source_ips = {"192.168.1.1", "192.168.1.2"}
+        assert len(rows) == expected_row_count
+        assert {row[2] for row in rows} == expected_status_codes
+        assert {row[1] for row in rows} == expected_source_ips
 
 
 def test_cli_ingest_ambiguous_text_fallback_raw(tmp_path: Path) -> None:

@@ -1,5 +1,6 @@
 """Tests for the normalization engine."""
 
+from collections.abc import Sequence
 from pathlib import Path
 
 import pytest
@@ -20,7 +21,7 @@ def db():
         yield conn
 
 
-def _schema_types(schema: list[tuple[str, str]]) -> dict[str, str]:
+def _schema_types(schema: Sequence[tuple[str, str]]) -> dict[str, str]:
     return {name.lower(): dtype for name, dtype in schema}
 
 
