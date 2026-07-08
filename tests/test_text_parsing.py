@@ -182,6 +182,73 @@ def test_existing_table_replaced(db, tmp_path: Path) -> None:
     assert count == REUSE_COUNT
 
 
+def test_load_text_log_preserves_commas_and_quotes(db, tmp_path: Path) -> None:
+    """A line containing commas/quotes must stay a single verbatim ``line`` column.
+
+    Regression guard for the DuckDB single-column direct read: embedded CSV
+    metacharacters must not split or mangle the raw log line.
+    """
+    path = tmp_path / "messy.log"
+    tricky = '10.0.0.1 - - [08/Jul/2026:10:00:00 +0300] "GET /a,b?x=\\"1\\" HTTP/1.1" 200 123'
+    _write_lines(path, [tricky])
+    log = validate_log_file(path)
+    result = load_text_log(log, db, table_name="messy")
+    assert result.row_count == 1
+    assert _schema_columns(result.schema) == {"line"}
+    row = db.execute('SELECT line FROM "messy"').fetchone()
+    assert row[0] == tricky
+
+
+def test_structured_extraction_matches_canonical_regex(db, tmp_path: Path) -> None:
+    """The SQL ``regexp_extract`` path must match the canonical per-field regexes.
+
+    Parity guard ensuring the DuckDB-native extraction produces the same values
+    the previous Python regex loop did, for each supported format.
+    """
+    import re
+
+    cases = {
+        "web": (
+            '10.0.0.1 - - [08/Jul/2026:10:00:00 +0300] "GET /index.html HTTP/1.1" 200 1024',
+            {
+                "timestamp": r"\[(\d{2}/\w{3}/\d{4}:\d{2}:\d{2}:\d{2}\s+[+\-]\d{4})\]",
+                "source_ip": r"^([0-9]{1,3}(?:\.[0-9]{1,3}){3})",
+                "status_code": r'"\s+(\d{3})\s+',
+                "event_type": r'"(\w+)\s+\S+\s+HTTP',
+            },
+        ),
+        "syslog": (
+            "Jan 15 08:00:00 srv-01 sshd[1234]: Failed password for alice from 10.0.0.5 port 22",
+            {
+                "timestamp": r"^([A-Z][a-z]{2}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2})",
+                "source_ip": r"(?:from\s+)([0-9]{1,3}(?:\.[0-9]{1,3}){3})",
+                "event_type": r"^[A-Z][a-z]{2}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}\s+\S+\s+([A-Za-z0-9_.-]+)(?:\[\d+\])?:",
+            },
+        ),
+        "jsonline": (
+            '{"ts":"2024-01-01T00:00:00Z","component":"api","src_ip":"1.2.3.4","status":200}',
+            {
+                "timestamp": r'"(?:ts|timestamp)"\s*:\s*"([^"]+)"',
+                "source_ip": r'"(?:src_ip|source_ip|ip)"\s*:\s*"([^"]+)"',
+                "status_code": r'"(?:status|status_code)"\s*:\s*(\d+)',
+                "event_type": r'"(?:component|event_type|event|method)"\s*:\s*"([^"]+)"',
+            },
+        ),
+    }
+    for fmt, (line, patterns) in cases.items():
+        path = tmp_path / f"{fmt}.log"
+        _write_lines(path, [line])
+        log = validate_log_file(path)
+        result = parse_text_log(log, db, table_name=f"{fmt}_p")
+        rows = db.execute(f'SELECT * FROM "{result.table_name}"').fetchall()
+        assert len(rows) == 1
+        fields = {name: value for (name, _), value in zip(result.schema, rows[0])}
+        for field, pattern in patterns.items():
+            expected = re.search(pattern, line)
+            expected = expected.group(1) if expected else ""
+            assert fields[field] == expected, f"{fmt}.{field}: {fields[field]!r} != {expected!r}"
+
+
 def test_load_text_log_compat(db, tmp_path: Path) -> None:
     path = tmp_path / "legacy.log"
     _write_lines(path, ["raw line"])

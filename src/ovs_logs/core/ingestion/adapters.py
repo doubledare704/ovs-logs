@@ -105,31 +105,23 @@ def load_text_log(
     table_name: str | None = None,
     batch_size: int = 1000,
 ) -> LoadResult:
-    """Load an unstructured text or log file into a single-column DuckDB table."""
+    """Load an unstructured text or log file into a single-column DuckDB table.
+
+    DuckDB reads the source file directly into a ``line`` column in parallel C++,
+    replacing the former slow Python line-by-line copy through an intermediate
+    temp CSV. A single-column schema with an unlikely delimiter and disabled
+    quoting preserves each physical line verbatim even when it contains commas
+    or quotes.
+    """
     name = _resolve_table_name(log_file, table_name)
     quoted_name = _quote_identifier(name)
-    connection.execute(f"CREATE OR REPLACE TABLE {quoted_name} (line VARCHAR)")
     logging.info("Loading text log into table %s from %s", name, log_file.path)
-    tmp_path: str | None = None
-    try:
-        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", suffix=".csv", delete=False, newline="") as tmp:
-            writer = csv.writer(tmp)
-            writer.writerow(["line"])
-            with log_file.path.open("r", encoding="utf-8", errors="replace") as fh:
-                for line in fh:
-                    writer.writerow([line.rstrip("\n")])
-            tmp_path = tmp.name
-            logging.info("Temporary CSV file created at %s for ingestion", tmp_path)
-
-        logging.info("Inserting data from temporary CSV into table %s", name)
-        connection.execute(
-            f"INSERT INTO {quoted_name} SELECT * FROM read_csv_auto(?, header=true, delim=',', all_varchar=true)",
-            [tmp_path],
-        )
-    finally:
-        if tmp_path is not None and Path(tmp_path).exists():
-            Path(tmp_path).unlink()
-
+    connection.execute(
+        f"CREATE OR REPLACE TABLE {quoted_name} AS "
+        "SELECT CAST(col1 AS VARCHAR) AS line FROM read_csv(?, header=false, "
+        "all_varchar=true, columns={'col1': 'VARCHAR'}, delim='\x01', quote='', escape='')",
+        [str(log_file.path.resolve())],
+    )
     return _build_result(connection, name)
 
 
