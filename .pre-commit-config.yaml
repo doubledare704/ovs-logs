@@ -1,0 +1,58 @@
+# Pre-commit hooks configuration for OVS-Log
+# Install with: uv run pre-commit install
+# Run manually: uv run pre-commit run --all-files
+
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.20
+    hooks:
+      - id: ruff
+        name: Ruff Lint
+        args: [--fix, --exit-non-zero-on-fix]
+        types_or: [python, pyi]
+      - id: ruff-format
+        name: Ruff Format
+        types_or: [python, pyi]
+
+  - repo: https://github.com/facebook/pyrefly-pre-commit
+    rev: 1.1.1
+    hooks:
+      - id: pyrefly-check
+        name: Pyrefly Type Check
+        types_or: [python, pyi]
+        additional_dependencies:
+          - duckdb>=1.0.0
+          - requests>=2.32.0
+          - streamlit>=1.35.0
+          - evtx==0.12.1
+          - typer>=0.12.0
+          - rich
+          - pytest>=8.0.0
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: check-merge-conflict
+      - id: debug-statements
+      - id: check-added-large-files
+        args: ['--maxkb=500']
+      - id: check-yaml
+      - id: check-toml
+      - id: check-json
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+      - id: mixed-line-ending
+        args: ['--fix=lf']
+
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.0
+    hooks:
+      - id: gitleaks
+        name: Gitleaks Secret Scan
+        args: ['--verbose']
+
+default_language_version:
+  python: python3.12
+
+# Only run on staged files by default
+# Use `pre-commit run --all-files` to run on all files

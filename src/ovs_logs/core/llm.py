@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import re
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import Any, ClassVar
 
 import requests
 
@@ -50,9 +50,7 @@ class OpenAICompatibleProvider(LLMProvider):
                 {"role": "user", "content": prompt},
             ],
         }
-        response = requests.post(
-            self.endpoint, headers=headers, json=payload, timeout=self.timeout
-        )
+        response = requests.post(self.endpoint, headers=headers, json=payload, timeout=self.timeout)
         response.raise_for_status()
         return response.json()["choices"][0]["message"]["content"]
 
@@ -86,8 +84,7 @@ class PromptBuilder:
             sections.append("Threat intelligence:")
             for ip, reputation in threat_intel.items():
                 sections.append(
-                    f"- {ip}: abuse confidence {reputation.abuse_confidence_score}, "
-                    f"reports {reputation.total_reports}"
+                    f"- {ip}: abuse confidence {reputation.abuse_confidence_score}, reports {reputation.total_reports}"
                 )
 
         if sample_events:
@@ -101,7 +98,7 @@ class PromptBuilder:
 class ResponseParser:
     """Extracts a JSON incident report from an LLM response."""
 
-    REQUIRED_FIELDS = {
+    REQUIRED_FIELDS: ClassVar[set[str]] = {
         "title",
         "summary",
         "severity",

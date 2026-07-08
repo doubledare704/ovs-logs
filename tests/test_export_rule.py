@@ -17,6 +17,8 @@ from ovs_logs.core.report import (
 
 runner = CliRunner()
 
+EXIT_CODE_VALIDATION_ERROR = 3
+
 
 def _sample_report() -> IncidentReport:
     return IncidentReport(
@@ -120,7 +122,7 @@ def test_export_rule_format_mismatch(tmp_path: Path) -> None:
         ],
     )
 
-    assert result.exit_code == 3
+    assert result.exit_code == EXIT_CODE_VALIDATION_ERROR
     assert "does not match report mitigation" in result.output
     assert not out.exists()
 

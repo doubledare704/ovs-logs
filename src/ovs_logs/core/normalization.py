@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Sequence
 
 import duckdb
 
-from ovs_logs.core.ingestion.adapters import LoadResult
+from ovs_logs.core.ingestion.adapters import LoadResult, _quote_identifier
 
 FIELD_ALIASES: dict[str, list[str]] = {
     "event_timestamp": [
@@ -84,38 +84,32 @@ class NormalizationEngine:
         candidates = self.aliases.get(target, [])
         return [lower_map[alias] for alias in candidates if alias in lower_map]
 
-    def _build_expression(
-        self, target: str, dtype: str, matches: list[str]
-    ) -> tuple[str, str | None]:
+    def _build_expression(self, target: str, dtype: str, matches: list[str]) -> tuple[str, str | None]:
         """Return a SQL select expression and the source column used (if any)."""
         if not matches:
             return f'NULL::{dtype} AS "{target}"', None
 
         source_column = matches[0]
         if target in {"event_timestamp", "status_code"}:
-            casts = ", ".join(f'try_cast("{col}" AS {dtype})' for col in matches)
+            casts = ", ".join(f"try_cast({_quote_identifier(col)} AS {dtype})" for col in matches)
         else:
-            casts = ", ".join(f'"{col}"::{dtype}' for col in matches)
+            casts = ", ".join(f"{_quote_identifier(col)}::{dtype}" for col in matches)
 
-        return f"COALESCE({casts}) AS \"{target}\"", source_column
+        return f'COALESCE({casts}) AS "{target}"', source_column
 
-    def build_select_query(
-        self, raw_table: str, columns: Sequence[str]
-    ) -> tuple[str, dict[str, str | None]]:
+    def build_select_query(self, raw_table: str, columns: Sequence[str]) -> tuple[str, dict[str, str | None]]:
         """Build the `SELECT ... FROM "raw_table"` SQL statement."""
         expressions: list[str] = []
         mapping: dict[str, str | None] = {}
 
-        for target in TARGET_TYPES:
+        for target, dtype in TARGET_TYPES.items():
             matches = self._find_matches(columns, target)
-            expr, source = self._build_expression(
-                target, TARGET_TYPES[target], matches
-            )
+            expr, source = self._build_expression(target, dtype, matches)
             expressions.append(expr)
             mapping[target] = source
 
         select_sql = ",\n    ".join(expressions)
-        query = f'SELECT\n    {select_sql}\nFROM "{raw_table}"'
+        query = f"SELECT\n    {select_sql}\nFROM {_quote_identifier(raw_table)}"
         return query, mapping
 
     def build_sql(self, raw_table: str, columns: Sequence[str]) -> tuple[str, dict[str, str | None]]:
@@ -126,16 +120,15 @@ class NormalizationEngine:
             mapping,
         )
 
-    def normalize_table(
-        self, connection: duckdb.DuckDBPyConnection, load_result: LoadResult
-    ) -> NormalizeResult:
+    def normalize_table(self, connection: duckdb.DuckDBPyConnection, load_result: LoadResult) -> NormalizeResult:
         """Create or replace the unified `events` table from a raw load result."""
         raw_columns = [name for name, _ in load_result.schema]
         sql, mapping = self.build_sql(load_result.table_name, raw_columns)
 
         connection.execute(sql)
 
-        row_count = connection.execute("SELECT COUNT(*) FROM events").fetchone()[0]
+        row = connection.execute("SELECT COUNT(*) FROM events").fetchone()
+        row_count = row[0] if row is not None else 0
         schema_rows = connection.execute("DESCRIBE events").fetchall()
         schema = [(row[0], row[1]) for row in schema_rows]
 

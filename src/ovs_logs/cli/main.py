@@ -2,14 +2,15 @@
 
 from __future__ import annotations
 
-import duckdb
 import json
 import os
 import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, NoReturn
 
+import duckdb
 import typer
 from rich.console import Console
 from rich.table import Table
@@ -66,14 +67,94 @@ def _resolve_log_file(file: Path, file_type: str | None) -> LogFile:
 
     normalized = file_type.lower()
     if normalized not in SUPPORTED_FORMATS:
-        raise ValueError(
-            f"Unsupported type '{file_type}'. Supported: {', '.join(sorted(SUPPORTED_FORMATS))}"
-        )
+        raise ValueError(f"Unsupported type '{file_type}'. Supported: {', '.join(sorted(SUPPORTED_FORMATS))}")
     return LogFile(
         path=log_file.path,
         format=normalized,
         needs_conversion=(normalized == "evtx"),
     )
+
+
+def _raise_no_adapter(fmt: str) -> NoReturn:
+    raise ValueError(f"No ingestion adapter for format '{fmt}'")
+
+
+def _raise_output_requires_llm() -> NoReturn:
+    raise ValueError("--output requires --llm so a synthesized report is available")
+
+
+def _raise_format_mismatch(rule_format: str, report_format: str) -> NoReturn:
+    raise ValueError(f"Requested format '{rule_format}' does not match report mitigation format '{report_format}'")
+
+
+def _perform_ingest(
+    db: Path,
+    file: Path,
+    file_type: str | None,
+    table: str | None,
+) -> tuple[LoadResult, bool]:
+    log_file = _resolve_log_file(file, file_type)
+    adapter = ADAPTER_MAP.get(log_file.format)
+    if adapter is None:
+        _raise_no_adapter(log_file.format)
+
+    assert adapter is not None
+
+    with Database(db) as connection:
+        load_result = adapter(log_file, connection, table_name=table)
+        is_unstructured = len(load_result.schema) == 1 and load_result.schema[0][0] == "line"
+        if not is_unstructured:
+            NormalizationEngine().normalize_table(connection, load_result)
+
+    return load_result, not is_unstructured
+
+
+def _perform_analysis(  # noqa: PLR0913
+    db: Path,
+    table: str,
+    *,
+    intel: bool,
+    llm: bool,
+    abuseipdb_api_key: str | None,
+    llm_api_key: str | None,
+    output: Path | None,
+) -> None:
+    with Database(db) as connection:
+        with console.status("[bold green]Analyzing table..."):
+            raw_results = AnalysisEngine().run_queries(connection, table_name=table)
+            indicators = IndicatorProcessor().process(raw_results)
+
+        if not indicators:
+            console.print("[yellow]No suspicious indicators found.[/yellow]")
+            return
+
+        _render_indicators(indicators)
+
+        threat_intel: dict[str, Any] | None = None
+        if intel:
+            with console.status("[bold green]Enriching with threat intelligence..."):
+                ips = _extract_unique_ips(indicators)
+                client = ThreatIntelClient(api_key=abuseipdb_api_key or os.getenv("ABUSEIPDB_API_KEY"))
+                threat_intel = client.lookup_many(ips) if ips else {}
+
+        report: IncidentReport | None = None
+        if llm:
+            with console.status("[bold green]Synthesizing incident report..."):
+                api_key = llm_api_key or os.getenv("LLM_API_KEY")
+                if api_key is None:
+                    raise ValueError("--llm requires an LLM API key (set --llm-api-key or LLM_API_KEY)")
+                provider = OpenAICompatibleProvider(api_key=api_key)
+                report = LLMSynthesizer(provider).synthesize(indicators, threat_intel=threat_intel)
+            report_id = ReportStore().save_report(connection, report)
+            console.print(f"[bold]Report saved:[/bold] {report_id}")
+            _render_report(report)
+
+        if output:
+            if report is None:
+                _raise_output_requires_llm()
+            output.parent.mkdir(parents=True, exist_ok=True)
+            output.write_text(json.dumps(report.to_dict(), indent=2), encoding="utf-8")
+            console.print(f"[bold]Report written to:[/bold] {output}")
 
 
 @app.command()
@@ -82,34 +163,80 @@ def ingest(
     file_type: str | None = typer.Option(
         None, "--type", help="Override file type detection (csv, json, txt, log, evtx)"
     ),
-    db: Path = typer.Option(
-        Path(settings.database.path), "--db", help="DuckDB database path"
-    ),
-    table: str | None = typer.Option(
-        None, "--table", help="Destination raw table name (auto-generated if omitted)"
-    ),
+    db: Path = typer.Option(Path(settings.database.path), "--db", help="DuckDB database path"),
+    table: str | None = typer.Option(None, "--table", help="Destination raw table name (auto-generated if omitted)"),
 ) -> None:
     """Ingest a log file into DuckDB and normalize it into the events table."""
     try:
-        with console.status("[bold green]Validating file..."):
-            log_file = _resolve_log_file(file, file_type)
-
-        adapter = ADAPTER_MAP.get(log_file.format)
-        if adapter is None:
-            raise ValueError(f"No ingestion adapter for format '{log_file.format}'")
-
-        with Database(db) as connection:
-            with console.status("[bold green]Loading into DuckDB..."):
-                load_result = adapter(log_file, connection, table_name=table)
-
-            is_unstructured = len(load_result.schema) == 1 and load_result.schema[0][0] == "line"
-            if not is_unstructured:
-                with console.status("[bold green]Normalizing into events table..."):
-                    NormalizationEngine().normalize_table(connection, load_result)
-
+        load_result, _ = _perform_ingest(db, file, file_type, table)
         console.print(f"[bold]Loaded[/bold] {load_result.row_count} rows into {load_result.table_name}")
         schema = ", ".join(name for name, _ in load_result.schema)
         console.print(f"[bold]Schema:[/bold] {schema}")
+    except Exception as exc:
+        exit_code = _classify_error(exc)
+        raise typer.Exit(code=exit_code) from exc
+
+
+@app.command()
+def process(  # noqa: PLR0913
+    file: Path = typer.Option(..., "--file", help="Path to the log file to ingest"),
+    file_type: str | None = typer.Option(
+        None, "--type", help="Override file type detection (csv, json, txt, log, evtx)"
+    ),
+    db: Path = typer.Option(Path(settings.database.path), "--db", help="DuckDB database path"),
+    table: str | None = typer.Option(None, "--table", help="Destination raw table name (auto-generated if omitted)"),
+    intel: bool = typer.Option(False, "--intel", help="Enable AbuseIPDB enrichment"),
+    llm: bool = typer.Option(False, "--llm", help="Enable LLM synthesis"),
+    abuseipdb_api_key: str | None = typer.Option(None, "--abuseipdb-api-key", help="AbuseIPDB API key"),
+    llm_api_key: str | None = typer.Option(None, "--llm-api-key", help="LLM API key"),
+    output: Path | None = typer.Option(None, "--output", help="Write JSON report to file"),
+) -> None:
+    """Ingest a log file into DuckDB and immediately analyze it."""
+    try:
+        load_result, was_normalized = _perform_ingest(db, file, file_type, table)
+        console.print(f"[bold]Loaded[/bold] {load_result.row_count} rows into {load_result.table_name}")
+        schema = ", ".join(name for name, _ in load_result.schema)
+        console.print(f"[bold]Schema:[/bold] {schema}")
+
+        if not was_normalized:
+            console.print("[yellow]Skipping analysis: unstructured log (single 'line' column).[/yellow]")
+            return
+
+        _perform_analysis(
+            db,
+            "events",
+            intel=intel,
+            llm=llm,
+            abuseipdb_api_key=abuseipdb_api_key,
+            llm_api_key=llm_api_key,
+            output=output,
+        )
+    except Exception as exc:
+        exit_code = _classify_error(exc)
+        raise typer.Exit(code=exit_code) from exc
+
+
+@app.command()
+def analyze(  # noqa: PLR0913
+    table: str = typer.Option(..., "--table", help="DuckDB table to analyze"),
+    db: Path = typer.Option(Path(settings.database.path), "--db", help="DuckDB database path"),
+    intel: bool = typer.Option(False, "--intel", help="Enable AbuseIPDB enrichment"),
+    llm: bool = typer.Option(False, "--llm", help="Enable LLM synthesis"),
+    abuseipdb_api_key: str | None = typer.Option(None, "--abuseipdb-api-key", help="AbuseIPDB API key"),
+    llm_api_key: str | None = typer.Option(None, "--llm-api-key", help="LLM API key"),
+    output: Path | None = typer.Option(None, "--output", help="Write JSON report to file"),
+) -> None:
+    """Analyze a DuckDB table to extract indicators and optionally synthesize a report."""
+    try:
+        _perform_analysis(
+            db,
+            table,
+            intel=intel,
+            llm=llm,
+            abuseipdb_api_key=abuseipdb_api_key,
+            llm_api_key=llm_api_key,
+            output=output,
+        )
     except Exception as exc:
         exit_code = _classify_error(exc)
         raise typer.Exit(code=exit_code) from exc
@@ -179,77 +306,8 @@ def _render_report(report: IncidentReport) -> None:
         mitre_table.add_column("Technique")
         mitre_table.add_column("Tactic")
         for mapping in report.mitre_mappings:
-            mitre_table.add_row(
-                mapping.technique_id, mapping.technique_name, mapping.tactic
-            )
+            mitre_table.add_row(mapping.technique_id, mapping.technique_name, mapping.tactic)
         console.print(mitre_table)
-
-
-@app.command()
-def analyze(
-    table: str = typer.Option(..., "--table", help="DuckDB table to analyze"),
-    db: Path = typer.Option(
-        Path(settings.database.path), "--db", help="DuckDB database path"
-    ),
-    intel: bool = typer.Option(False, "--intel", help="Enable AbuseIPDB enrichment"),
-    llm: bool = typer.Option(False, "--llm", help="Enable LLM synthesis"),
-    abuseipdb_api_key: str | None = typer.Option(
-        None, "--abuseipdb-api-key", help="AbuseIPDB API key"
-    ),
-    llm_api_key: str | None = typer.Option(
-        None, "--llm-api-key", help="LLM API key"
-    ),
-    output: Path | None = typer.Option(
-        None, "--output", help="Write JSON report to file"
-    ),
-) -> None:
-    """Analyze a DuckDB table to extract indicators and optionally synthesize a report."""
-    try:
-        with Database(db) as connection:
-            with console.status("[bold green]Analyzing table..."):
-                raw_results = AnalysisEngine().run_queries(connection, table_name=table)
-                indicators = IndicatorProcessor().process(raw_results)
-
-            if not indicators:
-                console.print("[yellow]No suspicious indicators found.[/yellow]")
-                return
-
-            _render_indicators(indicators)
-
-            threat_intel: dict[str, Any] | None = None
-            if intel:
-                with console.status("[bold green]Enriching with threat intelligence..."):
-                    ips = _extract_unique_ips(indicators)
-                    client = ThreatIntelClient(
-                        api_key=abuseipdb_api_key or os.getenv("ABUSEIPDB_API_KEY")
-                    )
-                    threat_intel = client.lookup_many(ips) if ips else {}
-
-            report: IncidentReport | None = None
-            if llm:
-                with console.status("[bold green]Synthesizing incident report..."):
-                    provider = OpenAICompatibleProvider(
-                        api_key=llm_api_key or os.getenv("LLM_API_KEY")
-                    )
-                    report = LLMSynthesizer(provider).synthesize(
-                        indicators, threat_intel=threat_intel
-                    )
-                report_id = ReportStore().save_report(connection, report)
-                console.print(f"[bold]Report saved:[/bold] {report_id}")
-                _render_report(report)
-
-            if output:
-                if report is None:
-                    raise ValueError(
-                        "--output requires --llm so a synthesized report is available"
-                    )
-                output.write_text(
-                    json.dumps(report.to_dict(), indent=2), encoding="utf-8"
-                )
-                console.print(f"[bold]Report written to:[/bold] {output}")
-    except Exception as exc:
-        exit_code = _classify_error(exc)
-        raise typer.Exit(code=exit_code) from exc
 
 
 @app.command()
@@ -279,7 +337,7 @@ def ui(
     The target is passed as a `.py` filesystem path resolved via the module's
     ``__file__`` attribute, which is what Streamlit's CLI accepts.
     """
-    import ovs_logs.ui.app as _app_module
+    from ovs_logs.ui import app as _app_module  # noqa: PLC0415
 
     target = str(Path(_app_module.__file__).resolve())
 
@@ -305,9 +363,7 @@ def ui(
 def export_rule(
     report_id: str = typer.Option(..., "--report-id", help="Report ID to export"),
     rule_format: str = typer.Option("sigma", "--format", help="Rule format, e.g. sigma"),
-    db: Path = typer.Option(
-        Path(settings.database.path), "--db", help="DuckDB database path"
-    ),
+    db: Path = typer.Option(Path(settings.database.path), "--db", help="DuckDB database path"),
     output: Path = typer.Option(..., "--output", help="Write rule to file"),
 ) -> None:
     """Export a mitigation rule from a saved report.
@@ -320,9 +376,7 @@ def export_rule(
             report = ReportStore().get_report(connection, report_id)
 
         if report.mitigation.format.lower() != rule_format.lower():
-            raise ValueError(
-                f"Requested format '{rule_format}' does not match report mitigation format '{report.mitigation.format}'"
-            )
+            _raise_format_mismatch(rule_format, report.mitigation.format)
 
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text(report.mitigation.content, encoding="utf-8")

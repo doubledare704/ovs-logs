@@ -29,9 +29,7 @@ class SuspiciousIndicator:
 
     def __post_init__(self) -> None:
         if self.severity not in {"Low", "Medium", "High"}:
-            raise ValueError(
-                f"Severity must be one of Low, Medium, or High; got {self.severity!r}"
-            )
+            raise ValueError(f"Severity must be one of Low, Medium, or High; got {self.severity!r}")
 
 
 class IndicatorProcessor:
@@ -57,31 +55,16 @@ class IndicatorProcessor:
     def _build_description(self, indicator_type: str, evidence: dict[str, Any]) -> str:
         """Generate a human-readable description for the indicator."""
         if indicator_type == "top_talkers":
-            return (
-                f"IP {evidence['source_ip']} generated "
-                f"{evidence['event_count']} events"
-            )
+            return f"IP {evidence['source_ip']} generated {evidence['event_count']} events"
         if indicator_type == "error_spikes":
-            return (
-                f"IP {evidence['source_ip']} returned "
-                f"HTTP {evidence['status_code']} "
-                f"{evidence['error_count']} times"
-            )
+            return f"IP {evidence['source_ip']} returned HTTP {evidence['status_code']} {evidence['error_count']} times"
         if indicator_type == "event_distribution":
-            return (
-                f"Event type '{evidence['event_type']}' occurred "
-                f"{evidence['event_count']} times"
-            )
+            return f"Event type '{evidence['event_type']}' occurred {evidence['event_count']} times"
         if indicator_type == "temporal_anomaly":
-            return (
-                f"Time bucket {evidence['time_bucket']} had "
-                f"{evidence['event_count']} events"
-            )
+            return f"Time bucket {evidence['time_bucket']} had {evidence['event_count']} events"
         return f"Indicator of type {indicator_type}: {evidence}"
 
-    def process(
-        self, results: dict[str, list[dict[str, Any]]]
-    ) -> list[SuspiciousIndicator]:
+    def process(self, results: dict[str, list[dict[str, Any]]]) -> list[SuspiciousIndicator]:
         """Convert raw analysis results into a flat list of suspicious indicators."""
         indicators: list[SuspiciousIndicator] = []
 

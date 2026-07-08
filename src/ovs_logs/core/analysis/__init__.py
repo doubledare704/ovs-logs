@@ -2,12 +2,12 @@
 
 from .engine import AnalysisEngine
 from .indicators import IndicatorProcessor, SuspiciousIndicator
-from .templates import SQLTemplate, TEMPLATES
+from .templates import TEMPLATES, SQLTemplate
 
 __all__ = [
+    "TEMPLATES",
     "AnalysisEngine",
     "IndicatorProcessor",
     "SQLTemplate",
     "SuspiciousIndicator",
-    "TEMPLATES",
 ]

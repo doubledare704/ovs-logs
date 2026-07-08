@@ -1,6 +1,6 @@
 """Tests for the LLM synthesis layer."""
 
-from typing import Any
+from unittest.mock import Mock, patch
 
 import pytest
 
@@ -34,14 +34,24 @@ def _sample_response() -> str:
   "summary": "Multiple failed logins from a single IP.",
   "severity": "High",
   "timeline": [
-    {"timestamp": "2024-01-01T00:00:00", "description": "Failed login", "source_ip": "1.2.3.4", "event_type": "POST", "status_code": 401, "raw_message": null}
+    {"timestamp": "2024-01-01T00:00:00", "description": "Failed login",
+     "source_ip": "1.2.3.4", "event_type": "POST", "status_code": 401,
+     "raw_message": null}
   ],
   "mitre_mappings": [
-    {"technique_id": "T1110", "technique_name": "Brute Force", "tactic": "Credential Access", "description": "Repeated failed auth attempts."}
+    {"technique_id": "T1110", "technique_name": "Brute Force",
+     "tactic": "Credential Access",
+     "description": "Repeated failed auth attempts."}
   ],
-  "mitigation": {"format": "Sigma", "title": "Detect repeated failed logins", "content": "title: repeated failed logins"},
+  "mitigation": {
+    "format": "Sigma",
+    "title": "Detect repeated failed logins",
+    "content": "title: repeated failed logins"
+  },
   "indicators": [
-    {"type": "top_talkers", "severity": "High", "description": "IP 1.2.3.4 generated 250 events", "evidence": {"source_ip": "1.2.3.4", "event_count": 250}}
+    {"type": "top_talkers", "severity": "High",
+     "description": "IP 1.2.3.4 generated 250 events",
+     "evidence": {"source_ip": "1.2.3.4", "event_count": 250}}
   ],
   "metadata": {"source_file": "auth.log"}
 }
@@ -77,7 +87,11 @@ def test_response_parser_extracts_markdown_json() -> None:
 
 def test_response_parser_extracts_raw_json() -> None:
     parser = ResponseParser()
-    raw = '{"title": "T", "summary": "S", "severity": "Low", "timeline": [], "mitre_mappings": [], "mitigation": {"format": "Sigma", "title": "T", "content": "C"}}'
+    raw = (
+        '{"title": "T", "summary": "S", "severity": "Low", "timeline": [], '
+        '"mitre_mappings": [], "mitigation": {"format": "Sigma", "title": "T", '
+        '"content": "C"}}'
+    )
     data = parser.parse(raw)
     assert data["title"] == "T"
 
@@ -109,13 +123,9 @@ def test_synthesizer_returns_incident_report() -> None:
 
 
 def test_openai_provider_sends_request() -> None:
-    from unittest.mock import Mock, patch
-
     mock_response = Mock()
     mock_response.raise_for_status.return_value = None
-    mock_response.json.return_value = {
-        "choices": [{"message": {"content": '{"title": "T"}'}}]
-    }
+    mock_response.json.return_value = {"choices": [{"message": {"content": '{"title": "T"}'}}]}
 
     with patch("ovs_logs.core.llm.requests.post", return_value=mock_response) as mock_post:
         provider = OpenAICompatibleProvider(api_key="sk-test")

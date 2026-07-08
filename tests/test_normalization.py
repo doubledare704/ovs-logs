@@ -1,5 +1,6 @@
 """Tests for the normalization engine."""
 
+from collections.abc import Sequence
 from pathlib import Path
 
 import pytest
@@ -9,6 +10,9 @@ from ovs_logs.core.ingestion.adapters import load_csv, load_json, load_text_log
 from ovs_logs.core.normalization import NormalizationEngine
 from ovs_logs.core.validation import validate_log_file
 
+NORMALIZED_CSV_ROW_COUNT = 2
+NORMALIZED_LOG_ROW_COUNT = 2
+
 
 @pytest.fixture
 def db():
@@ -17,16 +21,14 @@ def db():
         yield conn
 
 
-def _schema_types(schema: list[tuple[str, str]]) -> dict[str, str]:
+def _schema_types(schema: Sequence[tuple[str, str]]) -> dict[str, str]:
     return {name.lower(): dtype for name, dtype in schema}
 
 
 def test_normalize_csv(db, tmp_path: Path) -> None:
     file = tmp_path / "web.csv"
     file.write_text(
-        "timestamp,client_ip,status,method\n"
-        "2024-01-01T00:00:00,1.2.3.4,200,GET\n"
-        "2024-01-01T00:01:00,5.6.7.8,404,POST\n"
+        "timestamp,client_ip,status,method\n2024-01-01T00:00:00,1.2.3.4,200,GET\n2024-01-01T00:01:00,5.6.7.8,404,POST\n"
     )
 
     log = validate_log_file(file)
@@ -34,7 +36,7 @@ def test_normalize_csv(db, tmp_path: Path) -> None:
     result = NormalizationEngine().normalize_table(db, load_result)
 
     assert result.table_name == "events"
-    assert result.row_count == 2
+    assert result.row_count == NORMALIZED_CSV_ROW_COUNT
     assert result.mapping["source_ip"] == "client_ip"
     assert result.mapping["event_type"] == "method"
     assert result.mapping["status_code"] == "status"
@@ -45,9 +47,7 @@ def test_normalize_csv(db, tmp_path: Path) -> None:
     assert "timestamp" in types["event_timestamp"].lower()
     assert "integer" in types["status_code"].lower()
 
-    rows = db.execute(
-        "SELECT source_ip, status_code, event_type FROM events ORDER BY event_timestamp"
-    ).fetchall()
+    rows = db.execute("SELECT source_ip, status_code, event_type FROM events ORDER BY event_timestamp").fetchall()
     assert rows[0] == ("1.2.3.4", 200, "GET")
     assert rows[1] == ("5.6.7.8", 404, "POST")
 
@@ -70,9 +70,7 @@ def test_normalize_json(db, tmp_path: Path) -> None:
     assert result.mapping["event_timestamp"] == "time"
     assert result.mapping["raw_message"] == "message"
 
-    rows = db.execute(
-        "SELECT source_ip, status_code, event_type, raw_message FROM events"
-    ).fetchall()
+    rows = db.execute("SELECT source_ip, status_code, event_type, raw_message FROM events").fetchall()
     assert rows[0] == ("9.8.7.6", 201, "login", "User logged in")
 
 
@@ -84,7 +82,7 @@ def test_normalize_text_log(db, tmp_path: Path) -> None:
     load_result = load_text_log(log, db, table_name="raw_app")
     result = NormalizationEngine().normalize_table(db, load_result)
 
-    assert result.row_count == 2
+    assert result.row_count == NORMALIZED_LOG_ROW_COUNT
     assert result.mapping["raw_message"] == "line"
     assert result.mapping["source_ip"] is None
     assert result.mapping["event_timestamp"] is None

@@ -2,11 +2,19 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 import duckdb
 
-from .templates import SQLTemplate, TEMPLATES
+from ..ingestion.adapters import _quote_identifier
+from .templates import TEMPLATES, SQLTemplate
+
+_ALIAS_MAP: dict[str, str] = {
+    "event_timestamp": "timestamp",
+}
+
+logger = logging.getLogger(__name__)
 
 
 class AnalysisEngine:
@@ -15,15 +23,43 @@ class AnalysisEngine:
     def __init__(self, templates: dict[str, SQLTemplate] | None = None) -> None:
         self.templates = templates or TEMPLATES
 
-    def _resolve_parameters(
-        self, template: SQLTemplate, thresholds: dict[str, int] | None
-    ) -> list[int]:
+    def _resolve_parameters(self, template: SQLTemplate, thresholds: dict[str, int] | None) -> list[int]:
         """Build the ordered parameter list for a template."""
         thresholds = thresholds or {}
-        return [
-            thresholds.get(param, template.default_thresholds[param])
-            for param in template.parameters
-        ]
+        return [thresholds.get(param, template.default_thresholds[param]) for param in template.parameters]
+
+    def _build_aliased_query(self, sql: str, table_name: str, connection: duckdb.DuckDBPyConnection) -> str:
+        """Wrap the target table so normalized aliases resolve on raw tables.
+
+        When querying a raw table that uses ``timestamp`` instead of
+        ``event_timestamp``, this injects a lightweight ``FROM (<query>)`` wrap
+        so template SQL can continue to reference ``event_timestamp`` without
+        failing at bind time.
+        """
+        try:
+            columns = [row[0] for row in connection.execute(f"DESCRIBE {_quote_identifier(table_name)}").fetchall()]
+        except duckdb.Error:
+            logger.warning("DESCRIBE failed for table %s; using raw table reference", table_name)
+            return sql.replace("FROM events", f"FROM {_quote_identifier(table_name)}")
+
+        lower_columns = {c.lower() for c in columns}
+        expressions: list[str] = []
+        for target in ("event_timestamp", "source_ip", "event_type", "status_code", "raw_message"):
+            if target in lower_columns:
+                expressions.append(f'"{target}"')
+            elif target == "event_timestamp" and "timestamp" in lower_columns:
+                expressions.append('TRY_CAST("timestamp" AS TIMESTAMP) AS "event_timestamp"')
+            elif target == "event_type" and "event" in lower_columns:
+                expressions.append('"event"::VARCHAR AS "event_type"')
+            elif target == "raw_message" and "message" in lower_columns:
+                expressions.append('"message"::VARCHAR AS "raw_message"')
+            else:
+                expressions.append(f'NULL::{_column_dtype(target)} AS "{target}"')
+
+        return sql.replace(
+            "FROM events",
+            f"FROM (SELECT {', '.join(expressions)} FROM {_quote_identifier(table_name)})",
+        )
 
     def run_queries(
         self,
@@ -47,10 +83,21 @@ class AnalysisEngine:
         results: dict[str, list[dict[str, Any]]] = {}
 
         for name, template in self.templates.items():
-            sql = template.sql.replace("FROM events", f'FROM "{table_name}"')
+            if table_name == "events":
+                sql = template.sql
+            else:
+                sql = self._build_aliased_query(template.sql, table_name, connection)
             params = self._resolve_parameters(template, thresholds.get(name))
             cursor = connection.execute(sql, params)
             columns = [desc[0] for desc in cursor.description]
-            results[name] = [dict(zip(columns, row)) for row in cursor.fetchall()]
+            results[name] = [dict(zip(columns, row, strict=True)) for row in cursor.fetchall()]
 
         return results
+
+
+def _column_dtype(target: str) -> str:
+    if target == "event_timestamp":
+        return "TIMESTAMP"
+    if target == "status_code":
+        return "BIGINT"
+    return "VARCHAR"

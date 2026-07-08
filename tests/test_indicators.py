@@ -4,11 +4,13 @@ from typing import Any
 
 import pytest
 
-from ovs_logs.config.settings import settings
 from ovs_logs.core.analysis.indicators import (
     IndicatorProcessor,
     SuspiciousIndicator,
 )
+
+INDICATORS_TOTAL_COUNT = 5
+EXPECTED_EVENT_COUNT = 250
 
 
 def _sample_results() -> dict[str, list[dict[str, Any]]]:
@@ -17,15 +19,9 @@ def _sample_results() -> dict[str, list[dict[str, Any]]]:
             {"source_ip": "1.2.3.4", "event_count": 250},
             {"source_ip": "5.6.7.8", "event_count": 125},
         ],
-        "error_spikes": [
-            {"source_ip": "1.2.3.4", "status_code": 404, "error_count": 120}
-        ],
-        "event_distribution": [
-            {"event_type": "GET", "event_count": 120}
-        ],
-        "temporal_anomaly": [
-            {"time_bucket": "2024-01-01 00:00:00", "event_count": 30}
-        ],
+        "error_spikes": [{"source_ip": "1.2.3.4", "status_code": 404, "error_count": 120}],
+        "event_distribution": [{"event_type": "GET", "event_count": 120}],
+        "temporal_anomaly": [{"time_bucket": "2024-01-01 00:00:00", "event_count": 30}],
     }
 
 
@@ -35,12 +31,12 @@ def test_default_thresholds_produce_expected_severity() -> None:
 
     indicators = processor.process(results)
 
-    assert len(indicators) == 5
+    assert len(indicators) == INDICATORS_TOTAL_COUNT
 
     top_high = next(i for i in indicators if i.type == "top_talkers" and i.evidence["source_ip"] == "1.2.3.4")
     assert top_high.severity == "High"
     assert "1.2.3.4" in top_high.description
-    assert top_high.evidence["event_count"] == 250
+    assert top_high.evidence["event_count"] == EXPECTED_EVENT_COUNT
 
     top_medium = next(i for i in indicators if i.type == "top_talkers" and i.evidence["source_ip"] == "5.6.7.8")
     assert top_medium.severity == "Medium"

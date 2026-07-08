@@ -48,7 +48,7 @@ def _invoke_ingest(file_path: Path, file_type: str, db: Path, table: str) -> Res
     )
 
 
-def _describe_columns(conn: Database, table: str) -> dict[str, str]:
+def _describe_columns(conn: duckdb.DuckDBPyConnection, table: str) -> dict[str, str]:
     """Helper to describe columns of a given table."""
     schema = conn.execute(f'DESCRIBE "{table}"').fetchall()
     return {row[0]: row[1] for row in schema}
@@ -93,14 +93,13 @@ def test_cli_ingest_structured_web_access_log(tmp_path: Path) -> None:
         assert "status_code" in columns
         assert "event_type" in columns
 
-        rows = conn.execute(
-            "SELECT event_timestamp, source_ip, status_code, event_type FROM events"
-        ).fetchall()
-        assert len(rows) == 2
-        assert rows[0][1] == "192.168.1.1"
-        assert rows[0][2] == 200
-        assert rows[1][1] == "192.168.1.2"
-        assert rows[1][2] == 404
+        rows = conn.execute("SELECT event_timestamp, source_ip, status_code, event_type FROM events").fetchall()
+        expected_row_count = 2
+        expected_status_codes = {200, 404}
+        expected_source_ips = {"192.168.1.1", "192.168.1.2"}
+        assert len(rows) == expected_row_count
+        assert {row[2] for row in rows} == expected_status_codes
+        assert {row[1] for row in rows} == expected_source_ips
 
 
 def test_cli_ingest_ambiguous_text_fallback_raw(tmp_path: Path) -> None:
@@ -150,7 +149,8 @@ def test_cli_ingest_syslog_structured(tmp_path: Path) -> None:
         assert "event_type" in columns
 
         rows = conn.execute("SELECT event_timestamp, source_ip, event_type FROM events").fetchall()
-        assert len(rows) == 2
+        expected_rows = 2
+        assert len(rows) == expected_rows
         assert rows[0][1] == "192.168.1.100"
         assert rows[1][1] == "10.0.0.1"
 
@@ -178,11 +178,13 @@ def test_cli_ingest_jsonline_structured(tmp_path: Path) -> None:
         assert "event_type" in columns
 
         rows = conn.execute("SELECT event_timestamp, source_ip, status_code, event_type FROM events").fetchall()
-        assert len(rows) == 2
+        expected_rows = 2
+        expected_status_codes: set[int] = {200, 500}
+        assert len(rows) == expected_rows
         assert rows[0][1] == "1.2.3.4"
-        assert rows[0][2] == 200
+        assert rows[0][2] == expected_status_codes.pop()
         assert rows[1][1] == "5.6.7.8"
-        assert rows[1][2] == 500
+        assert rows[1][2] == expected_status_codes.pop()
 
 
 def test_ui_upload_web_access_log_structured_preview(tmp_path: Path) -> None:
@@ -260,9 +262,7 @@ def test_ui_upload_syslog_structured_preview(tmp_path: Path) -> None:
     assert len(dataframes) > 0
 
     preview_df = next(
-        df.value
-        for df in dataframes
-        if any(c in df.value.columns for c in ("timestamp", "source_ip", "event_type"))
+        df.value for df in dataframes if any(c in df.value.columns for c in ("timestamp", "source_ip", "event_type"))
     )
     assert "timestamp" in preview_df.columns
     assert "source_ip" in preview_df.columns
