@@ -139,18 +139,14 @@ def parse_text_log(
 
     select_sql = ",\n    ".join(field_exprs)
     connection.execute(
-        f"CREATE OR REPLACE TABLE {quoted} AS\n"
-        f"SELECT\n    {select_sql},\n    line AS raw_message\n"
-        f"FROM {quoted}",
+        f"CREATE OR REPLACE TABLE {quoted} AS\nSELECT\n    {select_sql},\n    line AS raw_message\nFROM {quoted}",
         params,
     )
 
     # Preserve the legacy "no hits -> treat as unstructured" behaviour so the CLI
     # still skips normalization for logs with no extractable structure.
     hit_expr = " OR ".join(f"{_quote_identifier(field)} <> ''" for field in _STRUCTURED_FIELDS)
-    hit = connection.execute(
-        f"SELECT COUNT_IF({hit_expr}) FROM {quoted}"
-    ).fetchone()
+    hit = connection.execute(f"SELECT COUNT_IF({hit_expr}) FROM {quoted}").fetchone()
     if not hit or hit[0] == 0:
         connection.execute(f"CREATE OR REPLACE TABLE {quoted} AS SELECT line FROM {quoted}")
         return _reload_result(connection, name)

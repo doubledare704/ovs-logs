@@ -14,15 +14,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import duckdb
-
-try:
-    from evtx import PyEvtxParser
-except ImportError:  # pragma: no cover - depends on optional runtime dependency
-    PyEvtxParser: type | None = None  # type: ignore[assignment]
+from evtx import PyEvtxParser
 
 if TYPE_CHECKING:
     from evtx import PyEvtxParser as EvtxParser
 
+from ovs_logs.core.sql_utils import quote_identifier
 from ovs_logs.core.validation import LogFile
 
 
@@ -53,14 +50,9 @@ def _resolve_table_name(log_file: LogFile, table_name: str | None) -> str:
     return _sanitize_table_name(table_name) if table_name else _generate_table_name(log_file)
 
 
-def _quote_identifier(identifier: str) -> str:
-    """Quote an identifier safely for DuckDB SQL."""
-    return '"' + identifier.replace('"', '""') + '"'
-
-
 def _build_result(connection: duckdb.DuckDBPyConnection, table_name: str) -> LoadResult:
     """Query the loaded table for row count and schema."""
-    quoted_name = _quote_identifier(table_name)
+    quoted_name = quote_identifier(table_name)
     row = connection.execute(f"SELECT COUNT(*) FROM {quoted_name}").fetchone()
     row_count = row[0] if row is not None else 0
     schema_rows = connection.execute(f"DESCRIBE {quoted_name}").fetchall()
@@ -75,7 +67,7 @@ def load_csv(
 ) -> LoadResult:
     """Load a CSV file into DuckDB using ``read_csv_auto``."""
     name = _resolve_table_name(log_file, table_name)
-    quoted_name = _quote_identifier(name)
+    quoted_name = quote_identifier(name)
     connection.execute(
         f"CREATE OR REPLACE TABLE {quoted_name} AS SELECT * "
         "FROM read_csv_auto(?, header=true, delim=',', all_varchar=true)",
@@ -91,7 +83,7 @@ def load_json(
 ) -> LoadResult:
     """Load a JSON file into DuckDB using ``read_json_auto``."""
     name = _resolve_table_name(log_file, table_name)
-    quoted_name = _quote_identifier(name)
+    quoted_name = quote_identifier(name)
     connection.execute(
         f"CREATE OR REPLACE TABLE {quoted_name} AS SELECT * FROM read_json_auto(?)",
         [str(log_file.path.resolve())],
@@ -114,7 +106,7 @@ def load_text_log(
     or quotes.
     """
     name = _resolve_table_name(log_file, table_name)
-    quoted_name = _quote_identifier(name)
+    quoted_name = quote_identifier(name)
     logging.info("Loading text log into table %s from %s", name, log_file.path)
     connection.execute(
         f"CREATE OR REPLACE TABLE {quoted_name} AS "

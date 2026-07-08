@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import tempfile
 from collections.abc import Iterator, Sequence
 from pathlib import Path
@@ -205,7 +206,6 @@ def test_structured_extraction_matches_canonical_regex(db, tmp_path: Path) -> No
     Parity guard ensuring the DuckDB-native extraction produces the same values
     the previous Python regex loop did, for each supported format.
     """
-    import re
 
     cases = {
         "web": (
@@ -242,7 +242,7 @@ def test_structured_extraction_matches_canonical_regex(db, tmp_path: Path) -> No
         result = parse_text_log(log, db, table_name=f"{fmt}_p")
         rows = db.execute(f'SELECT * FROM "{result.table_name}"').fetchall()
         assert len(rows) == 1
-        fields = {name: value for (name, _), value in zip(result.schema, rows[0])}
+        fields = {name: value for (name, _), value in zip(result.schema, rows[0], strict=True)}
         for field, pattern in patterns.items():
             expected = re.search(pattern, line)
             expected = expected.group(1) if expected else ""

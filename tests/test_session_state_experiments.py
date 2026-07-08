@@ -212,6 +212,10 @@ class TestConditionalRendering:
                 conn.execute('CREATE TABLE "test_table" AS SELECT 1 AS id')
 
             at = AppTest.from_file(str(APP_PATH)).run()
+            # Isolate from the real default DB (which may exist in dev
+            # environments with application tables). A missing path guarantees
+            # no selectbox is rendered, matching the "no valid DB" scenario.
+            at.sidebar.text_input[2].set_value("/nonexistent.db").run()
 
             # Initially no selectbox (no valid DB)
             assert len(at.sidebar.selectbox) == 0

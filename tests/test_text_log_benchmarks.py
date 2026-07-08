@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import datetime
 import json
 import logging
 import os
@@ -128,7 +129,7 @@ def generate_jsonlog_lines(line_count: int = 5000) -> str:
     buf = StringIO()
     for i in range(line_count):
         obj = {
-            "ts": time.strftime("%Y-%m-%dT%H:%M:%S.%fZ", time.gmtime(1700000000 + i)),
+            "ts": datetime.datetime.fromtimestamp(1700000000 + i, tz=datetime.UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
             "level": random.choice(levels),
             "component": random.choice(components),
             "msg": f"event sequence {i}",
@@ -189,6 +190,18 @@ def _measure(fn: Callable[..., Any], *args: Any, **kwargs: Any) -> tuple[Any, fl
 
 def _quote_identifier(identifier: str) -> str:
     return '"' + identifier.replace('"', '""') + '"'
+
+
+def _safe_unlink(path: Path) -> None:
+    """Best-effort removal of a temporary file.
+
+    On Windows a CSV opened by DuckDB's ``read_csv_auto`` may still be locked
+    when the consuming query returns, so a direct ``unlink`` raises
+    ``PermissionError``. Treat cleanup as best-effort so it does not mask the
+    benchmark result with an unrelated I/O error.
+    """
+    with contextlib.suppress(OSError):
+        path.unlink()
 
 
 def _reload_result(connection: duckdb.DuckDBPyConnection, table_name: str) -> LoadResult:
@@ -448,8 +461,7 @@ def _regex_python_loop(sample: LogSample) -> BenchmarkResult:
                 NormalizationEngine().normalize_table(db, reloaded)
                 return rows
             finally:
-                if tmp.exists():
-                    tmp.unlink()
+                _safe_unlink(tmp)
 
     rows, elapsed, peak = _measure(_process, ":memory:")
     return BenchmarkResult(
@@ -536,8 +548,7 @@ def _parser_based(sample: LogSample) -> BenchmarkResult:
             NormalizationEngine().normalize_table(db_conn, reloaded)
             return rows
         finally:
-            if tmp.exists():
-                tmp.unlink()
+            _safe_unlink(tmp)
 
     with Database(":memory:") as db:
         rows, elapsed, peak = _measure(_process, db)
@@ -580,8 +591,7 @@ def _hybrid(sample: LogSample) -> BenchmarkResult:
             NormalizationEngine().normalize_table(db_conn, reloaded)
             return rows
         finally:
-            if tmp.exists():
-                tmp.unlink()
+            _safe_unlink(tmp)
 
     with Database(":memory:") as db:
         rows, elapsed, peak = _measure(_process, db)
