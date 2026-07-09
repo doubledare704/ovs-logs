@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-import csv
 import json
 import re
-import tempfile
 import uuid
 from collections.abc import Callable
 from pathlib import Path
@@ -154,6 +152,72 @@ def _extract_hybrid(text: str, fmt: str) -> dict[str, str]:
     return extractor(text)
 
 
+def _build_structured_select_clause(fmt: str) -> str:
+    """Build a SELECT clause for structured text parsing in DuckDB SQL."""
+    extractor_map = {
+        "web": {
+            "timestamp": r"\[(\d{2}/\w{3}/\d{4}:\d{2}:\d{2}:\d{2}\s+[+\-]\d{4})\]",
+            "source_ip": r"^([0-9]{1,3}(?:\.[0-9]{1,3}){3})",
+            "status_code": r'"\s+(\d{3})\s+',
+            "event_type": r'"(\w+)\s+\S+\s+HTTP',
+        },
+        "syslog": {
+            "timestamp": r"^([A-Z][a-z]{2}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2})",
+            "source_ip": r"(?:from\s+)([0-9]{1,3}(?:\.[0-9]{1,3}){3})",
+            "event_type": r"^[A-Z][a-z]{2}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}\s+\S+\s+([A-Za-z0-9_.-]+)(?:\[\d+\])?:",
+        },
+    }
+
+    patterns = extractor_map.get(fmt, {})
+    select_parts = []
+    for field, pattern in patterns.items():
+        if field == "timestamp":
+            select_parts.append(f"regexp_extract(line, '{pattern}', 1) AS timestamp")
+        elif field == "source_ip":
+            select_parts.append(f"regexp_extract(line, '{pattern}', 1) AS source_ip")
+        elif field == "status_code":
+            select_parts.append(f"CAST(regexp_extract(line, '{pattern}', 1) AS VARCHAR) AS status_code")
+        elif field == "event_type":
+            select_parts.append(f"regexp_extract(line, '{pattern}', 1) AS event_type")
+
+    if "timestamp" not in patterns:
+        select_parts.append("NULL AS timestamp")
+    if "source_ip" not in patterns:
+        select_parts.append("NULL AS source_ip")
+    if "status_code" not in patterns:
+        select_parts.append("NULL AS status_code")
+    if "event_type" not in patterns:
+        select_parts.append("NULL AS event_type")
+
+    select_parts.append("line AS raw_message")
+    return ", ".join(select_parts)
+
+
+def _build_jsonline_select_clause() -> str:
+    """Build a SELECT clause for JSON-line parsing in DuckDB SQL."""
+    ts_pattern = r'"(?:ts|timestamp|time|time_iso8601|time_local)"\s*:\s*"([^"]+)"'
+    ts_epoch_pattern = r'"(?:ts|timestamp|time|time_iso8601|time_local)"\s*:\s*(\d+)'
+    ts_quoted = f"regexp_extract(line, '{ts_pattern}', 1)"
+    ts_epoch = f"CAST(regexp_extract(line, '{ts_epoch_pattern}', 1) AS VARCHAR)"
+    ts_expr = f"COALESCE(NULLIF({ts_quoted}, ''), {ts_epoch})"
+    ip_pattern = r'"(?:src_ip|source_ip|ip|remote_ip|remote_addr)"\s*:\s*"([^"]+)"'
+    status_pattern = r'"(?:status|status_code|response)"\s*:\s*(\d+)'
+    event_pattern = r'"(?:component|event_type|event|method|request)"\s*:\s*"([^"]+)"'
+
+    ip_expr = f"regexp_extract(line, '{ip_pattern}', 1)"
+    status_expr = f"CAST(regexp_extract(line, '{status_pattern}', 1) AS VARCHAR)"
+    event_raw = f"regexp_extract(line, '{event_pattern}', 1)"
+    event_expr = f"regexp_extract({event_raw}, '(\\w+)', 1)"
+
+    return (
+        f"{ts_expr} AS timestamp, "
+        f"{ip_expr} AS source_ip, "
+        f"{status_expr} AS status_code, "
+        f"{event_expr} AS event_type, "
+        "line AS raw_message"
+    )
+
+
 def parse_text_log(
     log_file: LogFile,
     connection: duckdb.DuckDBPyConnection,
@@ -188,40 +252,21 @@ def parse_text_log(
 
     fmt = _detect_text_format(log_file.path)
 
-    tmp_path: str | None = None
-    hit_count = 0
-    try:
-        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", suffix=".csv", delete=False, newline="") as tmp:
-            tmp_path = tmp.name
-            writer = csv.writer(tmp)
-            writer.writerow(["timestamp", "source_ip", "status_code", "event_type", "raw_message"])
-            cursor = connection.execute(f"SELECT line FROM {quoted}")
-            while rows := cursor.fetchmany(10_000):
-                for (line,) in rows:
-                    text = line or ""
-                    fields = _extract_hybrid(text, fmt)
-                    if any(fields[k] for k in ("timestamp", "source_ip", "status_code", "event_type")):
-                        hit_count += 1
-                    writer.writerow(
-                        [
-                            fields["timestamp"],
-                            fields["source_ip"],
-                            fields["status_code"],
-                            fields["event_type"],
-                            text,
-                        ]
-                    )
+    if fmt not in ("web", "syslog", "jsonline"):
+        return load_result
 
-        if hit_count == 0:
-            return load_result
+    select_clause = _build_jsonline_select_clause() if fmt == "jsonline" else _build_structured_select_clause(fmt)
 
-        connection.execute(
-            f"CREATE OR REPLACE TABLE {quoted} AS SELECT * "
-            "FROM read_csv_auto(?, header=true, delim=',', quote='\"', escape='\"', all_varchar=true)",
-            [tmp_path],
-        )
-        result = _reload_result(connection, name)
-        return result
-    finally:
-        if tmp_path is not None and Path(tmp_path).exists():
-            Path(tmp_path).unlink()
+    connection.execute(f"CREATE OR REPLACE TABLE {quoted} AS SELECT {select_clause} FROM {quoted}")
+
+    row = connection.execute(
+        f"SELECT COUNT(*) FROM {quoted} "
+        "WHERE timestamp IS NOT NULL OR source_ip IS NOT NULL "
+        "OR status_code IS NOT NULL OR event_type IS NOT NULL"
+    ).fetchone()
+    hit_count = int(row[0]) if row else 0
+
+    if hit_count == 0:
+        return load_result
+
+    return _reload_result(connection, name)
