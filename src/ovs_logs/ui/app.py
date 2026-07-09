@@ -9,6 +9,7 @@ so they remain available to other panels across reruns.
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
 import tempfile
 from collections.abc import Callable
@@ -24,11 +25,13 @@ if TYPE_CHECKING:
 from ovs_logs.config.settings import settings
 from ovs_logs.core.database import Database
 from ovs_logs.core.ingestion import adapters
-from ovs_logs.core.ingestion.adapters import LoadResult, _quote_identifier, load_text_log
+from ovs_logs.core.ingestion.adapters import LoadResult, load_text_log, quote_identifier
 from ovs_logs.core.normalization import NormalizationEngine
 from ovs_logs.core.text_parsing import parse_text_log
 from ovs_logs.core.validation import SUPPORTED_FORMATS, LogFile, validate_log_file
 from ovs_logs.ui.analysis_view import render_analysis_results
+
+logger = logging.getLogger(__name__)
 
 _SYSTEM_TABLE_PREFIXES: tuple[str, ...] = (
     "sqlite_",
@@ -109,6 +112,7 @@ def _preview_evtx(path: Path, max_records: int = 50) -> str:
     try:
         summaries = adapters.iter_evtx_record_summaries(path, max_records=max_records)
     except Exception as exc:  # pragma: no cover - exercised through parser errors
+        logger.warning("Unable to preview EVTX file %s: %s", path, exc)
         return f"Unable to preview EVTX file: {exc}"
 
     lines = [
@@ -349,7 +353,7 @@ def _render_upload_status_summary() -> None:
 def _render_selected_table(connection: duckdb.DuckDBPyConnection, table_name: str) -> None:
     """Render a data preview (up to 100 rows) of the chosen table."""
     try:
-        quoted = _quote_identifier(table_name)
+        quoted = quote_identifier(table_name)
         cursor = connection.execute(f"SELECT * FROM {quoted} LIMIT 100")
         rows = cursor.fetchall()
         columns = [desc[0] for desc in cursor.description]

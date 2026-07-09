@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import json
 import re
 import tempfile
 import uuid
@@ -75,16 +76,10 @@ _SYSLOG_TS_RE = re.compile(r"^([A-Z][a-z]{2}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2})")
 _SYSLOG_IP_RE = re.compile(r"(?:from\s+)([0-9]{1,3}(?:\.[0-9]{1,3}){3})")
 _SYSLOG_EVENT_RE = re.compile(r"^[A-Z][a-z]{2}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}\s+\S+\s+([A-Za-z0-9_.-]+)(?:\[\d+\])?:")
 
-_JSON_TS_RE = re.compile(r'"(?:ts|timestamp|time|time_iso8601|time_local)"\s*:\s*"([^"]+)"')
-_JSON_TS_NUM_RE = re.compile(r'"(?:ts|timestamp|time|time_iso8601|time_local)"\s*:\s*(\d+)')
-_JSON_IP_RE = re.compile(r'"(?:src_ip|source_ip|ip|remote_ip|remote_addr)"\s*:\s*"([^"]+)"')
-_JSON_STATUS_RE = re.compile(r'"(?:status|status_code|response)"\s*:\s*(\d+)')
-_JSON_EVENT_RE = re.compile(r'"(?:component|event_type|event|method|request)"\s*:\s*"([^"]+)"')
-
-_AMBIGUOUS_TS_RE = re.compile(r"\[(\d{2}:\d{2}:\d{2})\]")
-_AMBIGUOUS_IP_RE = re.compile(r"([0-9]{1,3}(?:\.[0-9]{1,3}){3})")
-_AMBIGUOUS_STATUS_RE = re.compile(r"code=(\d+)")
-_AMBIGUOUS_EVENT_MAX_LENGTH = 64
+_JSON_TS_KEYS = ("ts", "timestamp", "time", "time_iso8601", "time_local")
+_JSON_IP_KEYS = ("src_ip", "source_ip", "ip", "remote_ip", "remote_addr")
+_JSON_STATUS_KEYS = ("status", "status_code", "response")
+_JSON_EVENT_KEYS = ("component", "event_type", "event", "method", "request")
 
 
 def _apply_extractors(text: str, patterns: dict[str, re.Pattern[str]]) -> dict[str, str]:
@@ -121,47 +116,34 @@ def _extract_syslog(text: str) -> dict[str, str]:
 
 
 def _extract_jsonline(text: str) -> dict[str, str]:
-    fields = _apply_extractors(
-        text,
-        {
-            "timestamp": _JSON_TS_RE,
-            "source_ip": _JSON_IP_RE,
-            "status_code": _JSON_STATUS_RE,
-            "event_type": _JSON_EVENT_RE,
-        },
-    )
-    if not fields.get("timestamp"):
-        num_match = _JSON_TS_NUM_RE.search(text)
-        if num_match:
-            fields["timestamp"] = num_match.group(1)
-    event_type = fields.get("event_type")
+    try:
+        obj = json.loads(text)
+    except (json.JSONDecodeError, TypeError):
+        return {"timestamp": "", "source_ip": "", "status_code": "", "event_type": ""}
+    if not isinstance(obj, dict):
+        return {"timestamp": "", "source_ip": "", "status_code": "", "event_type": ""}
+
+    def _first(keys: tuple[str, ...]) -> str:
+        for key in keys:
+            if key in obj and obj[key] is not None:
+                return str(obj[key])
+        return ""
+
+    event_type = _first(_JSON_EVENT_KEYS)
     if event_type and " " in event_type:
-        fields["event_type"] = event_type.split()[0]
-    return fields
-
-
-def _extract_ambiguous(text: str) -> dict[str, str]:
-    ts = ip = status = ""
-    m = _AMBIGUOUS_TS_RE.search(text)
-    if m:
-        ts = m.group(1)
-    m = _AMBIGUOUS_IP_RE.search(text)
-    if m:
-        ip = m.group(1)
-    m = _AMBIGUOUS_STATUS_RE.search(text)
-    if m:
-        status = m.group(1)
-    event = "-".join(text.split()[:2])
-    if len(event) > _AMBIGUOUS_EVENT_MAX_LENGTH:
-        event = event[: _AMBIGUOUS_EVENT_MAX_LENGTH - 3] + "..."
-    return {"timestamp": ts, "source_ip": ip, "status_code": status, "event_type": event}
+        event_type = event_type.split()[0]
+    return {
+        "timestamp": _first(_JSON_TS_KEYS),
+        "source_ip": _first(_JSON_IP_KEYS),
+        "status_code": _first(_JSON_STATUS_KEYS),
+        "event_type": event_type,
+    }
 
 
 _FORMAT_EXTRACTORS: dict[str, Callable[[str], dict[str, str]]] = {
     "web": _extract_web,
     "syslog": _extract_syslog,
     "jsonline": _extract_jsonline,
-    "ambiguous": _extract_ambiguous,
 }
 
 
@@ -206,14 +188,9 @@ def parse_text_log(
 
     fmt = _detect_text_format(log_file.path)
 
-    if fmt == "ambiguous":
-        return load_result
-
     tmp_path: str | None = None
     hit_count = 0
     try:
-        # Heuristic: only inspect the first 20 lines for format detection.
-        # This keeps detection cheap but may misclassify logs with long headers.
         with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", suffix=".csv", delete=False, newline="") as tmp:
             tmp_path = tmp.name
             writer = csv.writer(tmp)
@@ -240,7 +217,7 @@ def parse_text_log(
 
         connection.execute(
             f"CREATE OR REPLACE TABLE {quoted} AS SELECT * "
-            "FROM read_csv_auto(?, header=true, delim=',', all_varchar=true)",
+            "FROM read_csv_auto(?, header=true, delim=',', quote='\"', escape='\"', all_varchar=true)",
             [tmp_path],
         )
         result = _reload_result(connection, name)

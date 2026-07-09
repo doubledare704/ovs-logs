@@ -12,7 +12,7 @@ import duckdb
 import streamlit as st
 
 from ovs_logs.core.analysis import AnalysisEngine, IndicatorProcessor
-from ovs_logs.core.ingestion.adapters import _quote_identifier
+from ovs_logs.core.sql_utils import quote_identifier
 
 _ANALYZABLE_COLUMNS = {
     "event_timestamp",
@@ -30,7 +30,7 @@ _ANALYZABLE_COLUMNS = {
 def _has_analyzable_columns(connection: duckdb.DuckDBPyConnection, table_name: str) -> bool:
     """Return True when the table exposes at least one normalized column."""
     try:
-        columns = [row[0] for row in connection.execute(f"DESCRIBE {_quote_identifier(table_name)}").fetchall()]
+        columns = [row[0] for row in connection.execute(f"DESCRIBE {quote_identifier(table_name)}").fetchall()]
     except duckdb.Error:
         return False
     return any(col.lower() in _ANALYZABLE_COLUMNS for col in columns)

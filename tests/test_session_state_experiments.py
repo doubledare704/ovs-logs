@@ -215,9 +215,6 @@ class TestConditionalRendering:
             # Isolate from the real default DB (which may exist in dev
             # environments with application tables). A missing path guarantees
             # no selectbox is rendered, matching the "no valid DB" scenario.
-            at.sidebar.text_input[2].set_value("/nonexistent.db").run()
-
-            # Ensure no default DB interferes with the initial state
             missing_db = Path(tmpdir) / "missing.db"
             at.sidebar.text_input[2].set_value(str(missing_db)).run()
 

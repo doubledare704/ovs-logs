@@ -47,11 +47,6 @@ def _resolve_table_name(log_file: LogFile, table_name: str | None) -> str:
     return _sanitize_table_name(table_name) if table_name else _generate_table_name(log_file)
 
 
-def _quote_identifier(identifier: str) -> str:
-    """Quote an identifier safely for DuckDB SQL."""
-    return '"' + identifier.replace('"', '""') + '"'
-
-
 def _timestamp_cast_expression(column: str) -> str:
     """Build a best-effort DuckDB expression turning a raw timestamp into UTC TIMESTAMP.
 
@@ -65,7 +60,7 @@ def _timestamp_cast_expression(column: str) -> str:
     1900. Such timestamps are only reliable for intra-year ordering, not absolute
     dates; supply a year-bearing format upstream when accuracy matters.
     """
-    col = _quote_identifier(column)
+    col = quote_identifier(column)
     text = f"CAST({col} AS VARCHAR)"
     return (
         "COALESCE("
@@ -77,6 +72,8 @@ def _timestamp_cast_expression(column: str) -> str:
         f"to_timestamp(try_cast({col} AS BIGINT))"
         ")::TIMESTAMP"
     )
+
+
 def _build_result(connection: duckdb.DuckDBPyConnection, table_name: str) -> LoadResult:
     """Query the loaded table for row count and schema."""
     quoted_name = quote_identifier(table_name)
@@ -212,10 +209,19 @@ def _flatten_event_payload(value: Any, parent_key: str = "") -> dict[str, Any]:
         return {parent_key: value} if parent_key else {}
 
     if isinstance(value, dict):
-        if _is_xml_node(value):
-            return _flatten_xml_node(value, parent_key)
         flattened: dict[str, Any] = {}
+        if "#text" in value:
+            flattened[parent_key if parent_key else "#text"] = value["#text"]
+        attributes = value.get("#attributes")
+        if isinstance(attributes, dict):
+            for attr_key, attr_value in attributes.items():
+                clean = attr_key[1:] if attr_key.startswith("@") else attr_key
+                next_key = f"{parent_key}_{clean}" if parent_key else clean
+                flattened[next_key] = attr_value
+
         for key, nested_value in value.items():
+            if key in ("#text", "#attributes"):
+                continue
             next_key = f"{parent_key}_{key}" if parent_key else str(key)
             flattened.update(_flatten_event_payload(nested_value, next_key))
         return flattened
@@ -391,8 +397,10 @@ def iter_evtx_record_summaries(path: Path, max_records: int = 50) -> list[dict[s
         summaries.append(
             {
                 "record_id": record.get("event_record_id", record.get("identifier")),
-                "timestamp": flattened.get("System_TimeCreated_SystemTime"),
-                "event_id": flattened.get("System_EventID"),
+                "timestamp": _first_non_empty(
+                    flattened, ("System_TimeCreated_SystemTime", "TimeCreated_SystemTime", "timestamp")
+                ),
+                "event_id": _first_non_empty(flattened, ("System_EventID", "EventID")),
                 "provider": flattened.get("System_Provider_Name"),
                 "channel": flattened.get("System_Channel"),
             }
