@@ -7,7 +7,7 @@ from typing import Any
 
 import duckdb
 
-from ..ingestion.adapters import _quote_identifier
+from ..sql_utils import quote_identifier as _quote_identifier
 from .templates import TEMPLATES, SQLTemplate
 
 _ALIAS_MAP: dict[str, str] = {

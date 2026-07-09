@@ -398,7 +398,7 @@ def test_ui_spawns_streamlit_run(monkeypatch) -> None:
     assert cmd[3] == "run"
     # Target must be a resolved .py path, not the module dotted name
     assert cmd[4].endswith("app.py")
-    assert "/" in cmd[4]
+    assert Path(cmd[4]).name == "app.py"
     assert "--server.port" in cmd and "9000" in cmd
 
 

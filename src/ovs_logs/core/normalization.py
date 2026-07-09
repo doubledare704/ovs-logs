@@ -7,7 +7,8 @@ from dataclasses import dataclass
 
 import duckdb
 
-from ovs_logs.core.ingestion.adapters import LoadResult, _quote_identifier
+from ovs_logs.core.ingestion.adapters import LoadResult
+from ovs_logs.core.sql_utils import quote_identifier
 
 FIELD_ALIASES: dict[str, list[str]] = {
     "event_timestamp": [
@@ -91,9 +92,9 @@ class NormalizationEngine:
 
         source_column = matches[0]
         if target in {"event_timestamp", "status_code"}:
-            casts = ", ".join(f"try_cast({_quote_identifier(col)} AS {dtype})" for col in matches)
+            casts = ", ".join(f"try_cast({quote_identifier(col)} AS {dtype})" for col in matches)
         else:
-            casts = ", ".join(f"{_quote_identifier(col)}::{dtype}" for col in matches)
+            casts = ", ".join(f"{quote_identifier(col)}::{dtype}" for col in matches)
 
         return f'COALESCE({casts}) AS "{target}"', source_column
 
@@ -109,7 +110,7 @@ class NormalizationEngine:
             mapping[target] = source
 
         select_sql = ",\n    ".join(expressions)
-        query = f"SELECT\n    {select_sql}\nFROM {_quote_identifier(raw_table)}"
+        query = f"SELECT\n    {select_sql}\nFROM {quote_identifier(raw_table)}"
         return query, mapping
 
     def build_sql(self, raw_table: str, columns: Sequence[str]) -> tuple[str, dict[str, str | None]]:

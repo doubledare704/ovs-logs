@@ -51,14 +51,17 @@ def test_db_path_defaults_to_settings(monkeypatch: pytest.MonkeyPatch) -> None:
     at = AppTest.from_file(str(APP_PATH)).run()
     assert at.session_state["db_path"] == ".ovs_logs/ovs_logs.db"
     # The default DB file may or may not exist in the dev environment.
-    # If it exists, the app should show a selectbox (possibly with "No tables" info).
-    # If it doesn't exist, the app should show an error mentioning the path.
-    if any(".ovs_logs/ovs_logs.db" in e.value for e in at.sidebar.error):
+    # - missing file -> error mentioning the path, selected_table cleared
+    # - exists but empty -> info "No application tables"
+    # - exists with tables -> a table selectbox is rendered
+    errors = list(at.sidebar.error)
+    if any(".ovs_logs/ovs_logs.db" in e.value for e in errors):
         assert at.session_state.get("selected_table") is None
     else:
-        assert any("No application tables" in i.value for i in at.sidebar.info) or any(
-            "not found" in e.value for e in at.sidebar.error
-        )
+        has_no_tables_info = any("No application tables" in i.value for i in at.sidebar.info)
+        has_not_found_error = any("not found" in e.value for e in errors)
+        has_table_selector = len(at.sidebar.selectbox) > 0
+        assert has_no_tables_info or has_not_found_error or has_table_selector
 
 
 def test_missing_db_shows_error(tmp_path: Path) -> None:
