@@ -106,9 +106,6 @@ def _save_uploaded_file(uploaded_file: UploadedFile) -> tuple[Path, str]:
 
 def _preview_evtx(path: Path, max_records: int = 50) -> str:
     """Render a short readable summary of EVTX records via the core adapter."""
-    if not adapters.is_evtx_supported():
-        return "EVTX file preview is not available in this UI (missing 'evtx' dependency)."
-
     try:
         summaries = adapters.iter_evtx_record_summaries(path, max_records=max_records)
     except Exception as exc:  # pragma: no cover - exercised through parser errors

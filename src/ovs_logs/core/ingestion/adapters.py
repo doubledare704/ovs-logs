@@ -11,13 +11,10 @@ import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import duckdb
 from evtx import PyEvtxParser
-
-if TYPE_CHECKING:
-    from evtx import PyEvtxParser as EvtxParser
 
 from ovs_logs.core.sql_utils import quote_identifier
 from ovs_logs.core.validation import LogFile
@@ -286,7 +283,7 @@ def _extract_evtx_fields(event_data: dict[str, Any], record: dict[str, Any]) -> 
 
 
 def _write_evtx_records(
-    parser: EvtxParser,
+    parser: PyEvtxParser,
     writer: csv.DictWriter,
 ) -> None:
     """Parse EVTX records and write them as rows to the CSV writer.
@@ -322,9 +319,6 @@ def load_evtx(
     table_name: str | None = None,
 ) -> LoadResult:
     """Convert an EVTX file into a temporary CSV and load it into DuckDB."""
-    if PyEvtxParser is None:  # pragma: no cover - depends on optional runtime dependency
-        raise RuntimeError("EVTX support requires the optional 'evtx' dependency to be installed.")
-
     name = _resolve_table_name(log_file, table_name)
     tmp_path: str | None = None
 
@@ -371,22 +365,13 @@ def load_evtx(
     return _build_result(connection, name)
 
 
-def is_evtx_supported() -> bool:
-    """Return True when the optional ``evtx`` dependency is importable."""
-    return PyEvtxParser is not None
-
-
 def iter_evtx_record_summaries(path: Path, max_records: int = 50) -> list[dict[str, Any]]:
     """Return lightweight per-record summaries for a UI preview.
 
     Each summary contains ``record_id``, ``timestamp``, ``event_id``,
     ``provider`` and ``channel`` extracted from the flattened EVTX payload.
-    Raises ``RuntimeError`` when the optional ``evtx`` dependency is missing;
-    parser/IO errors propagate to the caller.
+    Parser/IO errors propagate to the caller.
     """
-    if PyEvtxParser is None:
-        raise RuntimeError("EVTX support requires the optional 'evtx' dependency to be installed.")
-
     parser = PyEvtxParser(str(path.resolve()))
     summaries: list[dict[str, Any]] = []
     for index, record in enumerate(parser.records_json()):
