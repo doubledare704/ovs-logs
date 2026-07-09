@@ -63,6 +63,10 @@ def _timestamp_cast_expression(column: str) -> str:
     ISO, and numeric epoch). Offsets are normalized to UTC so the result is a naive
     ``TIMESTAMP`` regardless of the connection's session time zone. Unparseable input
     yields NULL.
+
+    Note: syslog ``%b %d %H:%M:%S`` carries no year, so DuckDB defaults the year to
+    1900. Such timestamps are only reliable for intra-year ordering, not absolute
+    dates; supply a year-bearing format upstream when accuracy matters.
     """
     col = _quote_identifier(column)
     text = f"CAST({col} AS VARCHAR)"
@@ -179,11 +183,13 @@ def _flatten_xml_node(node: dict[str, Any], parent_key: str) -> dict[str, Any]:
 
     ``#text`` collapses to the parent key's value, while ``#attributes``
     children are hoisted to ``parent_<attr>`` keys. ``@``-prefixed attribute
-    names (an alternate convention) have the prefix stripped.
+    names (an alternate convention) have the prefix stripped. When the node
+    is at the top level (no ``parent_key``), its ``#text`` is preserved under
+    a ``"#text"`` key rather than being silently dropped.
     """
     result: dict[str, Any] = {}
-    if parent_key and "#text" in node:
-        result[parent_key] = node["#text"]
+    if "#text" in node:
+        result[parent_key if parent_key else "#text"] = node["#text"]
     attributes = node.get("#attributes")
     if isinstance(attributes, dict):
         for attr_key, attr_value in attributes.items():
@@ -222,10 +228,10 @@ def _flatten_event_payload(value: Any, parent_key: str = "") -> dict[str, Any]:
 
 def _first_non_empty(flattened: dict[str, Any], keys: Sequence[str]) -> Any:
     """Return the first non-empty value among ``keys``, or ``None``."""
-    for key in keys:
-        if key in flattened and flattened[key] not in (None, ""):
-            return flattened[key]
-    return None
+    return next(
+        (flattened[key] for key in keys if key in flattened and flattened[key] not in (None, "")),
+        None,
+    )
 
 
 def _extract_evtx_fields(event_data: dict[str, Any], record: dict[str, Any]) -> dict[str, Any]:
@@ -363,3 +369,47 @@ def load_evtx(
             Path(tmp_path).unlink()
 
     return _build_result(connection, name)
+
+
+def is_evtx_supported() -> bool:
+    """Return True when the optional ``evtx`` dependency is importable."""
+    return PyEvtxParser is not None
+
+
+def iter_evtx_record_summaries(path: Path, max_records: int = 50) -> list[dict[str, Any]]:
+    """Return lightweight per-record summaries for a UI preview.
+
+    Each summary contains ``record_id``, ``timestamp``, ``event_id``,
+    ``provider`` and ``channel`` extracted from the flattened EVTX payload.
+    Raises ``RuntimeError`` when the optional ``evtx`` dependency is missing;
+    parser/IO errors propagate to the caller.
+    """
+    if PyEvtxParser is None:
+        raise RuntimeError("EVTX support requires the optional 'evtx' dependency to be installed.")
+
+    parser = PyEvtxParser(str(path.resolve()))
+    summaries: list[dict[str, Any]] = []
+    for index, record in enumerate(parser.records_json()):
+        if index >= max_records:
+            break
+        if record is None:
+            continue
+        payload = record.get("data")
+        if isinstance(payload, str):
+            try:
+                payload = json.loads(payload)
+            except json.JSONDecodeError:
+                payload = {}
+        if isinstance(payload, dict) and set(payload.keys()) == {"Event"}:
+            payload = payload["Event"]
+        flattened = _flatten_event_payload(payload if isinstance(payload, dict) else {})
+        summaries.append(
+            {
+                "record_id": record.get("event_record_id", record.get("identifier")),
+                "timestamp": flattened.get("System_TimeCreated_SystemTime"),
+                "event_id": flattened.get("System_EventID"),
+                "provider": flattened.get("System_Provider_Name"),
+                "channel": flattened.get("System_Channel"),
+            }
+        )
+    return summaries
