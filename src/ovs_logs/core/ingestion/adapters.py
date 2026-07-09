@@ -171,7 +171,7 @@ def _flatten_named_data_list(value: list[Any]) -> dict[str, Any] | None:
         if not isinstance(attributes, dict) or "Name" not in attributes:
             return None
         text = item.get("#text")
-        named[attributes["Name"]] = text if text is not None else item
+        named[attributes["Name"]] = text
     return named
 
 
