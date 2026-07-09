@@ -73,7 +73,7 @@ def _timestamp_cast_expression(column: str) -> str:
         f"try_strptime({text}, '%Y-%m-%dT%H:%M:%S%z') AT TIME ZONE 'UTC',"
         f"try_strptime({text}, '%b %d %H:%M:%S'),"
         f"try_strptime({text}, '%Y-%m-%d %H:%M:%S'),"
-        f"try_cast({col} AS TIMESTAMP),"
+        f"try_cast({col} AS TIMESTAMPTZ) AT TIME ZONE 'UTC',"
         f"to_timestamp(try_cast({col} AS BIGINT))"
         ")::TIMESTAMP"
     )
