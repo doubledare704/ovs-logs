@@ -148,7 +148,7 @@ def parse_text_log(
     hit_expr = " OR ".join(f"{_quote_identifier(field)} <> ''" for field in _STRUCTURED_FIELDS)
     hit = connection.execute(f"SELECT COUNT_IF({hit_expr}) FROM {quoted}").fetchone()
     if not hit or hit[0] == 0:
-        connection.execute(f"CREATE OR REPLACE TABLE {quoted} AS SELECT line FROM {quoted}")
+        connection.execute(f"CREATE OR REPLACE TABLE {quoted} AS SELECT raw_message AS line FROM {quoted}")
         return _reload_result(connection, name)
 
     return _reload_result(connection, name)
