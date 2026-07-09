@@ -1,6 +1,5 @@
 """Tests for the DuckDB ingestion adapters."""
 
-import json
 import tempfile
 from collections.abc import Sequence
 from pathlib import Path
@@ -21,6 +20,7 @@ from ovs_logs.core.validation import validate_log_file
 EXPECTED_CSV_ROW_COUNT = 2
 EXPECTED_JSON_ROW_COUNT = 2
 EXPECTED_LOG_ROW_COUNT = 3
+EVTX_RECORD_ID = 12345
 
 
 @pytest.fixture
@@ -82,22 +82,34 @@ def test_load_evtx_converts_to_csv(db, tmp_path: Path, monkeypatch: pytest.Monke
         def records_json(self):
             return [
                 {
-                    "identifier": "1",
+                    "event_record_id": EVTX_RECORD_ID,
                     "timestamp": "2024-01-01T00:00:00Z",
-                    "data": json.dumps(
-                        {
-                            "Event": {
-                                "System": {
-                                    "EventID": 4624,
-                                    "TimeCreated": {"SystemTime": "2024-01-01T00:00:00Z"},
+                    "data": {
+                        "Event": {
+                            "System": {
+                                "Provider": {
+                                    "#attributes": {
+                                        "Name": "Microsoft-Windows-Security-Auditing",
+                                        "Guid": "{guid}",
+                                    }
                                 },
-                                "EventData": {
-                                    "IpAddress": "1.2.3.4",
-                                    "TargetUserName": "alice",
-                                },
-                            }
+                                "EventID": {"#text": 4624, "#attributes": {"Qualifiers": "0"}},
+                                "Version": 2,
+                                "Level": 0,
+                                "Task": 12544,
+                                "TimeCreated": {"#attributes": {"SystemTime": "2024-01-01T00:00:00Z"}},
+                                "Channel": "Security",
+                                "Computer": "HOST.example.com",
+                            },
+                            "EventData": {
+                                "Data": [
+                                    {"#attributes": {"Name": "SubjectUserName"}, "#text": "alice"},
+                                    {"#attributes": {"Name": "IpAddress"}, "#text": "1.2.3.4"},
+                                    {"#attributes": {"Name": "StatusCode"}, "#text": "0"},
+                                ]
+                            },
                         }
-                    ),
+                    },
                 }
             ]
 
@@ -111,7 +123,35 @@ def test_load_evtx_converts_to_csv(db, tmp_path: Path, monkeypatch: pytest.Monke
 
     assert result.table_name == "test_evtx"
     assert result.row_count == 1
-    assert {"timestamp", "event", "message"}.issubset(_schema_columns(result.schema))
+    columns = _schema_columns(result.schema)
+    expected_columns = {
+        "timestamp",
+        "event",
+        "message",
+        "record_id",
+        "source_ip",
+        "status_code",
+        "provider",
+        "channel",
+        "computer",
+        "level",
+        "task",
+    }
+    assert expected_columns.issubset(columns)
+
+    row = db.execute('SELECT * FROM "test_evtx"').fetchone()
+    col_index = {name.lower(): i for i, (name, _) in enumerate(result.schema)}
+    assert row[col_index["record_id"]] == EVTX_RECORD_ID
+    assert row[col_index["timestamp"]] is not None
+    assert str(row[col_index["event"]]) == "4624"
+    assert row[col_index["source_ip"]] == "1.2.3.4"
+    assert str(row[col_index["status_code"]]) == "0"
+    assert row[col_index["provider"]] == "Microsoft-Windows-Security-Auditing"
+    assert row[col_index["channel"]] == "Security"
+    assert row[col_index["computer"]] == "HOST.example.com"
+    assert str(row[col_index["level"]]) == "0"
+    assert str(row[col_index["task"]]) == "12544"
+    assert "System_TimeCreated_SystemTime" in row[col_index["message"]]
 
 
 def test_load_evtx_raises_for_unparseable_file(db, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -152,7 +192,18 @@ def test_load_evtx_cleans_up_temporary_csv_on_parser_error(db, tmp_path: Path, m
             self.path = path
 
         def records_json(self):
-            yield {"identifier": "1", "data": json.dumps({"EventData": {"IpAddress": "1.2.3.4"}})}
+            yield {
+                "event_record_id": 1,
+                "data": {
+                    "Event": {
+                        "System": {
+                            "EventID": {"#text": 4624, "#attributes": {"Qualifiers": "0"}},
+                            "TimeCreated": {"#attributes": {"SystemTime": "2024-01-01T00:00:00Z"}},
+                        },
+                        "EventData": {"Data": [{"#attributes": {"Name": "IpAddress"}, "#text": "1.2.3.4"}]},
+                    }
+                },
+            }
             raise RuntimeError("boom")
 
     original_named_temporary_file = tempfile.NamedTemporaryFile

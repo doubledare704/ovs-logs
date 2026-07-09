@@ -50,6 +50,32 @@ def _resolve_table_name(log_file: LogFile, table_name: str | None) -> str:
     return _sanitize_table_name(table_name) if table_name else _generate_table_name(log_file)
 
 
+def _quote_identifier(identifier: str) -> str:
+    """Quote an identifier safely for DuckDB SQL."""
+    return '"' + identifier.replace('"', '""') + '"'
+
+
+def _timestamp_cast_expression(column: str) -> str:
+    """Build a best-effort DuckDB expression turning a raw timestamp into UTC TIMESTAMP.
+
+    Handles the common log timestamp shapes (Apache/nginx ``%d/%b/%Y:%H:%M:%S %z``,
+    ISO-8601 with offset, syslog ``%b %d %H:%M:%S``, plain ``YYYY-MM-DD HH:MM:SS``,
+    ISO, and numeric epoch). Offsets are normalized to UTC so the result is a naive
+    ``TIMESTAMP`` regardless of the connection's session time zone. Unparseable input
+    yields NULL.
+    """
+    col = _quote_identifier(column)
+    text = f"CAST({col} AS VARCHAR)"
+    return (
+        "COALESCE("
+        f"try_strptime({text}, '%d/%b/%Y:%H:%M:%S %z') AT TIME ZONE 'UTC',"
+        f"try_strptime({text}, '%Y-%m-%dT%H:%M:%S%z') AT TIME ZONE 'UTC',"
+        f"try_strptime({text}, '%b %d %H:%M:%S'),"
+        f"try_strptime({text}, '%Y-%m-%d %H:%M:%S'),"
+        f"try_cast({col} AS TIMESTAMP),"
+        f"to_timestamp(try_cast({col} AS BIGINT))"
+        ")::TIMESTAMP"
+    )
 def _build_result(connection: duckdb.DuckDBPyConnection, table_name: str) -> LoadResult:
     """Query the loaded table for row count and schema."""
     quoted_name = quote_identifier(table_name)
@@ -117,56 +143,123 @@ def load_text_log(
     return _build_result(connection, name)
 
 
+def _is_xml_node(value: Any) -> bool:
+    """Return True when a dict uses the pyevtx-rs XML-JSON node shape.
+
+    Real ``evtx`` records nest XML attributes under ``#attributes`` and text
+    under ``#text``. Such nodes must be unwrapped rather than recursed into.
+    """
+    return isinstance(value, dict) and ("#text" in value or "#attributes" in value)
+
+
+def _flatten_named_data_list(value: list[Any]) -> dict[str, Any] | None:
+    """Collapse an EventData ``Data`` array into ``{Name: text}`` pairs.
+
+    pyevtx-rs renders ``<Data Name="IpAddress">1.2.3.4</Data>`` as
+    ``{"#attributes": {"Name": "IpAddress"}, "#text": "1.2.3.4"}``. Returns
+    ``None`` when the list does not follow this shape so it is preserved
+    verbatim (e.g. a list of plain scalar values).
+    """
+    if not value:
+        return None
+    named: dict[str, Any] = {}
+    for item in value:
+        if not isinstance(item, dict):
+            return None
+        attributes = item.get("#attributes")
+        if not isinstance(attributes, dict) or "Name" not in attributes:
+            return None
+        text = item.get("#text")
+        named[attributes["Name"]] = text if text is not None else item
+    return named
+
+
+def _flatten_xml_node(node: dict[str, Any], parent_key: str) -> dict[str, Any]:
+    """Unwrap a single XML-JSON node into dotted keys.
+
+    ``#text`` collapses to the parent key's value, while ``#attributes``
+    children are hoisted to ``parent_<attr>`` keys. ``@``-prefixed attribute
+    names (an alternate convention) have the prefix stripped.
+    """
+    result: dict[str, Any] = {}
+    if parent_key and "#text" in node:
+        result[parent_key] = node["#text"]
+    attributes = node.get("#attributes")
+    if isinstance(attributes, dict):
+        for attr_key, attr_value in attributes.items():
+            clean = attr_key[1:] if attr_key.startswith("@") else attr_key
+            next_key = f"{parent_key}_{clean}" if parent_key else clean
+            result[next_key] = attr_value
+    return result
+
+
 def _flatten_event_payload(value: Any, parent_key: str = "") -> dict[str, Any]:
-    """Recursively flatten a nested mapping into a dotted-key dictionary."""
+    """Recursively flatten a nested mapping into a dotted-key dictionary.
+
+    XML-JSON nodes (``#text`` / ``#attributes``) are unwrapped and named
+    ``Data`` arrays are collapsed into ``parent_<Name>`` keys so that
+    EVTX fields such as ``System_TimeCreated_SystemTime`` resolve correctly.
+    """
+    if isinstance(value, list):
+        named = _flatten_named_data_list(value)
+        if named is not None:
+            if not parent_key:
+                return named
+            return {f"{parent_key}_{name}": item for name, item in named.items()}
+        return {parent_key: value} if parent_key else {}
+
     if isinstance(value, dict):
+        if _is_xml_node(value):
+            return _flatten_xml_node(value, parent_key)
         flattened: dict[str, Any] = {}
         for key, nested_value in value.items():
             next_key = f"{parent_key}_{key}" if parent_key else str(key)
             flattened.update(_flatten_event_payload(nested_value, next_key))
         return flattened
 
-    if isinstance(value, list):
-        return {parent_key: value} if parent_key else {}
-
     return {parent_key: value} if parent_key else {}
+
+
+def _first_non_empty(flattened: dict[str, Any], keys: Sequence[str]) -> Any:
+    """Return the first non-empty value among ``keys``, or ``None``."""
+    for key in keys:
+        if key in flattened and flattened[key] not in (None, ""):
+            return flattened[key]
+    return None
 
 
 def _extract_evtx_fields(event_data: dict[str, Any], record: dict[str, Any]) -> dict[str, Any]:
     """Create a flat row from parsed EVTX data and parser metadata."""
     flattened = _flatten_event_payload(event_data)
 
-    timestamp = None
-    for key in ("System_TimeCreated_SystemTime", "TimeCreated_SystemTime", "timestamp"):
-        if key in flattened and flattened[key] not in (None, ""):
-            timestamp = flattened[key]
-            break
+    timestamp = _first_non_empty(flattened, ("System_TimeCreated_SystemTime", "TimeCreated_SystemTime", "timestamp"))
     if timestamp is None:
         timestamp = record.get("timestamp")
 
-    event_id = None
-    for key in ("System_EventID", "EventID"):
-        if key in flattened and flattened[key] not in (None, ""):
-            event_id = flattened[key]
-            break
-
-    source_ip = None
-    for key in (
-        "System_EventData_IpAddress",
-        "EventData_IpAddress",
-        "IpAddress",
-        "ClientIpAddress",
-        "SourceIp",
-    ):
-        if key in flattened and flattened[key] not in (None, ""):
-            source_ip = flattened[key]
-            break
-
-    status_code = None
-    for key in ("System_EventData_StatusCode", "EventData_StatusCode", "StatusCode", "Status"):
-        if key in flattened and flattened[key] not in (None, ""):
-            status_code = flattened[key]
-            break
+    event_id = _first_non_empty(flattened, ("System_EventID", "EventID"))
+    source_ip = _first_non_empty(
+        flattened,
+        (
+            "EventData_Data_IpAddress",
+            "System_EventData_Data_IpAddress",
+            "System_EventData_IpAddress",
+            "EventData_IpAddress",
+            "IpAddress",
+            "ClientIpAddress",
+            "SourceIp",
+        ),
+    )
+    status_code = _first_non_empty(
+        flattened,
+        (
+            "EventData_Data_StatusCode",
+            "System_EventData_Data_StatusCode",
+            "System_EventData_StatusCode",
+            "EventData_StatusCode",
+            "StatusCode",
+            "Status",
+        ),
+    )
 
     message = json.dumps(flattened, ensure_ascii=False, sort_keys=True)
 
@@ -174,13 +267,16 @@ def _extract_evtx_fields(event_data: dict[str, Any], record: dict[str, Any]) -> 
         "timestamp": timestamp,
         "event": event_id,
         "message": message,
-        "record_id": record.get("identifier"),
+        "record_id": record.get("event_record_id", record.get("identifier")),
+        "source_ip": source_ip,
+        "status_code": status_code,
+        "provider": flattened.get("System_Provider_Name"),
+        "channel": flattened.get("System_Channel"),
+        "computer": flattened.get("System_Computer"),
+        "level": flattened.get("System_Level"),
+        "task": flattened.get("System_Task"),
     }
-    if source_ip is not None:
-        row["source_ip"] = source_ip
-    if status_code is not None:
-        row["status_code"] = status_code
-    return row
+    return {key: value for key, value in row.items() if value is not None}
 
 
 def _write_evtx_records(
@@ -200,7 +296,9 @@ def _write_evtx_records(
             try:
                 event_data: dict[str, Any] = json.loads(payload)
             except json.JSONDecodeError as exc:
-                raise RuntimeError(f"Unable to parse EVTX record {record.get('identifier')}") from exc
+                raise RuntimeError(
+                    f"Unable to parse EVTX record {record.get('event_record_id', record.get('identifier'))}"
+                ) from exc
         elif isinstance(payload, dict):
             event_data = payload
         else:
@@ -229,7 +327,19 @@ def load_evtx(
             tmp_path = tmp.name
             writer = csv.DictWriter(
                 tmp,
-                fieldnames=["timestamp", "event", "message", "record_id", "source_ip", "status_code"],
+                fieldnames=[
+                    "timestamp",
+                    "event",
+                    "message",
+                    "record_id",
+                    "source_ip",
+                    "status_code",
+                    "provider",
+                    "channel",
+                    "computer",
+                    "level",
+                    "task",
+                ],
                 extrasaction="ignore",
             )
             writer.writeheader()

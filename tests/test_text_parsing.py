@@ -94,6 +94,46 @@ def test_parse_jsonline(db, tmp_path: Path) -> None:
     assert rows[0][3] == "api"
 
 
+def test_parse_nginx_json_access_log(db, tmp_path: Path) -> None:
+    path = tmp_path / "nginx.json"
+    path.write_text(
+        '{"time": "17/May/2015:08:05:32 +0000", "remote_ip": "192.168.1.1", "remote_user": "-", '
+        '"request": "GET /downloads/product_1 HTTP/1.1", "response": 200, "bytes": 1024, '
+        '"referrer": "-", "agent": "curl"}\n'
+        '{"time": "17/May/2015:08:06:00 +0000", "remote_ip": "192.168.1.2", "remote_user": "-", '
+        '"request": "POST /api/login HTTP/1.1", "response": 404, "bytes": 512, '
+        '"referrer": "-", "agent": "curl"}\n',
+        encoding="utf-8",
+    )
+    log = validate_log_file(path)
+    result = parse_text_log(log, db, table_name="nginx_events")
+    assert result.row_count == EXPECTED_ROW_COUNT
+    rows = db.execute('SELECT timestamp, source_ip, status_code, event_type FROM "nginx_events"').fetchall()
+    assert rows[0][0] == "17/May/2015:08:05:32 +0000"
+    assert rows[0][1] == "192.168.1.1"
+    assert rows[0][2] == "200"
+    assert rows[0][3] == "GET"
+    assert rows[1][3] == "POST"
+
+
+def test_parse_nginx_plus_metrics_best_effort(db, tmp_path: Path) -> None:
+    path = tmp_path / "nginxplus.json"
+    path.write_text(
+        '{"timestamp": 1431433200, "server_zones": {"example.com": {"requests": 100}}, '
+        '"upstreams": {"backend": {"requests": 50}}}\n',
+        encoding="utf-8",
+    )
+    log = validate_log_file(path)
+    result = parse_text_log(log, db, table_name="nginxplus_events")
+    assert result.row_count == COMPAT_COUNT
+    columns = _schema_columns(result.schema)
+    assert "timestamp" in columns
+    assert "raw_message" in columns
+    rows = db.execute('SELECT timestamp, raw_message FROM "nginxplus_events"').fetchall()
+    assert rows[0][0] == "1431433200"
+    assert "server_zones" in rows[0][1]
+
+
 def test_parse_ambiguous_fallback(db, tmp_path: Path) -> None:
     path = tmp_path / "weird.txt"
     _write_lines(path, ["[00:00:00] heartbeat-timeout OK code=12 len=300", "[00:01:00] gc-pause WARN code=7 len=120"])

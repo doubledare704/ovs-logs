@@ -8,6 +8,8 @@ import duckdb
 import pytest
 from streamlit.testing.v1 import AppTest
 
+from ovs_logs.core.ingestion import adapters as adapters_mod
+
 APP_PATH = Path(__file__).resolve().parents[1] / "src" / "ovs_logs" / "ui" / "app.py"
 
 
@@ -206,3 +208,99 @@ def test_ingested_table_preview_after_process(tmp_path: Path) -> None:
     assert uploaded_files[0]["ingest_table"] is not None
     assert uploaded_files[0]["normalized_table"] == "events"
     assert len(at.dataframe) > 0
+
+
+def test_selected_table_renders_data_preview(tmp_path: Path) -> None:
+    db = _make_db(tmp_path, [("alpha", "SELECT 1 AS id, 'x' AS name")])
+    at = AppTest.from_file(str(APP_PATH)).run()
+    at.sidebar.text_input[2].set_value(str(db)).run()
+    at.sidebar.selectbox[0].set_value("alpha").run()
+    assert any(df.value is not None and len(df.value) > 0 for df in at.dataframe)
+
+
+def test_selected_analyzable_table_renders_indicators(tmp_path: Path) -> None:
+    db = _make_db(
+        tmp_path,
+        [
+            (
+                "events_like",
+                "SELECT '1.2.3.4' AS source_ip, 404 AS status_code, 'GET' AS event_type, "
+                "TIMESTAMP '2024-01-01 00:00:00' AS event_timestamp, 'msg' AS raw_message",
+            )
+        ],
+    )
+    at = AppTest.from_file(str(APP_PATH)).run()
+    at.sidebar.text_input[2].set_value(str(db)).run()
+    at.sidebar.selectbox[0].set_value("events_like").run()
+    assert any(df.value is not None and "Type" in df.value.columns for df in at.dataframe)
+
+
+def test_selected_non_analyzable_table_shows_info(tmp_path: Path) -> None:
+    db = _make_db(tmp_path, [("reports", "SELECT 'hello' AS note")])
+    at = AppTest.from_file(str(APP_PATH)).run()
+    at.sidebar.text_input[2].set_value(str(db)).run()
+    at.sidebar.selectbox[0].set_value("reports").run()
+    assert any("No analyzable fields" in info.value for info in at.info)
+
+
+def test_evtx_upload_preview_shows_records(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    db = _make_db(tmp_path, [("alpha", "SELECT 1")])
+    file_path = _make_temp_file(tmp_path, "sample.evtx", "EVT marker bytes")
+
+    class FakeParser:
+        def __init__(self, path: str) -> None:
+            self.path = path
+
+        def records_json(self):
+            return [
+                {
+                    "event_record_id": 1,
+                    "data": {
+                        "Event": {
+                            "System": {
+                                "EventID": {"#text": 4624},
+                                "TimeCreated": {"#attributes": {"SystemTime": "2024-01-01T00:00:00Z"}},
+                                "Provider": {"#attributes": {"Name": "Microsoft-Windows-Security-Auditing"}},
+                                "Channel": "Security",
+                            }
+                        }
+                    },
+                }
+            ]
+
+    monkeypatch.setattr(adapters_mod, "PyEvtxParser", FakeParser)
+
+    at = AppTest.from_file(str(APP_PATH)).run()
+    at.sidebar.text_input[2].set_value(str(db)).run()
+
+    content = file_path.read_bytes()
+    at.file_uploader[0].upload(file_path.name, content).run()
+
+    uploaded_files = at.session_state["uploaded_files"]
+    assert any(
+        file_state["name"] == "sample.evtx"
+        and file_state["status"] == "ready"
+        and "EventID=4624" in (file_state["preview"] or "")
+        for file_state in uploaded_files
+    )
+
+
+def test_ingested_web_log_shows_potential_signals(tmp_path: Path) -> None:
+    db = _make_db(tmp_path, [("alpha", "SELECT 1")])
+    access_log = _make_temp_file(
+        tmp_path,
+        "access.log",
+        '192.168.1.1 - - [01/Jan/2024:00:00:00 +0000] "GET / HTTP/1.1" 200 1234\n'
+        '192.168.1.2 - - [01/Jan/2024:00:01:00 +0000] "POST /login HTTP/1.1" 404 567\n',
+    )
+
+    at = AppTest.from_file(str(APP_PATH)).run()
+    at.sidebar.text_input[2].set_value(str(db)).run()
+
+    content = access_log.read_bytes()
+    at.file_uploader[0].upload(access_log.name, content).run()
+    at.button[0].click().run()
+
+    has_indicators = any(df.value is not None and "Type" in df.value.columns for df in at.dataframe)
+    has_info = any("No suspicious indicators" in info.value or "No analyzable fields" in info.value for info in at.info)
+    assert has_indicators or has_info

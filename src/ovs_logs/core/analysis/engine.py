@@ -7,6 +7,7 @@ from typing import Any
 
 import duckdb
 
+from ..ingestion.adapters import _timestamp_cast_expression
 from ..sql_utils import quote_identifier as _quote_identifier
 from .templates import TEMPLATES, SQLTemplate
 
@@ -48,7 +49,7 @@ class AnalysisEngine:
             if target in lower_columns:
                 expressions.append(f'"{target}"')
             elif target == "event_timestamp" and "timestamp" in lower_columns:
-                expressions.append('TRY_CAST("timestamp" AS TIMESTAMP) AS "event_timestamp"')
+                expressions.append(f'{_timestamp_cast_expression("timestamp")} AS "event_timestamp"')
             elif target == "event_type" and "event" in lower_columns:
                 expressions.append('"event"::VARCHAR AS "event_type"')
             elif target == "raw_message" and "message" in lower_columns:

@@ -1,6 +1,7 @@
 """Tests for the normalization engine."""
 
 from collections.abc import Sequence
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -8,6 +9,7 @@ import pytest
 from ovs_logs.core.database import Database
 from ovs_logs.core.ingestion.adapters import load_csv, load_json, load_text_log
 from ovs_logs.core.normalization import NormalizationEngine
+from ovs_logs.core.text_parsing import parse_text_log
 from ovs_logs.core.validation import validate_log_file
 
 NORMALIZED_CSV_ROW_COUNT = 2
@@ -105,3 +107,42 @@ def test_normalize_unmatched_columns(db, tmp_path: Path) -> None:
 
     rows = db.execute("SELECT * FROM events").fetchall()
     assert rows[0] == (None, None, None, None, None)
+
+
+def test_normalize_web_apache_timestamp_to_utc(db, tmp_path: Path) -> None:
+    """Apache/nginx combined timestamps must populate ``event_timestamp`` as UTC."""
+    file = tmp_path / "access.log"
+    file.write_text(
+        '10.0.0.1 - - [14/Nov/2023:12:00:00 +0000] "GET /index.html HTTP/1.1" 200 1024\n'
+        '10.0.0.2 - - [14/Nov/2023:14:00:00 +0200] "POST /api/login HTTP/1.1" 401 512\n'
+    )
+
+    log = validate_log_file(file)
+    load_result = parse_text_log(log, db, table_name="raw_web")
+    result = NormalizationEngine().normalize_table(db, load_result)
+
+    assert result.mapping["event_timestamp"] == "timestamp"
+
+    rows = db.execute("SELECT event_timestamp, source_ip FROM events").fetchall()
+    # Both timestamps normalize to the same UTC instant (12:00:00 +0000 and 14:00:00 +0200)
+    assert {row[0] for row in rows} == {datetime(2023, 11, 14, 12, 0, 0)}
+    assert {row[1] for row in rows} == {"10.0.0.1", "10.0.0.2"}
+
+    # Raw timestamp column is preserved (non-destructive)
+    raw = db.execute('SELECT "timestamp" FROM "raw_web" ORDER BY "timestamp"').fetchall()
+    assert raw[0][0] == "14/Nov/2023:12:00:00 +0000"
+    assert raw[1][0] == "14/Nov/2023:14:00:00 +0200"
+
+
+def test_normalize_json_epoch_timestamp(db, tmp_path: Path) -> None:
+    """Numeric epoch timestamps must populate ``event_timestamp``."""
+    file = tmp_path / "events.json"
+    file.write_text('[{"ts": 1431433200, "src_ip": "1.2.3.4", "status": 200}]')
+
+    log = validate_log_file(file)
+    load_result = load_json(log, db, table_name="raw_events")
+    result = NormalizationEngine().normalize_table(db, load_result)
+
+    assert result.mapping["event_timestamp"] == "ts"
+    rows = db.execute("SELECT event_timestamp, source_ip FROM events").fetchall()
+    assert rows[0] == (datetime(2015, 5, 12, 15, 20, 0), "1.2.3.4")

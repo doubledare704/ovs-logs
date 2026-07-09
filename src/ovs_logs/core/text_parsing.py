@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import csv
 import re
+import tempfile
 import uuid
+from collections.abc import Callable
 from pathlib import Path
 
 import duckdb
@@ -54,32 +57,119 @@ def _detect_text_format(path: Path) -> str:
         return "web"
     if re.search(r"^[A-Z][a-z]{2}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}", text, re.MULTILINE):
         return "syslog"
-    if re.search(r'^\s*\{.*"(ts|timestamp)"\s*:', text, re.MULTILINE):
+    if re.search(
+        r'^\s*\{.*"(?:ts|timestamp|time|time_iso8601|time_local|remote_ip|remote_addr|request|response)"\s*:',
+        text,
+        re.MULTILINE,
+    ):
         return "jsonline"
     return "ambiguous"
 
 
-_STRUCTURED_FIELDS = ("timestamp", "source_ip", "status_code", "event_type")
+_WEB_TS_RE = re.compile(r"\[(\d{2}/\w{3}/\d{4}:\d{2}:\d{2}:\d{2}\s+[+\-]\d{4})\]")
+_WEB_IP_RE = re.compile(r"^([0-9]{1,3}(?:\.[0-9]{1,3}){3})")
+_WEB_STATUS_RE = re.compile(r'"\s+(\d{3})\s+')
+_WEB_EVENT_RE = re.compile(r'"(\w+)\s+\S+\s+HTTP')
 
-_STRUCTURED_PATTERNS: dict[str, dict[str, str]] = {
-    "web": {
-        "timestamp": r"\[(\d{2}/\w{3}/\d{4}:\d{2}:\d{2}:\d{2}\s+[+\-]\d{4})\]",
-        "source_ip": r"^([0-9]{1,3}(?:\.[0-9]{1,3}){3})",
-        "status_code": r'"\s+(\d{3})\s+',
-        "event_type": r'"(\w+)\s+\S+\s+HTTP',
-    },
-    "syslog": {
-        "timestamp": r"^([A-Z][a-z]{2}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2})",
-        "source_ip": r"(?:from\s+)([0-9]{1,3}(?:\.[0-9]{1,3}){3})",
-        "event_type": r"^[A-Z][a-z]{2}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}\s+\S+\s+([A-Za-z0-9_.-]+)(?:\[\d+\])?:",
-    },
-    "jsonline": {
-        "timestamp": r'"(?:ts|timestamp)"\s*:\s*"([^"]+)"',
-        "source_ip": r'"(?:src_ip|source_ip|ip)"\s*:\s*"([^"]+)"',
-        "status_code": r'"(?:status|status_code)"\s*:\s*(\d+)',
-        "event_type": r'"(?:component|event_type|event|method)"\s*:\s*"([^"]+)"',
-    },
+_SYSLOG_TS_RE = re.compile(r"^([A-Z][a-z]{2}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2})")
+_SYSLOG_IP_RE = re.compile(r"(?:from\s+)([0-9]{1,3}(?:\.[0-9]{1,3}){3})")
+_SYSLOG_EVENT_RE = re.compile(r"^[A-Z][a-z]{2}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}\s+\S+\s+([A-Za-z0-9_.-]+)(?:\[\d+\])?:")
+
+_JSON_TS_RE = re.compile(r'"(?:ts|timestamp|time|time_iso8601|time_local)"\s*:\s*"([^"]+)"')
+_JSON_TS_NUM_RE = re.compile(r'"(?:ts|timestamp|time|time_iso8601|time_local)"\s*:\s*(\d+)')
+_JSON_IP_RE = re.compile(r'"(?:src_ip|source_ip|ip|remote_ip|remote_addr)"\s*:\s*"([^"]+)"')
+_JSON_STATUS_RE = re.compile(r'"(?:status|status_code|response)"\s*:\s*(\d+)')
+_JSON_EVENT_RE = re.compile(r'"(?:component|event_type|event|method|request)"\s*:\s*"([^"]+)"')
+
+_AMBIGUOUS_TS_RE = re.compile(r"\[(\d{2}:\d{2}:\d{2})\]")
+_AMBIGUOUS_IP_RE = re.compile(r"([0-9]{1,3}(?:\.[0-9]{1,3}){3})")
+_AMBIGUOUS_STATUS_RE = re.compile(r"code=(\d+)")
+_AMBIGUOUS_EVENT_MAX_LENGTH = 64
+
+
+def _apply_extractors(text: str, patterns: dict[str, re.Pattern[str]]) -> dict[str, str]:
+    result: dict[str, str] = {}
+    for key, pattern in patterns.items():
+        m = pattern.search(text)
+        result[key] = m.group(1) if m else ""
+    return result
+
+
+def _extract_web(text: str) -> dict[str, str]:
+    return _apply_extractors(
+        text,
+        {
+            "timestamp": _WEB_TS_RE,
+            "source_ip": _WEB_IP_RE,
+            "status_code": _WEB_STATUS_RE,
+            "event_type": _WEB_EVENT_RE,
+        },
+    )
+
+
+def _extract_syslog(text: str) -> dict[str, str]:
+    base = _apply_extractors(
+        text,
+        {
+            "timestamp": _SYSLOG_TS_RE,
+            "source_ip": _SYSLOG_IP_RE,
+            "event_type": _SYSLOG_EVENT_RE,
+        },
+    )
+    base["status_code"] = ""
+    return base
+
+
+def _extract_jsonline(text: str) -> dict[str, str]:
+    fields = _apply_extractors(
+        text,
+        {
+            "timestamp": _JSON_TS_RE,
+            "source_ip": _JSON_IP_RE,
+            "status_code": _JSON_STATUS_RE,
+            "event_type": _JSON_EVENT_RE,
+        },
+    )
+    if not fields.get("timestamp"):
+        num_match = _JSON_TS_NUM_RE.search(text)
+        if num_match:
+            fields["timestamp"] = num_match.group(1)
+    event_type = fields.get("event_type")
+    if event_type and " " in event_type:
+        fields["event_type"] = event_type.split()[0]
+    return fields
+
+
+def _extract_ambiguous(text: str) -> dict[str, str]:
+    ts = ip = status = ""
+    m = _AMBIGUOUS_TS_RE.search(text)
+    if m:
+        ts = m.group(1)
+    m = _AMBIGUOUS_IP_RE.search(text)
+    if m:
+        ip = m.group(1)
+    m = _AMBIGUOUS_STATUS_RE.search(text)
+    if m:
+        status = m.group(1)
+    event = "-".join(text.split()[:2])
+    if len(event) > _AMBIGUOUS_EVENT_MAX_LENGTH:
+        event = event[: _AMBIGUOUS_EVENT_MAX_LENGTH - 3] + "..."
+    return {"timestamp": ts, "source_ip": ip, "status_code": status, "event_type": event}
+
+
+_FORMAT_EXTRACTORS: dict[str, Callable[[str], dict[str, str]]] = {
+    "web": _extract_web,
+    "syslog": _extract_syslog,
+    "jsonline": _extract_jsonline,
+    "ambiguous": _extract_ambiguous,
 }
+
+
+def _extract_hybrid(text: str, fmt: str) -> dict[str, str]:
+    extractor = _FORMAT_EXTRACTORS.get(fmt)
+    if extractor is None:
+        return {"timestamp": "", "source_ip": "", "status_code": "", "event_type": ""}
+    return extractor(text)
 
 
 def parse_text_log(
@@ -119,36 +209,42 @@ def parse_text_log(
     if fmt == "ambiguous":
         return load_result
 
-    patterns = _STRUCTURED_PATTERNS.get(fmt)
-    if not patterns:
-        return load_result
+    tmp_path: str | None = None
+    hit_count = 0
+    try:
+        # Heuristic: only inspect the first 20 lines for format detection.
+        # This keeps detection cheap but may misclassify logs with long headers.
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", suffix=".csv", delete=False, newline="") as tmp:
+            tmp_path = tmp.name
+            writer = csv.writer(tmp)
+            writer.writerow(["timestamp", "source_ip", "status_code", "event_type", "raw_message"])
+            cursor = connection.execute(f"SELECT line FROM {quoted}")
+            while rows := cursor.fetchmany(10_000):
+                for (line,) in rows:
+                    text = line or ""
+                    fields = _extract_hybrid(text, fmt)
+                    if any(fields[k] for k in ("timestamp", "source_ip", "status_code", "event_type")):
+                        hit_count += 1
+                    writer.writerow(
+                        [
+                            fields["timestamp"],
+                            fields["source_ip"],
+                            fields["status_code"],
+                            fields["event_type"],
+                            text,
+                        ]
+                    )
 
-    # Extract structured fields with DuckDB's regexp_extract running multithreaded
-    # on columnar data. This replaces the former Python per-line regex loop and
-    # the intermediate temp CSV, eliminating a full read+write+read cycle. On no
-    # match regexp_extract returns '' automatically, so missing fields stay empty.
-    field_exprs: list[str] = []
-    params: list[str] = []
-    for field in _STRUCTURED_FIELDS:
-        pattern = patterns.get(field)
-        if pattern:
-            field_exprs.append(f"regexp_extract(line, ?, 1) AS {_quote_identifier(field)}")
-            params.append(pattern)
-        else:
-            field_exprs.append(f"'' AS {_quote_identifier(field)}")
+        if hit_count == 0:
+            return load_result
 
-    select_sql = ",\n    ".join(field_exprs)
-    connection.execute(
-        f"CREATE OR REPLACE TABLE {quoted} AS\nSELECT\n    {select_sql},\n    line AS raw_message\nFROM {quoted}",
-        params,
-    )
-
-    # Preserve the legacy "no hits -> treat as unstructured" behaviour so the CLI
-    # still skips normalization for logs with no extractable structure.
-    hit_expr = " OR ".join(f"{_quote_identifier(field)} <> ''" for field in _STRUCTURED_FIELDS)
-    hit = connection.execute(f"SELECT COUNT_IF({hit_expr}) FROM {quoted}").fetchone()
-    if not hit or hit[0] == 0:
-        connection.execute(f"CREATE OR REPLACE TABLE {quoted} AS SELECT raw_message AS line FROM {quoted}")
-        return _reload_result(connection, name)
-
-    return _reload_result(connection, name)
+        connection.execute(
+            f"CREATE OR REPLACE TABLE {quoted} AS SELECT * "
+            "FROM read_csv_auto(?, header=true, delim=',', all_varchar=true)",
+            [tmp_path],
+        )
+        result = _reload_result(connection, name)
+        return result
+    finally:
+        if tmp_path is not None and Path(tmp_path).exists():
+            Path(tmp_path).unlink()
