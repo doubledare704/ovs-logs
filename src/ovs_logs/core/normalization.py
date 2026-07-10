@@ -7,7 +7,7 @@ from dataclasses import dataclass
 
 import duckdb
 
-from ovs_logs.core.ingestion.adapters import LoadResult
+from ovs_logs.core.ingestion.adapters import LoadResult, _timestamp_cast_expression
 from ovs_logs.core.sql_utils import quote_identifier
 
 FIELD_ALIASES: dict[str, list[str]] = {
@@ -91,7 +91,9 @@ class NormalizationEngine:
             return f'NULL::{dtype} AS "{target}"', None
 
         source_column = matches[0]
-        if target in {"event_timestamp", "status_code"}:
+        if target == "event_timestamp":
+            return f'{_timestamp_cast_expression(source_column)} AS "{target}"', source_column
+        if target == "status_code":
             casts = ", ".join(f"try_cast({quote_identifier(col)} AS {dtype})" for col in matches)
         else:
             casts = ", ".join(f"{quote_identifier(col)}::{dtype}" for col in matches)

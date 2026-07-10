@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
 
 import duckdb
@@ -100,6 +101,9 @@ def test_cli_ingest_structured_web_access_log(tmp_path: Path) -> None:
         assert len(rows) == expected_row_count
         assert {row[2] for row in rows} == expected_status_codes
         assert {row[1] for row in rows} == expected_source_ips
+        # Apache combined timestamps must parse into event_timestamp (regression)
+        assert all(row[0] is not None for row in rows)
+        assert rows[0][0] == datetime(2024, 1, 1, 0, 0, 0)
 
 
 def test_cli_ingest_ambiguous_text_fallback_raw(tmp_path: Path) -> None:
@@ -296,3 +300,37 @@ def test_ui_upload_jsonline_structured_preview(tmp_path: Path) -> None:
     assert "source_ip" in preview_df.columns
     assert "status_code" in preview_df.columns
     assert "event_type" in preview_df.columns
+
+
+def test_ui_upload_nginx_jsonline_structured_preview(tmp_path: Path) -> None:
+    """UI: nginx JSON-line uploads should show structured preview columns."""
+    nginx_json = _make_temp_file(
+        tmp_path,
+        "nginx.txt",
+        '{"time": "17/May/2015:08:05:32 +0000", "remote_ip": "192.168.1.1", "remote_user": "-", '
+        '"request": "GET /downloads/product_1 HTTP/1.1", "response": 200, "bytes": 1024, '
+        '"referrer": "-", "agent": "curl"}\n'
+        '{"time": "17/May/2015:08:06:00 +0000", "remote_ip": "192.168.1.2", "remote_user": "-", '
+        '"request": "POST /api/login HTTP/1.1", "response": 404, "bytes": 512, '
+        '"referrer": "-", "agent": "curl"}\n',
+    )
+
+    at = _run_ui_ingest(tmp_path, nginx_json)
+
+    uploaded_files = at.session_state["uploaded_files"]
+    ingested = [f for f in uploaded_files if f["status"] == "ingested"]
+    assert len(ingested) == 1
+
+    dataframes = at.dataframe
+    assert len(dataframes) > 0
+
+    preview_df = next(
+        df.value
+        for df in dataframes
+        if any(c in df.value.columns for c in ("timestamp", "source_ip", "status_code", "event_type"))
+    )
+    assert "timestamp" in preview_df.columns
+    assert "source_ip" in preview_df.columns
+    assert "status_code" in preview_df.columns
+    assert "event_type" in preview_df.columns
+    assert "GET" in preview_df["event_type"].values

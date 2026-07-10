@@ -9,6 +9,7 @@ so they remain available to other panels across reruns.
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
 import tempfile
 from collections.abc import Callable
@@ -24,10 +25,13 @@ if TYPE_CHECKING:
 from ovs_logs.config.settings import settings
 from ovs_logs.core.database import Database
 from ovs_logs.core.ingestion import adapters
-from ovs_logs.core.ingestion.adapters import LoadResult, load_text_log
+from ovs_logs.core.ingestion.adapters import LoadResult, load_text_log, quote_identifier
 from ovs_logs.core.normalization import NormalizationEngine
 from ovs_logs.core.text_parsing import parse_text_log
 from ovs_logs.core.validation import SUPPORTED_FORMATS, LogFile, validate_log_file
+from ovs_logs.ui.analysis_view import render_analysis_results
+
+logger = logging.getLogger(__name__)
 
 _SYSTEM_TABLE_PREFIXES: tuple[str, ...] = (
     "sqlite_",
@@ -103,9 +107,25 @@ def _save_uploaded_file(uploaded_file: UploadedFile) -> tuple[Path, str]:
     return temp_path, hasher.hexdigest()
 
 
+def _preview_evtx(path: Path, max_records: int = 50) -> str:
+    """Render a short readable summary of EVTX records via the core adapter."""
+    try:
+        summaries = adapters.iter_evtx_record_summaries(path, max_records=max_records)
+    except Exception as exc:  # pragma: no cover - exercised through parser errors
+        logger.warning("Unable to preview EVTX file %s: %s", path, exc)
+        return f"Unable to preview EVTX file: {exc}"
+
+    lines = [
+        f"#{summary['record_id']} | {summary['timestamp']} | EventID={summary['event_id']} | "
+        f"{summary['provider']} | {summary['channel']}"
+        for summary in summaries
+    ]
+    return "\n".join(lines) if lines else "(no records found)"
+
+
 def _read_preview_lines(path: Path, max_lines: int = _MAX_PREVIEW_LINES) -> str:
     if path.suffix.lower() == ".evtx":
-        return "EVTX file preview is not available in this UI."
+        return _preview_evtx(path)
 
     lines: list[bytes] = []
     bytes_read = 0
@@ -330,6 +350,24 @@ def _render_upload_status_summary() -> None:
     st.info("Upload status: " + ", ".join(summary_parts))
 
 
+def _render_selected_table(connection: duckdb.DuckDBPyConnection, table_name: str) -> None:
+    """Render a data preview (up to 100 rows) of the chosen table."""
+    try:
+        quoted = quote_identifier(table_name)
+        cursor = connection.execute(f"SELECT * FROM {quoted} LIMIT 100")
+        rows = cursor.fetchall()
+        columns = [desc[0] for desc in cursor.description]
+    except duckdb.Error:
+        st.info(f"Unable to preview table '{table_name}'.")
+        return
+
+    if not rows:
+        st.info(f"Table '{table_name}' has no rows.")
+        return
+
+    st.dataframe([dict(zip(columns, row, strict=True)) for row in rows], hide_index=True)
+
+
 def _render_ingested_table_preview() -> None:
     ingested_files = [
         file_state for file_state in st.session_state["uploaded_files"] if file_state["status"] == "ingested"
@@ -338,15 +376,27 @@ def _render_ingested_table_preview() -> None:
         return
 
     st.subheader("Ingested raw table preview")
+
+    normalized_tables = sorted({f["normalized_table"] for f in ingested_files if f.get("normalized_table")})
+    if normalized_tables:
+        db_path = st.session_state.get("db_path", settings.database.path)
+        if db_path:
+            st.subheader("Potential signals")
+            try:
+                with Database(db_path) as connection:
+                    for normalized_table in normalized_tables:
+                        if len(normalized_tables) > 1:
+                            st.caption(f"Table: {normalized_table}")
+                        render_analysis_results(connection, normalized_table)
+            except (OSError, duckdb.Error) as exc:
+                st.error(f"Unable to analyze ingested events: {exc}")
+
     for file_state in ingested_files:
         with st.expander(f"{file_state['name']} loaded into {file_state['ingest_table']}", expanded=False):
             st.write(f"Row count: {file_state['row_count']}")
             st.write(
                 f"Normalized events table: {file_state['normalized_table']} ({file_state['normalized_row_count']} rows)"
             )
-            if file_state["schema"]:
-                st.write("**Raw schema:**")
-                st.table([{"column": col, "type": dtype} for col, dtype in file_state["schema"]])
             db_path = st.session_state.get("db_path", settings.database.path)
             if db_path and file_state["ingest_table"]:
                 try:
@@ -469,10 +519,23 @@ def main() -> None:
     _render_ingested_table_preview()
 
     selected_table = st.session_state.get("selected_table")
-    if selected_table:
-        st.write(f"Active table: `{selected_table}`")
-    else:
+    db_path = st.session_state.get("db_path", settings.database.path)
+    if not selected_table:
         st.info("Configure the sidebar to begin analyzing ingested logs.")
+        return
+
+    st.subheader(f"Active table: {selected_table}")
+    if not db_path:
+        st.info("Set a valid database path in the sidebar to preview and analyze this table.")
+        return
+
+    try:
+        with Database(db_path) as connection:
+            _render_selected_table(connection, selected_table)
+            st.subheader("Analysis")
+            render_analysis_results(connection, selected_table)
+    except (OSError, duckdb.Error) as exc:
+        st.error(f"Unable to analyze table '{selected_table}': {exc}")
 
 
 if __name__ == "__main__":
