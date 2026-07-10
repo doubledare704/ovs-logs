@@ -38,16 +38,20 @@ class AnalysisEngine:
         failing at bind time.
         """
         try:
-            columns = [row[0] for row in connection.execute(f"DESCRIBE {_quote_identifier(table_name)}").fetchall()]
+            columns = connection.execute(f"DESCRIBE {_quote_identifier(table_name)}").fetchall()
         except duckdb.Error:
             logger.warning("DESCRIBE failed for table %s; using raw table reference", table_name)
             return sql.replace("FROM events", f"FROM {_quote_identifier(table_name)}")
 
-        lower_columns = {c.lower() for c in columns}
+        column_types = {row[0].lower(): str(row[1]) for row in columns}
+        lower_columns = set(column_types)
         expressions: list[str] = []
         for target in ("event_timestamp", "source_ip", "event_type", "status_code", "raw_message"):
             if target in lower_columns:
-                expressions.append(f'"{target}"')
+                if target == "status_code" and _is_string_type(column_types[target]):
+                    expressions.append(f'CAST(NULLIF("{target}", \'\') AS BIGINT) AS "{target}"')
+                else:
+                    expressions.append(f'"{target}"')
             elif target == "event_timestamp" and "timestamp" in lower_columns:
                 expressions.append(f'{_timestamp_cast_expression("timestamp")} AS "event_timestamp"')
             elif target == "event_type" and "event" in lower_columns:
@@ -94,6 +98,11 @@ class AnalysisEngine:
             results[name] = [dict(zip(columns, row, strict=True)) for row in cursor.fetchall()]
 
         return results
+
+
+def _is_string_type(dtype: str) -> bool:
+    """Return True if a DuckDB column type is a textual type needing casting."""
+    return "VARCHAR" in dtype or "CHAR" in dtype or "STRING" in dtype or "TEXT" in dtype
 
 
 def _column_dtype(target: str) -> str:

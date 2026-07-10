@@ -88,3 +88,21 @@ def test_temporal_anomaly(analysis_engine, db) -> None:
     assert len(buckets) == TEMPORAL_BUCKETS_COUNT
     assert buckets[0]["event_count"] == TEMPORAL_BUCKET_0_COUNT
     assert buckets[1]["event_count"] == TEMPORAL_BUCKET_1_COUNT
+
+
+def test_error_spikes_raw_varchar_status_code(db) -> None:
+    db.execute(
+        "CREATE TABLE raw_logs AS SELECT "
+        "'10.0.0.1' AS source_ip, '404' AS status_code, 'GET' AS event_type, 'line' AS raw_message "
+        "UNION ALL SELECT '10.0.0.2', '500', 'POST', 'line' "
+        "UNION ALL SELECT '10.0.0.3', '', 'GET', 'line'"
+    )
+
+    results = AnalysisEngine().run_queries(
+        db, table_name="raw_logs", thresholds={"error_spikes": {"min_errors": 1, "limit": 10}}
+    )
+
+    errors = results["error_spikes"]
+    assert len(errors) == ERROR_SPIKES_COUNT
+    assert any(row["status_code"] == ERROR_STATUS_404 for row in errors)
+    assert any(row["status_code"] == ERROR_STATUS_500 for row in errors)
