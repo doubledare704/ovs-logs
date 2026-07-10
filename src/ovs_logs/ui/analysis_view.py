@@ -8,11 +8,15 @@ a query error degrade to an informational message instead of failing.
 
 from __future__ import annotations
 
+import logging
+
 import duckdb
 import streamlit as st
 
 from ovs_logs.core.analysis import AnalysisEngine, IndicatorProcessor
 from ovs_logs.core.sql_utils import quote_identifier
+
+logger = logging.getLogger(__name__)
 
 _ANALYZABLE_COLUMNS = {
     "event_timestamp",
@@ -50,7 +54,8 @@ def render_analysis_results(connection: duckdb.DuckDBPyConnection, table_name: s
         raw_results = AnalysisEngine().run_queries(connection, table_name=table_name)
         indicators = IndicatorProcessor().process(raw_results)
     except duckdb.Error:
-        st.info("No analyzable fields in this table")
+        logger.exception("Failed to analyze table %s", table_name)
+        st.error("Analysis failed while querying or processing this table.")
         return
 
     if not indicators:

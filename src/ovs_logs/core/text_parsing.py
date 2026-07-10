@@ -260,9 +260,7 @@ def parse_text_log(
     connection.execute(f"CREATE OR REPLACE TABLE {quoted} AS SELECT {select_clause} FROM {quoted}")
 
     row = connection.execute(
-        f"SELECT COUNT(*) FROM {quoted} "
-        "WHERE timestamp IS NOT NULL OR source_ip IS NOT NULL "
-        "OR status_code IS NOT NULL OR event_type IS NOT NULL"
+        f"SELECT COUNT(*) FROM {quoted} WHERE timestamp <> '' OR source_ip <> '' OR event_type <> ''"
     ).fetchone()
     hit_count = int(row[0]) if row else 0
 
