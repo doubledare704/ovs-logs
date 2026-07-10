@@ -218,7 +218,7 @@ def test_selected_table_renders_data_preview(tmp_path: Path) -> None:
     assert any(df.value is not None and len(df.value) > 0 for df in at.dataframe)
 
 
-def test_selected_analyzable_table_renders_indicators(tmp_path: Path) -> None:
+def test_selected_analyzable_table_renders_timeline(tmp_path: Path) -> None:
     db = _make_db(
         tmp_path,
         [
@@ -232,7 +232,9 @@ def test_selected_analyzable_table_renders_indicators(tmp_path: Path) -> None:
     at = AppTest.from_file(str(APP_PATH)).run()
     at.sidebar.text_input[2].set_value(str(db)).run()
     at.sidebar.selectbox[0].set_value("events_like").run()
-    assert any(df.value is not None and "Type" in df.value.columns for df in at.dataframe)
+    assert any(subheader.value == "Attack Timeline" for subheader in at.subheader)
+    assert len(at.metric) == 4
+    assert any(df.value is not None and len(df.value) > 0 for df in at.dataframe)
 
 
 def test_selected_non_analyzable_table_shows_info(tmp_path: Path) -> None:
@@ -241,6 +243,28 @@ def test_selected_non_analyzable_table_shows_info(tmp_path: Path) -> None:
     at.sidebar.text_input[2].set_value(str(db)).run()
     at.sidebar.selectbox[0].set_value("reports").run()
     assert any("No analyzable fields" in info.value for info in at.info)
+
+
+def test_selected_table_shows_potential_signals_in_tab1(tmp_path: Path) -> None:
+    db = _make_db(
+        tmp_path,
+        [
+            (
+                "events_like",
+                "SELECT '1.2.3.4' AS source_ip, 404 AS status_code, 'GET' AS event_type, "
+                "TIMESTAMP '2024-01-01 00:00:00' AS event_timestamp, 'msg' AS raw_message",
+            )
+        ],
+    )
+    at = AppTest.from_file(str(APP_PATH)).run()
+    at.sidebar.text_input[2].set_value(str(db)).run()
+    at.sidebar.selectbox[0].set_value("events_like").run()
+
+    has_indicators = any(
+        df.value is not None and "Type" in df.value.columns and "Severity" in df.value.columns for df in at.dataframe
+    )
+    has_no_indicators_info = any("No suspicious indicators" in info.value for info in at.info)
+    assert has_indicators or has_no_indicators_info
 
 
 def test_evtx_upload_preview_shows_records(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

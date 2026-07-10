@@ -31,7 +31,7 @@ _ANALYZABLE_COLUMNS = {
 }
 
 
-def _has_analyzable_columns(connection: duckdb.DuckDBPyConnection, table_name: str) -> bool:
+def has_analyzable_columns(connection: duckdb.DuckDBPyConnection, table_name: str) -> bool:
     """Return True when the table exposes at least one normalized column."""
     try:
         columns = [row[0] for row in connection.execute(f"DESCRIBE {quote_identifier(table_name)}").fetchall()]
@@ -46,7 +46,7 @@ def render_analysis_results(connection: duckdb.DuckDBPyConnection, table_name: s
     Catches query errors and tables without analyzable fields, showing an
     informational fallback instead. No LLM or AbuseIPDB calls are made.
     """
-    if not _has_analyzable_columns(connection, table_name):
+    if not has_analyzable_columns(connection, table_name):
         st.info("No analyzable fields in this table")
         return
 
