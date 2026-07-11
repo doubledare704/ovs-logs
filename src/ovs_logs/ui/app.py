@@ -29,6 +29,8 @@ from ovs_logs.core.sql_utils import quote_identifier
 from ovs_logs.core.text_parsing import ADAPTERS
 from ovs_logs.core.validation import SUPPORTED_FORMATS, validate_log_file
 from ovs_logs.ui.analysis_view import render_analysis_results
+from ovs_logs.ui.intel_view import render_intelligence_tab
+from ovs_logs.ui.mitigation_view import render_mitigation_tab
 from ovs_logs.ui.timeline_view import render_timeline_card
 
 logger = logging.getLogger(__name__)
@@ -544,10 +546,30 @@ def main() -> None:  # noqa: PLR0912, PLR0915
                 st.error(f"Unable to analyze table '{selected_table}': {exc}")
 
     with tab_intel:
-        st.info("Coming soon.")
+        if not selected_table:
+            st.info("Select a table in the sidebar to view intelligence.")
+        elif not db_path:
+            st.info("Set a valid database path in the sidebar.")
+        else:
+            try:
+                with Database(db_path) as connection:
+                    st.subheader("Intelligence")
+                    render_intelligence_tab(connection, selected_table)
+            except (OSError, duckdb.Error) as exc:
+                st.error(f"Unable to render intelligence for table '{selected_table}': {exc}")
 
     with tab_mit:
-        st.info("Coming soon.")
+        if not selected_table:
+            st.info("Select a table in the sidebar to view mitigations.")
+        elif not db_path:
+            st.info("Set a valid database path in the sidebar.")
+        else:
+            try:
+                with Database(db_path) as connection:
+                    st.subheader("Mitigation")
+                    render_mitigation_tab(connection, selected_table)
+            except (OSError, duckdb.Error) as exc:
+                st.error(f"Unable to render mitigation for table '{selected_table}': {exc}")
 
 
 if __name__ == "__main__":
