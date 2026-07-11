@@ -45,7 +45,16 @@ def render_timeline_card(connection: duckdb.DuckDBPyConnection, table_name: str)
     cols[3].metric("Error rate", f"{metrics.error_rate_pct}%")
 
     st.dataframe(
-        rows,
+        [
+            {
+                "timestamp": row.timestamp,
+                "source_ip": row.source_ip,
+                "event_type": row.event_type,
+                "status_code": row.status_code,
+                "raw_message": row.raw_message,
+            }
+            for row in rows
+        ],
         hide_index=True,
         width="stretch",
         column_config={

@@ -77,7 +77,7 @@ def test_timeline_empty_analyzable_table_shows_info(tmp_path: Path) -> None:
     assert any("No events found" in info.value for info in at.info)
 
 
-def test_timeline_query_error_shows_error(tmp_path: Path) -> None:
+def test_timeline_malformed_status_code_renders_without_error(tmp_path: Path) -> None:
     db = _make_db(
         tmp_path,
         [
@@ -93,4 +93,4 @@ def test_timeline_query_error_shows_error(tmp_path: Path) -> None:
     at.sidebar.selectbox[0].set_value("bad_status").run()
 
     assert not at.exception
-    assert any("Timeline failed" in err.value for err in at.error)
+    assert len(at.metric) == 4

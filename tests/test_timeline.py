@@ -80,6 +80,28 @@ def test_alias_wrapping_alt_raw_columns() -> None:
     assert rows[0].status_code is None
 
 
+def test_alias_wrapping_tolerates_malformed_status_code() -> None:
+    """Raw VARCHAR status codes (``"200 OK"``, ``"N/A"``, empty) must not abort analysis."""
+    with Database(":memory:") as conn:
+        conn.execute(
+            "CREATE TABLE messy AS SELECT * FROM (VALUES "
+            "('2024-01-01 00:00:00', '1.2.3.4', 'GET', '200 OK', 'ok'), "
+            "('2024-01-01 01:00:00', '5.6.7.8', 'POST', 'N/A', 'bad'), "
+            "('2024-01-01 02:00:00', '9.9.9.9', 'PUT', '404', 'worse'), "
+            "('2024-01-01 03:00:00', '1.1.1.1', 'GET', '', 'empty') "
+            ") AS t(timestamp, source_ip, event_type, status_code, raw_message)"
+        )
+
+        metrics, rows = build_timeline(conn, "messy")
+
+    assert metrics.total_events == 4
+    assert metrics.unique_source_ips == 4
+    assert metrics.error_count == 1
+    assert metrics.error_rate_pct == pytest.approx(25.0, abs=1e-9)
+    assert len(rows) == 4
+    assert [r.status_code for r in rows] == [None, None, 404, None]
+
+
 def test_missing_columns_returns_safely() -> None:
     with Database(":memory:") as conn:
         conn.execute(

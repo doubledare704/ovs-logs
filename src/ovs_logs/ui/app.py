@@ -483,7 +483,7 @@ def render_sidebar() -> None:
     )
 
 
-def main() -> None:  # noqa: PLR0912
+def main() -> None:  # noqa: PLR0912, PLR0915
     """Streamlit entry point for the OVS-Log dashboard."""
     st.set_page_config(page_title="OVS-Log", layout="wide")
     st.title("OVS-Log Dashboard")
@@ -527,7 +527,19 @@ def main() -> None:  # noqa: PLR0912
 
         _render_ingested_table_preview()
 
-        if selected_table and db_path:
+        ingested_normalized = sorted(
+            {
+                file_state["normalized_table"]
+                for file_state in st.session_state.get("uploaded_files", [])
+                if file_state.get("status") == "ingested" and file_state.get("normalized_table")
+            }
+        )
+
+        if not selected_table:
+            st.info("Configure the sidebar to begin analyzing ingested logs.")
+        elif not db_path:
+            st.info("Set a valid database path in the sidebar to preview and analyze this table.")
+        elif selected_table not in ingested_normalized:
             st.subheader(f"Active table: {selected_table}")
             try:
                 with Database(db_path) as connection:
@@ -536,19 +548,19 @@ def main() -> None:  # noqa: PLR0912
                     render_analysis_results(connection, selected_table)
             except (OSError, duckdb.Error) as exc:
                 st.error(f"Unable to analyze table '{selected_table}': {exc}")
-        elif not selected_table:
-            st.info("Configure the sidebar to begin analyzing ingested logs.")
 
     with tab_timeline:
-        if selected_table and db_path:
+        if not selected_table:
+            st.info("Select a table in the sidebar to view its attack timeline.")
+        elif not db_path:
+            st.info("Set a valid database path in the sidebar to preview and analyze this table.")
+        else:
             try:
                 with Database(db_path) as connection:
                     st.subheader("Attack Timeline")
                     render_timeline_card(connection, selected_table)
             except (OSError, duckdb.Error) as exc:
                 st.error(f"Unable to analyze table '{selected_table}': {exc}")
-        else:
-            st.info("Select a table in the sidebar to view its attack timeline.")
 
     with tab_intel:
         st.info("Coming soon.")

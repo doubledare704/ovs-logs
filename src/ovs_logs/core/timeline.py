@@ -70,19 +70,19 @@ def _format_duration(span: timedelta) -> str:
 def _build_metrics_query(sql: str) -> str:
     return (
         "SELECT COUNT(*) AS total_events, "
-        "MIN(event_timestamp) AS first_event, "
-        "MAX(event_timestamp) AS last_event, "
-        "COUNT(DISTINCT source_ip) AS unique_source_ips, "
-        "COALESCE(SUM(CASE WHEN status_code >= 400 THEN 1 ELSE 0 END), 0)::BIGINT AS error_count "
+        'MIN("event_timestamp") AS first_event, '
+        'MAX("event_timestamp") AS last_event, '
+        'COUNT(DISTINCT "source_ip") AS unique_source_ips, '
+        'COALESCE(SUM(CASE WHEN "status_code" >= 400 THEN 1 ELSE 0 END), 0)::BIGINT AS error_count '
         f"FROM ({sql}) AS _metrics"
     )
 
 
 def _build_rows_query(sql: str, limit: int) -> str:
     return (
-        "SELECT event_timestamp, source_ip, event_type, status_code, raw_message "
+        'SELECT "event_timestamp", "source_ip", "event_type", "status_code", "raw_message" '
         f"FROM ({sql}) AS _rows "
-        "ORDER BY event_timestamp ASC NULLS LAST "
+        'ORDER BY "event_timestamp" ASC NULLS LAST '
         f"LIMIT {int(limit)}"
     )
 
@@ -137,16 +137,15 @@ def build_timeline(
     )
 
     cursor = connection.execute(_build_rows_query(wrapped, limit))
-    columns = [desc[0] for desc in cursor.description]
     rows = [
         TimelineRow(
-            timestamp=row[columns.index("event_timestamp")],
-            source_ip=row[columns.index("source_ip")],
-            event_type=row[columns.index("event_type")],
-            status_code=row[columns.index("status_code")],
-            raw_message=row[columns.index("raw_message")],
+            timestamp=timestamp,
+            source_ip=source_ip,
+            event_type=event_type,
+            status_code=status_code,
+            raw_message=raw_message,
         )
-        for row in cursor.fetchall()
+        for timestamp, source_ip, event_type, status_code, raw_message in cursor.fetchall()
     ]
 
     return metrics, rows

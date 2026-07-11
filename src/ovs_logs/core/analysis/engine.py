@@ -38,7 +38,7 @@ def build_aliased_query(sql: str, table_name: str, connection: duckdb.DuckDBPyCo
     for target in ("event_timestamp", "source_ip", "event_type", "status_code", "raw_message"):
         if target in lower_columns:
             if target == "status_code" and _is_string_type(column_types[target]):
-                expressions.append(f'CAST(NULLIF("{target}", \'\') AS BIGINT) AS "{target}"')
+                expressions.append(f'TRY_CAST(NULLIF(TRIM("{target}"), \'\') AS BIGINT) AS "{target}"')
             else:
                 expressions.append(f'"{target}"')
         elif target == "event_timestamp" and "timestamp" in lower_columns:
