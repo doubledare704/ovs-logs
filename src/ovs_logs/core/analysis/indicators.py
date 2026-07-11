@@ -84,3 +84,16 @@ class IndicatorProcessor:
                 )
 
         return indicators
+
+
+def extract_unique_ips(indicators: list[SuspiciousIndicator]) -> list[str]:
+    """Collect unique ``source_ip`` values from indicator evidence.
+
+    Useful for passing to a threat-intel client for bulk enrichment.
+    """
+    ips: set[str] = set()
+    for indicator in indicators:
+        ip = indicator.evidence.get("source_ip")
+        if isinstance(ip, str):
+            ips.add(ip)
+    return sorted(ips)

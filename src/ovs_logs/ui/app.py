@@ -12,7 +12,6 @@ import hashlib
 import logging
 import os
 import tempfile
-from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -25,10 +24,10 @@ if TYPE_CHECKING:
 from ovs_logs.config.settings import settings
 from ovs_logs.core.database import Database
 from ovs_logs.core.ingestion import adapters
-from ovs_logs.core.ingestion.adapters import LoadResult, load_text_log, quote_identifier
 from ovs_logs.core.normalization import NormalizationEngine
-from ovs_logs.core.text_parsing import parse_text_log
-from ovs_logs.core.validation import SUPPORTED_FORMATS, LogFile, validate_log_file
+from ovs_logs.core.sql_utils import quote_identifier
+from ovs_logs.core.text_parsing import ADAPTERS
+from ovs_logs.core.validation import SUPPORTED_FORMATS, validate_log_file
 from ovs_logs.ui.analysis_view import render_analysis_results
 from ovs_logs.ui.timeline_view import render_timeline_card
 
@@ -205,31 +204,6 @@ def _validate_uploaded_file(file_state: dict[str, Any]) -> None:
         file_state["preview"] = None
 
 
-def _ingest_text_log_structured(
-    log_file: LogFile,
-    connection: duckdb.DuckDBPyConnection,
-    table_name: str | None = None,
-) -> LoadResult:
-    try:
-        return parse_text_log(log_file, connection, table_name=table_name)
-    except ValueError:
-        return load_text_log(log_file, connection, table_name=table_name)
-
-
-def _get_adapter(format_name: str) -> Callable[..., LoadResult]:
-    adapter_map: dict[str, Callable[..., LoadResult]] = {
-        "csv": adapters.load_csv,
-        "json": adapters.load_json,
-        "txt": _ingest_text_log_structured,
-        "log": _ingest_text_log_structured,
-        "evtx": adapters.load_evtx,
-    }
-    adapter = adapter_map.get(format_name)
-    if adapter is None:
-        raise ValueError(f"No ingestion adapter for format '{format_name}'")
-    return adapter
-
-
 def _process_ready_files(db_path: str) -> None:  # noqa: PLR0912
     if not db_path:
         st.error("Set a valid database path in the sidebar before ingesting files.")
@@ -245,7 +219,9 @@ def _process_ready_files(db_path: str) -> None:  # noqa: PLR0912
         for file_state in ready_files:
             try:
                 log_file = validate_log_file(file_state["temp_path"])
-                adapter = _get_adapter(log_file.format)
+                adapter = ADAPTERS.get(log_file.format)
+                if adapter is None:
+                    raise ValueError(f"No ingestion adapter for format '{log_file.format}'")  # noqa: TRY301
 
                 load_result = adapter(log_file, connection)
 

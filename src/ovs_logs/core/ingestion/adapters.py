@@ -5,9 +5,7 @@ from __future__ import annotations
 import csv
 import json
 import logging
-import re
 import tempfile
-import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -16,7 +14,7 @@ from typing import Any
 import duckdb
 from evtx import PyEvtxParser
 
-from ovs_logs.core.sql_utils import quote_identifier
+from ovs_logs.core.sql_utils import quote_identifier, resolve_table_name
 from ovs_logs.core.validation import LogFile
 
 
@@ -27,24 +25,6 @@ class LoadResult:
     table_name: str
     row_count: int
     schema: Sequence[tuple[str, str]]
-
-
-def _sanitize_table_name(name: str) -> str:
-    """Convert a candidate table name into a valid SQL identifier."""
-    safe = re.sub(r"[^a-zA-Z0-9_]", "_", name)
-    if not safe or safe[0].isdigit():
-        safe = f"_{safe}"
-    return safe
-
-
-def _generate_table_name(log_file: LogFile) -> str:
-    """Create a deterministic table name from a validated log file."""
-    stem = _sanitize_table_name(log_file.path.stem)
-    return f"raw_{log_file.format}_{stem}_{uuid.uuid4().hex[:8]}"
-
-
-def _resolve_table_name(log_file: LogFile, table_name: str | None) -> str:
-    return _sanitize_table_name(table_name) if table_name else _generate_table_name(log_file)
 
 
 def _timestamp_cast_expression(column: str) -> str:
@@ -90,7 +70,7 @@ def load_csv(
     table_name: str | None = None,
 ) -> LoadResult:
     """Load a CSV file into DuckDB using ``read_csv_auto``."""
-    name = _resolve_table_name(log_file, table_name)
+    name = resolve_table_name(log_file, table_name)
     quoted_name = quote_identifier(name)
     connection.execute(
         f"CREATE OR REPLACE TABLE {quoted_name} AS SELECT * "
@@ -106,7 +86,7 @@ def load_json(
     table_name: str | None = None,
 ) -> LoadResult:
     """Load a JSON file into DuckDB using ``read_json_auto``."""
-    name = _resolve_table_name(log_file, table_name)
+    name = resolve_table_name(log_file, table_name)
     quoted_name = quote_identifier(name)
     connection.execute(
         f"CREATE OR REPLACE TABLE {quoted_name} AS SELECT * FROM read_json_auto(?)",
@@ -129,7 +109,7 @@ def load_text_log(
     quoting preserves each physical line verbatim even when it contains commas
     or quotes.
     """
-    name = _resolve_table_name(log_file, table_name)
+    name = resolve_table_name(log_file, table_name)
     quoted_name = quote_identifier(name)
     logging.info("Loading text log into table %s from %s", name, log_file.path)
     connection.execute(
@@ -325,7 +305,7 @@ def load_evtx(
     table_name: str | None = None,
 ) -> LoadResult:
     """Convert an EVTX file into a temporary CSV and load it into DuckDB."""
-    name = _resolve_table_name(log_file, table_name)
+    name = resolve_table_name(log_file, table_name)
     tmp_path: str | None = None
 
     try:

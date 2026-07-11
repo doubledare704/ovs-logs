@@ -6,11 +6,9 @@ import json
 import os
 import subprocess
 import sys
-from collections.abc import Callable
 from pathlib import Path
 from typing import Any, NoReturn
 
-import duckdb
 import typer
 from rich.console import Console
 from rich.table import Table
@@ -18,45 +16,19 @@ from rich.table import Table
 from ovs_logs import __version__
 from ovs_logs.config.settings import settings
 from ovs_logs.core.analysis import AnalysisEngine, IndicatorProcessor
+from ovs_logs.core.analysis.indicators import extract_unique_ips
 from ovs_logs.core.database import Database
-from ovs_logs.core.ingestion.adapters import (
-    LoadResult,
-    load_csv,
-    load_evtx,
-    load_json,
-    load_text_log,
-)
+from ovs_logs.core.ingestion.adapters import LoadResult
 from ovs_logs.core.llm import LLMSynthesizer, OpenAICompatibleProvider
 from ovs_logs.core.normalization import NormalizationEngine
 from ovs_logs.core.persistence import ReportStore
 from ovs_logs.core.report import IncidentReport
-from ovs_logs.core.text_parsing import parse_text_log
+from ovs_logs.core.text_parsing import ADAPTERS
 from ovs_logs.core.threat_intel import ThreatIntelClient
 from ovs_logs.core.validation import SUPPORTED_FORMATS, LogFile, validate_log_file
 
 app = typer.Typer(help="OVS-Log: local AI-powered log tracer and DFIR assistant")
 console = Console()
-
-ADAPTER_MAP: dict[str, Callable[..., LoadResult]] = {
-    "csv": load_csv,
-    "json": load_json,
-    "evtx": load_evtx,
-}
-
-
-def _ingest_text_log_structured(
-    log_file: LogFile,
-    connection: duckdb.DuckDBPyConnection,
-    table_name: str | None = None,
-) -> LoadResult:
-    try:
-        return parse_text_log(log_file, connection, table_name=table_name)
-    except ValueError:
-        return load_text_log(log_file, connection, table_name=table_name)
-
-
-ADAPTER_MAP["txt"] = _ingest_text_log_structured
-ADAPTER_MAP["log"] = _ingest_text_log_structured
 
 
 def _resolve_log_file(file: Path, file_type: str | None) -> LogFile:
@@ -94,11 +66,9 @@ def _perform_ingest(
     table: str | None,
 ) -> tuple[LoadResult, bool]:
     log_file = _resolve_log_file(file, file_type)
-    adapter = ADAPTER_MAP.get(log_file.format)
+    adapter = ADAPTERS.get(log_file.format)
     if adapter is None:
         _raise_no_adapter(log_file.format)
-
-    assert adapter is not None
 
     with Database(db) as connection:
         load_result = adapter(log_file, connection, table_name=table)
@@ -133,7 +103,7 @@ def _perform_analysis(  # noqa: PLR0913
         threat_intel: dict[str, Any] | None = None
         if intel:
             with console.status("[bold green]Enriching with threat intelligence..."):
-                ips = _extract_unique_ips(indicators)
+                ips = extract_unique_ips(indicators)
                 client = ThreatIntelClient(api_key=abuseipdb_api_key or os.getenv("ABUSEIPDB_API_KEY"))
                 threat_intel = client.lookup_many(ips) if ips else {}
 
@@ -274,16 +244,6 @@ def _render_indicators(indicators: list[Any]) -> None:
         )
 
     console.print(table)
-
-
-def _extract_unique_ips(indicators: list[Any]) -> list[str]:
-    """Collect unique source_ip values from indicator evidence."""
-    ips: set[str] = set()
-    for indicator in indicators:
-        ip = indicator.evidence.get("source_ip")
-        if isinstance(ip, str):
-            ips.add(ip)
-    return sorted(ips)
 
 
 def _render_report(report: IncidentReport) -> None:

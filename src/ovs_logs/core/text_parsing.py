@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import re
-import uuid
 from collections.abc import Callable
 from pathlib import Path
 
@@ -13,30 +12,17 @@ import duckdb
 from ovs_logs.config.settings import TextParseConfig, settings
 from ovs_logs.core.ingestion.adapters import (
     LoadResult,
+    load_csv,
+    load_evtx,
+    load_json,
     load_text_log,
 )
+from ovs_logs.core.sql_utils import quote_identifier, resolve_table_name
 from ovs_logs.core.validation import LogFile
 
 
-def _sanitize_table_name(name: str) -> str:
-    safe = re.sub(r"[^a-zA-Z0-9_]", "_", name)
-    if not safe or safe[0].isdigit():
-        safe = f"_{safe}"
-    return safe
-
-
-def _quote_identifier(identifier: str) -> str:
-    return '"' + identifier.replace('"', '""') + '"'
-
-
-def _resolve_table_name(log_file: LogFile, table_name: str | None) -> str:
-    if table_name:
-        return _sanitize_table_name(table_name)
-    return _sanitize_table_name(f"raw_{log_file.format}_{log_file.path.stem}_{uuid.uuid4().hex[:8]}")
-
-
 def _reload_result(connection: duckdb.DuckDBPyConnection, table_name: str) -> LoadResult:
-    quoted = _quote_identifier(table_name)
+    quoted = quote_identifier(table_name)
     row = connection.execute(f"SELECT COUNT(*) FROM {quoted}").fetchone()
     row_count = int(row[0]) if row else 0
     schema_rows = connection.execute(f"DESCRIBE {quoted}").fetchall()
@@ -235,8 +221,8 @@ def parse_text_log(
     if config is None:
         config = settings.text_parse
 
-    name = _resolve_table_name(log_file, table_name)
-    quoted = _quote_identifier(name)
+    name = resolve_table_name(log_file, table_name)
+    quoted = quote_identifier(name)
 
     load_result = load_text_log(log_file, connection, table_name=name)
 
@@ -268,3 +254,29 @@ def parse_text_log(
         return load_result
 
     return _reload_result(connection, name)
+
+
+def ingest_text_log_structured(
+    log_file: LogFile,
+    connection: duckdb.DuckDBPyConnection,
+    table_name: str | None = None,
+) -> LoadResult:
+    """Ingest a text log with structured parsing, falling back to raw on failure.
+
+    Attempts ``parse_text_log`` first. If the format detection or structured
+    extraction raises ``ValueError``, falls back to ``load_text_log`` for a
+    single-column raw table.
+    """
+    try:
+        return parse_text_log(log_file, connection, table_name=table_name)
+    except ValueError:
+        return load_text_log(log_file, connection, table_name=table_name)
+
+
+ADAPTERS: dict[str, Callable[..., LoadResult]] = {
+    "csv": load_csv,
+    "json": load_json,
+    "evtx": load_evtx,
+    "txt": ingest_text_log_structured,
+    "log": ingest_text_log_structured,
+}
