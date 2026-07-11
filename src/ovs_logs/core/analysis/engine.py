@@ -71,7 +71,7 @@ def _build_expression_for_target(
         orig_name = orig_columns[target]
         if target == "status_code" and _is_string_type(column_types[target]):
             return f'{_status_code_expression(orig_name, column_types)} AS "{target}"'
-        return _quote_identifier(orig_name)
+        return f'{_quote_identifier(orig_name)} AS "{target}"'
 
     matched_alias = _find_matched_alias(target, lower_columns)
     if matched_alias is not None:
