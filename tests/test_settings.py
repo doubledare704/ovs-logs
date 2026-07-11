@@ -3,11 +3,7 @@
 from unittest.mock import patch
 
 from ovs_logs.config.settings import (
-    _load_abuseipdb_settings,
-    _load_database_settings,
-    _load_llm_settings,
-    _load_text_parse_settings,
-    _load_thresholds,
+    Settings,
     settings,
 )
 
@@ -57,28 +53,24 @@ def test_environment_variables_override_defaults() -> None:
     }
 
     with patch.dict("os.environ", env, clear=False):
-        abuse = _load_abuseipdb_settings()
-        llm = _load_llm_settings()
-        thresholds = _load_thresholds()
-        db = _load_database_settings()
-        text_parse = _load_text_parse_settings()
+        s = Settings()
 
-    assert abuse.api_url == env["ABUSEIPDB_API_URL"]
-    assert abuse.timeout == ENV_ABUSEIPDB_TIMEOUT
-    assert abuse.max_requests_per_minute == ENV_ABUSEIPDB_MAX_REQUESTS_PER_MINUTE
-    assert abuse.max_retries == ENV_ABUSEIPDB_MAX_RETRIES
-    assert abuse.backoff_seconds == ENV_ABUSEIPDB_BACKOFF_SECONDS
+    assert s.abuseipdb.api_url == env["ABUSEIPDB_API_URL"]
+    assert s.abuseipdb.timeout == ENV_ABUSEIPDB_TIMEOUT
+    assert s.abuseipdb.max_requests_per_minute == ENV_ABUSEIPDB_MAX_REQUESTS_PER_MINUTE
+    assert s.abuseipdb.max_retries == ENV_ABUSEIPDB_MAX_RETRIES
+    assert s.abuseipdb.backoff_seconds == ENV_ABUSEIPDB_BACKOFF_SECONDS
 
-    assert llm.api_url == env["OVS_LOGS_LLM_API_URL"]
-    assert llm.model == env["OVS_LOGS_LLM_MODEL"]
-    assert llm.timeout == ENV_LLM_TIMEOUT
+    assert s.llm.api_url == env["OVS_LOGS_LLM_API_URL"]
+    assert s.llm.model == env["OVS_LOGS_LLM_MODEL"]
+    assert s.llm.timeout == ENV_LLM_TIMEOUT
 
-    assert thresholds.top_talkers == ENV_THRESHOLD_TOP_TALKERS
-    assert thresholds.error_spikes == ENV_THRESHOLD_ERROR_SPIKES
-    assert thresholds.event_distribution == ENV_THRESHOLD_EVENT_DISTRIBUTION
-    assert thresholds.temporal_anomaly == ENV_THRESHOLD_TEMPORAL_ANOMALY
+    assert s.thresholds.top_talkers == ENV_THRESHOLD_TOP_TALKERS
+    assert s.thresholds.error_spikes == ENV_THRESHOLD_ERROR_SPIKES
+    assert s.thresholds.event_distribution == ENV_THRESHOLD_EVENT_DISTRIBUTION
+    assert s.thresholds.temporal_anomaly == ENV_THRESHOLD_TEMPORAL_ANOMALY
 
-    assert db.path == env["OVS_LOGS_DB_PATH"]
+    assert s.database.path == env["OVS_LOGS_DB_PATH"]
 
-    assert text_parse.structured is False
-    assert text_parse.max_lines_per_file == ENV_TEXT_PARSE_MAX_LINES_PER_FILE
+    assert s.text_parse.structured is False
+    assert s.text_parse.max_lines_per_file == ENV_TEXT_PARSE_MAX_LINES_PER_FILE

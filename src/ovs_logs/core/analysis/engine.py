@@ -8,14 +8,52 @@ from typing import Any
 import duckdb
 
 from ..ingestion.adapters import _timestamp_cast_expression
+from ..normalization import FIELD_ALIASES
 from ..sql_utils import quote_identifier as _quote_identifier
 from .templates import TEMPLATES, SQLTemplate
 
-_ALIAS_MAP: dict[str, str] = {
-    "event_timestamp": "timestamp",
-}
-
 logger = logging.getLogger(__name__)
+
+
+def _find_matched_alias(target: str, lower_columns: set[str]) -> str | None:
+    """Find the first alias for the target field that exists in lower_columns."""
+    for alias in FIELD_ALIASES.get(target, []):
+        if alias in lower_columns:
+            return alias
+    return None
+
+
+def _build_expression_for_matched_alias(
+    target: str,
+    matched_alias: str,
+    column_types: dict[str, str],
+) -> str:
+    """Build select expression when an alias is matched."""
+    if target == "event_timestamp":
+        return f'{_timestamp_cast_expression(matched_alias)} AS "event_timestamp"'
+    if target == "status_code":
+        if _is_string_type(column_types[matched_alias]):
+            return f'TRY_CAST(NULLIF(TRIM("{matched_alias}"), \'\') AS BIGINT) AS "status_code"'
+        return f'"{matched_alias}"::BIGINT AS "status_code"'
+    return f'"{matched_alias}"::{_column_dtype(target)} AS "{target}"'
+
+
+def _build_expression_for_target(
+    target: str,
+    lower_columns: set[str],
+    column_types: dict[str, str],
+) -> str:
+    """Build the SQL select expression for a single target column."""
+    if target in lower_columns:
+        if target == "status_code" and _is_string_type(column_types[target]):
+            return f'TRY_CAST(NULLIF(TRIM("{target}"), \'\') AS BIGINT) AS "{target}"'
+        return f'"{target}"'
+
+    matched_alias = _find_matched_alias(target, lower_columns)
+    if matched_alias is not None:
+        return _build_expression_for_matched_alias(target, matched_alias, column_types)
+
+    return f'NULL::{_column_dtype(target)} AS "{target}"'
 
 
 def build_aliased_query(sql: str, table_name: str, connection: duckdb.DuckDBPyConnection) -> str:
@@ -34,21 +72,10 @@ def build_aliased_query(sql: str, table_name: str, connection: duckdb.DuckDBPyCo
 
     column_types = {row[0].lower(): str(row[1]) for row in columns}
     lower_columns = set(column_types)
-    expressions: list[str] = []
-    for target in ("event_timestamp", "source_ip", "event_type", "status_code", "raw_message"):
-        if target in lower_columns:
-            if target == "status_code" and _is_string_type(column_types[target]):
-                expressions.append(f'TRY_CAST(NULLIF(TRIM("{target}"), \'\') AS BIGINT) AS "{target}"')
-            else:
-                expressions.append(f'"{target}"')
-        elif target == "event_timestamp" and "timestamp" in lower_columns:
-            expressions.append(f'{_timestamp_cast_expression("timestamp")} AS "event_timestamp"')
-        elif target == "event_type" and "event" in lower_columns:
-            expressions.append('"event"::VARCHAR AS "event_type"')
-        elif target == "raw_message" and "message" in lower_columns:
-            expressions.append('"message"::VARCHAR AS "raw_message"')
-        else:
-            expressions.append(f'NULL::{_column_dtype(target)} AS "{target}"')
+    expressions = [
+        _build_expression_for_target(target, lower_columns, column_types)
+        for target in ("event_timestamp", "source_ip", "event_type", "status_code", "raw_message")
+    ]
 
     return sql.replace(
         "FROM events",

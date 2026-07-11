@@ -4,23 +4,15 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import duckdb
 from streamlit.testing.v1 import AppTest
+
+from .conftest import make_db
 
 APP_PATH = Path(__file__).resolve().parents[1] / "src" / "ovs_logs" / "ui" / "app.py"
 
 
-def _make_db(tmp_path: Path, table_sql: list[tuple[str, str]]) -> Path:
-    """Create a temp DuckDB file with the given (name, ddl) user tables."""
-    db = tmp_path / "ovs_logs.db"
-    with duckdb.connect(str(db)) as conn:
-        for name, ddl in table_sql:
-            conn.execute(f'CREATE TABLE "{name}" AS {ddl}')
-    return db
-
-
 def test_timeline_analyzable_table_renders_metrics_and_table(tmp_path: Path) -> None:
-    db = _make_db(
+    db = make_db(
         tmp_path,
         [
             (
@@ -48,7 +40,7 @@ def test_timeline_analyzable_table_renders_metrics_and_table(tmp_path: Path) -> 
 
 
 def test_timeline_non_analyzable_table_shows_info(tmp_path: Path) -> None:
-    db = _make_db(tmp_path, [("reports", "SELECT 'hello' AS note")])
+    db = make_db(tmp_path, [("reports", "SELECT 'hello' AS note")])
     at = AppTest.from_file(str(APP_PATH)).run()
     at.sidebar.text_input[2].set_value(str(db)).run()
     at.sidebar.selectbox[0].set_value("reports").run()
@@ -58,7 +50,7 @@ def test_timeline_non_analyzable_table_shows_info(tmp_path: Path) -> None:
 
 
 def test_timeline_empty_analyzable_table_shows_info(tmp_path: Path) -> None:
-    db = _make_db(
+    db = make_db(
         tmp_path,
         [
             (
@@ -78,7 +70,7 @@ def test_timeline_empty_analyzable_table_shows_info(tmp_path: Path) -> None:
 
 
 def test_timeline_malformed_status_code_renders_without_error(tmp_path: Path) -> None:
-    db = _make_db(
+    db = make_db(
         tmp_path,
         [
             (

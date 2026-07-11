@@ -13,6 +13,7 @@ dependencies = [
     "streamlit>=1.35.0",
     "requests>=2.32.0",
     "evtx==0.12.1",
+    "pytz>=2026.2",
 ]
 
 [project.optional-dependencies]
@@ -78,16 +79,5 @@ known-first-party = ["ovs_logs"]
 combine-as-imports = true
 
 [tool.pyrefly]
-python-version = "3.12"
-search-paths = ["src", "tests"]
-exclude = [
-    "**/__pycache__/**",
-    "**/.venv/**",
-    "**/.mypy_cache/**",
-    "**/.ruff_cache/**",
-    "**/build/**",
-    "**/dist/**",
-    "**/*.egg-info/**",
-]
-strict = true
-show-error-codes = true
+project-includes = ["src", "tests"]
+search-path = ["src", "tests"]

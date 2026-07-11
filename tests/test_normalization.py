@@ -4,9 +4,6 @@ from collections.abc import Sequence
 from datetime import datetime
 from pathlib import Path
 
-import pytest
-
-from ovs_logs.core.database import Database
 from ovs_logs.core.ingestion.adapters import load_csv, load_json, load_text_log
 from ovs_logs.core.normalization import NormalizationEngine
 from ovs_logs.core.text_parsing import parse_text_log
@@ -16,14 +13,8 @@ NORMALIZED_CSV_ROW_COUNT = 2
 NORMALIZED_LOG_ROW_COUNT = 2
 
 
-@pytest.fixture
-def db():
-    """In-memory DuckDB instance for normalization tests."""
-    with Database(":memory:") as conn:
-        yield conn
-
-
 def _schema_types(schema: Sequence[tuple[str, str]]) -> dict[str, str]:
+    """Extract lowercased column names to dtype mapping from a DuckDB DESCRIBE result."""
     return {name.lower(): dtype for name, dtype in schema}
 
 

@@ -26,6 +26,11 @@ class LoadResult:
     row_count: int
     schema: Sequence[tuple[str, str]]
 
+    @property
+    def is_unstructured(self) -> bool:
+        """Return True if the ingested table contains raw unstructured text."""
+        return len(self.schema) == 1 and self.schema[0][0] == "line"
+
 
 def _timestamp_cast_expression(column: str) -> str:
     """Build a best-effort DuckDB expression turning a raw timestamp into UTC TIMESTAMP.
@@ -54,11 +59,11 @@ def _timestamp_cast_expression(column: str) -> str:
     )
 
 
-def _build_result(connection: duckdb.DuckDBPyConnection, table_name: str) -> LoadResult:
+def build_result(connection: duckdb.DuckDBPyConnection, table_name: str) -> LoadResult:
     """Query the loaded table for row count and schema."""
     quoted_name = quote_identifier(table_name)
     row = connection.execute(f"SELECT COUNT(*) FROM {quoted_name}").fetchone()
-    row_count = row[0] if row is not None else 0
+    row_count = int(row[0]) if row is not None else 0
     schema_rows = connection.execute(f"DESCRIBE {quoted_name}").fetchall()
     schema = [(row[0], row[1]) for row in schema_rows]
     return LoadResult(table_name=table_name, row_count=row_count, schema=schema)
@@ -77,7 +82,7 @@ def load_csv(
         "FROM read_csv_auto(?, header=true, delim=',', all_varchar=true)",
         [str(log_file.path.resolve())],
     )
-    return _build_result(connection, name)
+    return build_result(connection, name)
 
 
 def load_json(
@@ -92,14 +97,13 @@ def load_json(
         f"CREATE OR REPLACE TABLE {quoted_name} AS SELECT * FROM read_json_auto(?)",
         [str(log_file.path.resolve())],
     )
-    return _build_result(connection, name)
+    return build_result(connection, name)
 
 
 def load_text_log(
     log_file: LogFile,
     connection: duckdb.DuckDBPyConnection,
     table_name: str | None = None,
-    batch_size: int = 1000,
 ) -> LoadResult:
     """Load an unstructured text or log file into a single-column DuckDB table.
 
@@ -118,7 +122,7 @@ def load_text_log(
         "all_varchar=true, columns={'col1': 'VARCHAR'}, delim='\x01', quote='', escape='')",
         [str(log_file.path.resolve())],
     )
-    return _build_result(connection, name)
+    return build_result(connection, name)
 
 
 def _is_xml_node(value: Any) -> bool:
@@ -348,7 +352,7 @@ def load_evtx(
         if tmp_path is not None and Path(tmp_path).exists():
             Path(tmp_path).unlink()
 
-    return _build_result(connection, name)
+    return build_result(connection, name)
 
 
 def iter_evtx_record_summaries(path: Path, max_records: int = 50) -> list[dict[str, Any]]:

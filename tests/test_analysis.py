@@ -5,7 +5,6 @@ from pathlib import Path
 import pytest
 
 from ovs_logs.core.analysis.engine import AnalysisEngine
-from ovs_logs.core.database import Database
 from ovs_logs.core.ingestion.adapters import load_csv
 from ovs_logs.core.normalization import NormalizationEngine
 from ovs_logs.core.validation import validate_log_file
@@ -21,13 +20,6 @@ POST_COUNT = 1
 TEMPORAL_BUCKETS_COUNT = 2
 TEMPORAL_BUCKET_0_COUNT = 4
 TEMPORAL_BUCKET_1_COUNT = 1
-
-
-@pytest.fixture
-def db():
-    """In-memory DuckDB instance pre-populated with normalized events."""
-    with Database(":memory:") as conn:
-        yield conn
 
 
 @pytest.fixture

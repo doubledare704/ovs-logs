@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from ovs_logs.config.settings import settings
+from ovs_logs.config.settings import AnalysisThresholds, settings
 
 
 def _default_thresholds() -> dict[str, int]:
@@ -35,8 +35,23 @@ class SuspiciousIndicator:
 class IndicatorProcessor:
     """Transforms raw analysis engine output into a flat list of indicators."""
 
-    def __init__(self, thresholds: dict[str, int] | None = None) -> None:
-        self.thresholds = {**_default_thresholds(), **(thresholds or {})}
+    def __init__(
+        self,
+        thresholds: dict[str, int] | None = None,
+        *,
+        thresholds_settings: AnalysisThresholds | None = None,
+    ) -> None:
+        if thresholds_settings is not None:
+            self.thresholds = {
+                "top_talkers": thresholds_settings.top_talkers,
+                "error_spikes": thresholds_settings.error_spikes,
+                "event_distribution": thresholds_settings.event_distribution,
+                "temporal_anomaly": thresholds_settings.temporal_anomaly,
+            }
+        else:
+            self.thresholds = _default_thresholds()
+        if thresholds:
+            self.thresholds.update(thresholds)
 
     def _severity(self, value: int, threshold: int) -> str:
         """Assign a severity level based on how much the value exceeds the threshold."""

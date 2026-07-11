@@ -12,6 +12,7 @@ import duckdb
 from ovs_logs.config.settings import TextParseConfig, settings
 from ovs_logs.core.ingestion.adapters import (
     LoadResult,
+    build_result,
     load_csv,
     load_evtx,
     load_json,
@@ -19,15 +20,6 @@ from ovs_logs.core.ingestion.adapters import (
 )
 from ovs_logs.core.sql_utils import quote_identifier, resolve_table_name
 from ovs_logs.core.validation import LogFile
-
-
-def _reload_result(connection: duckdb.DuckDBPyConnection, table_name: str) -> LoadResult:
-    quoted = quote_identifier(table_name)
-    row = connection.execute(f"SELECT COUNT(*) FROM {quoted}").fetchone()
-    row_count = int(row[0]) if row else 0
-    schema_rows = connection.execute(f"DESCRIBE {quoted}").fetchall()
-    schema = [(row[0], row[1]) for row in schema_rows]
-    return LoadResult(table_name=table_name, row_count=row_count, schema=schema)
 
 
 def _detect_text_format(path: Path) -> str:
@@ -231,7 +223,7 @@ def parse_text_log(
             f"CREATE OR REPLACE TABLE {quoted} AS SELECT * FROM {quoted} LIMIT ?",
             [config.max_lines_per_file],
         )
-        load_result = _reload_result(connection, name)
+        load_result = build_result(connection, name)
 
     if not config.structured:
         return load_result
@@ -253,7 +245,7 @@ def parse_text_log(
     if hit_count == 0:
         return load_result
 
-    return _reload_result(connection, name)
+    return build_result(connection, name)
 
 
 def ingest_text_log_structured(
