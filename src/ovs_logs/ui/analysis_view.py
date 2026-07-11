@@ -14,30 +14,25 @@ import duckdb
 import streamlit as st
 
 from ovs_logs.core.analysis import AnalysisEngine, IndicatorProcessor
+from ovs_logs.core.normalization import FIELD_ALIASES
 from ovs_logs.core.sql_utils import quote_identifier
 
 logger = logging.getLogger(__name__)
-
-_ANALYZABLE_COLUMNS = {
-    "event_timestamp",
-    "timestamp",
-    "source_ip",
-    "event_type",
-    "status_code",
-    "event",
-    "raw_message",
-    "message",
-    "line",
-}
 
 
 def has_analyzable_columns(connection: duckdb.DuckDBPyConnection, table_name: str) -> bool:
     """Return True when the table exposes at least one normalized column."""
     try:
-        columns = [row[0] for row in connection.execute(f"DESCRIBE {quote_identifier(table_name)}").fetchall()]
+        columns = [row[0].lower() for row in connection.execute(f"DESCRIBE {quote_identifier(table_name)}").fetchall()]
     except duckdb.Error:
         return False
-    return any(col.lower() in _ANALYZABLE_COLUMNS for col in columns)
+
+    # Check if any column matches a target field or any of its aliases
+    all_analyzable = {k.lower() for k in FIELD_ALIASES}
+    for aliases in FIELD_ALIASES.values():
+        all_analyzable.update(a.lower() for a in aliases)
+
+    return any(col in all_analyzable for col in columns)
 
 
 def render_analysis_results(connection: duckdb.DuckDBPyConnection, table_name: str) -> None:

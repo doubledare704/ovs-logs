@@ -30,6 +30,25 @@ def _success_response() -> Mock:
     return response
 
 
+def test_explicit_falsy_overrides_are_honored() -> None:
+    """Explicit falsy values (0, "") must override settings defaults, not be discarded."""
+    client = ThreatIntelClient(
+        api_key="test-key",
+        endpoint="",
+        timeout=0,
+        max_retries=0,
+        backoff_seconds=0,
+        max_requests_per_minute=0,
+    )
+
+    assert client.endpoint == ""
+    assert client.timeout == 0
+    assert client.max_retries == 0
+    assert client.backoff_seconds == 0
+    # rate limiter with 0 requests/minute disables throttling (min_interval == 0)
+    assert client.rate_limiter.min_interval == 0.0
+
+
 def test_lookup_success_and_cache() -> None:
     with patch("ovs_logs.core.threat_intel.requests.get", return_value=_success_response()) as mock_get:
         client = ThreatIntelClient(api_key="test-key")

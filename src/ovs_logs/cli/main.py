@@ -7,7 +7,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any, NoReturn
+from typing import Any
 
 import typer
 from rich.console import Console
@@ -18,6 +18,7 @@ from ovs_logs.config.settings import settings
 from ovs_logs.core.analysis import AnalysisEngine, IndicatorProcessor
 from ovs_logs.core.analysis.indicators import extract_unique_ips
 from ovs_logs.core.database import Database
+from ovs_logs.core.errors import classify_error, error_category
 from ovs_logs.core.ingestion.adapters import LoadResult
 from ovs_logs.core.llm import LLMSynthesizer, OpenAICompatibleProvider
 from ovs_logs.core.normalization import NormalizationEngine
@@ -47,18 +48,6 @@ def _resolve_log_file(file: Path, file_type: str | None) -> LogFile:
     )
 
 
-def _raise_no_adapter(fmt: str) -> NoReturn:
-    raise ValueError(f"No ingestion adapter for format '{fmt}'")
-
-
-def _raise_output_requires_llm() -> NoReturn:
-    raise ValueError("--output requires --llm so a synthesized report is available")
-
-
-def _raise_format_mismatch(rule_format: str, report_format: str) -> NoReturn:
-    raise ValueError(f"Requested format '{rule_format}' does not match report mitigation format '{report_format}'")
-
-
 def _perform_ingest(
     db: Path,
     file: Path,
@@ -68,15 +57,14 @@ def _perform_ingest(
     log_file = _resolve_log_file(file, file_type)
     adapter = ADAPTERS.get(log_file.format)
     if adapter is None:
-        _raise_no_adapter(log_file.format)
+        raise ValueError(f"No ingestion adapter for format '{log_file.format}'")
 
     with Database(db) as connection:
         load_result = adapter(log_file, connection, table_name=table)
-        is_unstructured = len(load_result.schema) == 1 and load_result.schema[0][0] == "line"
-        if not is_unstructured:
+        if not load_result.is_unstructured:
             NormalizationEngine().normalize_table(connection, load_result)
 
-    return load_result, not is_unstructured
+    return load_result, not load_result.is_unstructured
 
 
 def _perform_analysis(  # noqa: PLR0913
@@ -121,7 +109,7 @@ def _perform_analysis(  # noqa: PLR0913
 
         if output:
             if report is None:
-                _raise_output_requires_llm()
+                raise ValueError("--output requires --llm so a synthesized report is available")
             output.parent.mkdir(parents=True, exist_ok=True)
             output.write_text(json.dumps(report.to_dict(), indent=2), encoding="utf-8")
             console.print(f"[bold]Report written to:[/bold] {output}")
@@ -143,8 +131,8 @@ def ingest(
         schema = ", ".join(name for name, _ in load_result.schema)
         console.print(f"[bold]Schema:[/bold] {schema}")
     except Exception as exc:
-        exit_code = _classify_error(exc)
-        raise typer.Exit(code=exit_code) from exc
+        _print_error(exc)
+        raise typer.Exit(code=classify_error(exc)) from exc
 
 
 @app.command()
@@ -182,8 +170,8 @@ def process(  # noqa: PLR0913
             output=output,
         )
     except Exception as exc:
-        exit_code = _classify_error(exc)
-        raise typer.Exit(code=exit_code) from exc
+        _print_error(exc)
+        raise typer.Exit(code=classify_error(exc)) from exc
 
 
 @app.command()
@@ -208,23 +196,13 @@ def analyze(  # noqa: PLR0913
             output=output,
         )
     except Exception as exc:
-        exit_code = _classify_error(exc)
-        raise typer.Exit(code=exit_code) from exc
+        _print_error(exc)
+        raise typer.Exit(code=classify_error(exc)) from exc
 
 
-def _classify_error(exc: Exception) -> int:
-    """Map common CLI errors to specific exit codes and messages."""
-    if isinstance(exc, (FileNotFoundError, PermissionError)):
-        console.print(f"[bold red]File error:[/bold red] {exc}")
-        return 2
-    if isinstance(exc, ValueError):
-        console.print(f"[bold red]Validation error:[/bold red] {exc}")
-        return 3
-    if isinstance(exc, NotImplementedError):
-        console.print(f"[bold red]Not supported:[/bold red] {exc}")
-        return 4
-    console.print(f"[bold red]Unexpected error:[/bold red] {exc}")
-    return 1
+def _print_error(exc: Exception) -> None:
+    """Print a user-friendly error message to the console."""
+    console.print(f"[bold red]{error_category(exc)}:[/bold red] {exc}")
 
 
 def _render_indicators(indicators: list[Any]) -> None:
@@ -334,16 +312,24 @@ def export_rule(
     try:
         with Database(db) as connection:
             report = ReportStore().get_report(connection, report_id)
+    except Exception as exc:
+        _print_error(exc)
+        raise typer.Exit(code=classify_error(exc)) from exc
 
-        if report.mitigation.format.lower() != rule_format.lower():
-            _raise_format_mismatch(rule_format, report.mitigation.format)
+    if report.mitigation.format.lower() != rule_format.lower():
+        exc = ValueError(
+            f"Requested format '{rule_format}' does not match report mitigation format '{report.mitigation.format}'"
+        )
+        _print_error(exc)
+        raise typer.Exit(code=classify_error(exc)) from exc
 
+    try:
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text(report.mitigation.content, encoding="utf-8")
         console.print(f"[bold]Rule written to:[/bold] {output}")
     except Exception as exc:
-        exit_code = _classify_error(exc)
-        raise typer.Exit(code=exit_code) from exc
+        _print_error(exc)
+        raise typer.Exit(code=classify_error(exc)) from exc
 
 
 if __name__ == "__main__":

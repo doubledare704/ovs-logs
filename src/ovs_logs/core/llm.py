@@ -9,7 +9,7 @@ from typing import Any, ClassVar
 
 import requests
 
-from ovs_logs.config.settings import settings
+from ovs_logs.config.settings import LLMSettings, settings
 from ovs_logs.core.analysis.indicators import SuspiciousIndicator
 from ovs_logs.core.report import IncidentReport
 from ovs_logs.core.threat_intel import ReputationResult
@@ -29,14 +29,17 @@ class OpenAICompatibleProvider(LLMProvider):
     def __init__(
         self,
         api_key: str,
-        endpoint: str = settings.llm.api_url,
-        model: str = settings.llm.model,
-        timeout: int = settings.llm.timeout,
+        endpoint: str | None = None,
+        model: str | None = None,
+        timeout: int | None = None,
+        *,
+        llm_settings: LLMSettings | None = None,
     ) -> None:
+        cfg = llm_settings or settings.llm
         self.api_key = api_key
-        self.endpoint = endpoint
-        self.model = model
-        self.timeout = timeout
+        self.endpoint = endpoint if endpoint is not None else cfg.api_url
+        self.model = model if model is not None else cfg.model
+        self.timeout = timeout if timeout is not None else cfg.timeout
 
     def generate(self, prompt: str) -> str:
         headers = {

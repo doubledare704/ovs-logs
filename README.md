@@ -42,6 +42,7 @@ uv run pre-commit install
 ```
 
 The hooks will run:
+
 - **Ruff** - Fast Python linter and formatter (replaces flake8, isort, black, etc.)
 - **Pyrefly** - Fast Python type checker
 - **Basic checks** - Merge conflicts, debug statements, large files, YAML/TOML/JSON syntax, trailing whitespace, line endings
@@ -86,7 +87,19 @@ uv run ovs-log ingest --file sample.csv
 uv run ovs-log ingest --file access.log --type log --db ./my.db
 ```
 
-Supported formats: `csv`, `json`, `txt`, `log`. EVTX is accepted as a stub and will require conversion in a future release.
+Supported formats: `csv`, `json`, `txt`, `log`, `evtx`.
+
+### Ingest and analyze in one step
+
+Ingest a log file and immediately run the full analysis pipeline (indicators, optional threat-intel enrichment, and optional LLM synthesis):
+
+```bash
+# Ingest + indicators only
+uv run ovs-log process --file sample.csv
+
+# Ingest + indicators + threat intel + LLM report
+uv run ovs-log process --file access.log --intel --llm
+```
 
 ### Analyze ingested data
 

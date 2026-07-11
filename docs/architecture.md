@@ -18,7 +18,7 @@ This document defines the technical architecture of **OVS-Log** for the MVP. It 
 | Analyzer            | Runs SQL aggregation templates, orchestrates enrichment and LLM synthesis  | OVD-6         |
 | Threat Intel Client | Queries AbuseIPDB for IP reputation and caches results locally             | OVD-6         |
 | LLM Provider        | Generates incident timeline, MITRE ATT&CK mapping, and mitigation guidance | OVD-6         |
-| Typer CLI           | `ingest`, `analyze`, and `export-rule` commands                            | OVD-7         |
+| Typer CLI           | `ingest`, `process`, `analyze`, `export-rule`, `version`, and `ui` commands| OVD-7         |
 | Streamlit UI        | Single-page upload, run, and 3-tab results view                            | OVD-8         |
 | Packaging & Tests   | Entrypoints, automated tests, and BOTS v1 validation                       | OVD-9         |
 
@@ -54,7 +54,7 @@ graph LR
     C3 -->|reputation lookup| C4
     C4 -->|HTTP / cache| E1
     C3 -->|synthesis prompt| E2
-    C3 -->|JSON / Markdown report| B1
+    C3 -->|JSON report / indicators| B1
     C3 -->|render data| B2
 ```
 
@@ -91,7 +91,7 @@ sequenceDiagram
 ## 5. State Management
 
 - **Analytical state**: Owned by DuckDB. Tables persist normalized events, aggregation results, threat-intel cache, and generated reports. This keeps the CLI stateless and the Streamlit UI resilient to refreshes.
-- **Streamlit state**: `st.session_state` holds only lightweight UI state: the current upload metadata, the API key, chunk-size slider, and target format dropdown. Large payloads (raw log content, analysis results) are read from or written to DuckDB so that reruns do not reload the file from memory.
+- **Streamlit state**: `st.session_state` holds only lightweight UI state: the current upload metadata, API keys, database path, and selected table. Large payloads (raw log content, analysis results) are read from or written to DuckDB so that reruns do not reload the file from memory.
 - **Threat-intel cache**: A small cache table in DuckDB prevents repeated API calls for the same indicator during a single session and lets the analyzer work offline when the API key is absent or rate-limited.
 
 ## 6. Mapping to Linear Backlog

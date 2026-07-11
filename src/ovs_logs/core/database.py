@@ -6,9 +6,7 @@ from pathlib import Path
 
 import duckdb
 
-from ovs_logs.config.settings import settings
-
-DEFAULT_DB_PATH = Path(settings.database.path)
+from ovs_logs.config.settings import Settings, settings
 
 
 class Database:
@@ -22,7 +20,10 @@ class Database:
     For persistent storage, the default path is ``.ovs_logs/ovs_logs.db``.
     """
 
-    def __init__(self, path: str | Path = DEFAULT_DB_PATH) -> None:
+    def __init__(self, path: str | Path | None = None, *, db_settings: Settings | None = None) -> None:
+        if path is None:
+            cfg = db_settings or settings
+            path = Path(cfg.database.path)
         self._path = path
         self._connection: duckdb.DuckDBPyConnection | None = None
 

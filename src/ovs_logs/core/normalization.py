@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
 
@@ -9,6 +10,14 @@ import duckdb
 
 from ovs_logs.core.ingestion.adapters import LoadResult, _timestamp_cast_expression
 from ovs_logs.core.sql_utils import quote_identifier
+
+logger = logging.getLogger(__name__)
+
+# Internal bookkeeping table recording which raw tables have already been merged
+# into ``events``, so ``normalize_batch`` stays idempotent across re-runs. The
+# ``_ovs_`` prefix keeps it out of the UI "Recent Tables" navigator.
+_SOURCE_TRACKING_TABLE = "_ovs_normalized_sources"
+_TRACKING_TABLE_QUOTED = quote_identifier(_SOURCE_TRACKING_TABLE)
 
 FIELD_ALIASES: dict[str, list[str]] = {
     "event_timestamp": [
@@ -122,6 +131,67 @@ class NormalizationEngine:
             f"CREATE OR REPLACE TABLE events AS {select_query}",
             mapping,
         )
+
+    def normalize_batch(
+        self,
+        connection: duckdb.DuckDBPyConnection,
+        tables: Sequence[tuple[str, Sequence[str]]],
+    ) -> int:
+        """Normalize multiple raw tables into the unified ``events`` table.
+
+        Builds a ``UNION ALL`` of the per-table normalized ``SELECT`` queries and
+        writes them into ``events``. When ``events`` already exists the rows are
+        appended (``INSERT INTO``); otherwise the table is created. This avoids the
+        silent data loss that ``CREATE OR REPLACE`` would cause on repeated batches.
+
+        The call is idempotent per source table: raw tables that have already been
+        merged into ``events`` (tracked in ``_ovs_normalized_sources``) are skipped
+        so re-running ingestion over the same sources does not accumulate duplicate
+        rows. Deduplication is intentionally by source table, not by row content, so
+        legitimately repeated log lines are preserved.
+
+        Args:
+            connection: An active DuckDB connection.
+            tables: Sequence of ``(raw_table_name, columns)`` pairs to normalize.
+
+        Returns:
+            The total row count of the ``events`` table after the batch, or ``0``
+            when there is nothing to normalize and ``events`` does not yet exist.
+        """
+        candidates = [(raw_table, list(columns)) for raw_table, columns in tables if raw_table and columns]
+
+        existing = {row[0] for row in connection.execute("SHOW TABLES").fetchall()}
+        events_exists = "events" in existing
+
+        connection.execute(f"CREATE TABLE IF NOT EXISTS {_TRACKING_TABLE_QUOTED} (raw_table VARCHAR PRIMARY KEY)")
+        already_merged = {
+            row[0] for row in connection.execute(f"SELECT raw_table FROM {_TRACKING_TABLE_QUOTED}").fetchall()
+        }
+
+        new_tables = [(raw_table, columns) for raw_table, columns in candidates if raw_table not in already_merged]
+        if not new_tables:
+            return self._events_row_count(connection) if events_exists else 0
+
+        union_query = " UNION ALL ".join(
+            self.build_select_query(raw_table, columns)[0] for raw_table, columns in new_tables
+        )
+        if events_exists:
+            connection.execute(f"INSERT INTO events {union_query}")
+        else:
+            connection.execute(f"CREATE TABLE events AS {union_query}")
+
+        connection.executemany(
+            f"INSERT INTO {_TRACKING_TABLE_QUOTED} VALUES (?)",
+            [(raw_table,) for raw_table, _ in new_tables],
+        )
+
+        return self._events_row_count(connection)
+
+    @staticmethod
+    def _events_row_count(connection: duckdb.DuckDBPyConnection) -> int:
+        """Return the current row count of the ``events`` table (0 if absent)."""
+        row = connection.execute("SELECT COUNT(*) FROM events").fetchone()
+        return row[0] if row is not None else 0
 
     def normalize_table(self, connection: duckdb.DuckDBPyConnection, load_result: LoadResult) -> NormalizeResult:
         """Create or replace the unified `events` table from a raw load result."""

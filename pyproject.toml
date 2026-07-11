@@ -78,16 +78,5 @@ known-first-party = ["ovs_logs"]
 combine-as-imports = true
 
 [tool.pyrefly]
-python-version = "3.12"
-search-paths = ["src", "tests"]
-exclude = [
-    "**/__pycache__/**",
-    "**/.venv/**",
-    "**/.mypy_cache/**",
-    "**/.ruff_cache/**",
-    "**/build/**",
-    "**/dist/**",
-    "**/*.egg-info/**",
-]
-strict = true
-show-error-codes = true
+project-includes = ["src", "tests"]
+search-path = ["src", "tests"]

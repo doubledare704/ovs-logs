@@ -23,7 +23,7 @@ if TYPE_CHECKING:
 
 from ovs_logs.config.settings import settings
 from ovs_logs.core.database import Database
-from ovs_logs.core.ingestion import adapters
+from ovs_logs.core.ingestion.adapters import iter_evtx_record_summaries
 from ovs_logs.core.normalization import NormalizationEngine
 from ovs_logs.core.sql_utils import quote_identifier
 from ovs_logs.core.text_parsing import ADAPTERS
@@ -36,6 +36,7 @@ logger = logging.getLogger(__name__)
 _SYSTEM_TABLE_PREFIXES: tuple[str, ...] = (
     "sqlite_",
     "pg_",
+    "_ovs_",
 )
 
 _SYSTEM_SCHEMAS: tuple[str, ...] = (
@@ -110,7 +111,7 @@ def _save_uploaded_file(uploaded_file: UploadedFile) -> tuple[Path, str]:
 def _preview_evtx(path: Path, max_records: int = 50) -> str:
     """Render a short readable summary of EVTX records via the core adapter."""
     try:
-        summaries = adapters.iter_evtx_record_summaries(path, max_records=max_records)
+        summaries = iter_evtx_record_summaries(path, max_records=max_records)
     except Exception as exc:  # pragma: no cover - exercised through parser errors
         logger.warning("Unable to preview EVTX file %s: %s", path, exc)
         return f"Unable to preview EVTX file: {exc}"
@@ -204,7 +205,28 @@ def _validate_uploaded_file(file_state: dict[str, Any]) -> None:
         file_state["preview"] = None
 
 
-def _process_ready_files(db_path: str) -> None:  # noqa: PLR0912
+def _run_batch_normalization(
+    connection: duckdb.DuckDBPyConnection,
+    ingested_files: list[dict[str, Any]],
+) -> None:
+    """Run normalization on all successfully ingested files into the unified ``events`` table.
+
+    Delegates the SQL orchestration to :meth:`NormalizationEngine.normalize_batch`
+    so the UI and CLI share a single, append-safe batching path.
+    """
+    tables = [
+        (ingested_file["ingest_table"], [name for name, _ in ingested_file["schema"]])
+        for ingested_file in ingested_files
+        if ingested_file.get("ingest_table") and ingested_file.get("schema")
+    ]
+    row_count = NormalizationEngine().normalize_batch(connection, tables)
+    if row_count:
+        for ingested_file in ingested_files:
+            ingested_file["normalized_table"] = "events"
+            ingested_file["normalized_row_count"] = row_count
+
+
+def _process_ready_files(db_path: str) -> None:
     if not db_path:
         st.error("Set a valid database path in the sidebar before ingesting files.")
         return
@@ -237,26 +259,9 @@ def _process_ready_files(db_path: str) -> None:  # noqa: PLR0912
             finally:
                 Path(file_state["temp_path"]).unlink(missing_ok=True)
 
-            ingested_files = [f for f in ready_files if f["status"] == "ingested"]
-            if ingested_files:
-                engine = NormalizationEngine()
-                select_queries: list[str] = []
-                for ingested_file in ingested_files:
-                    t = ingested_file["ingest_table"]
-                    if not t or not ingested_file.get("schema"):
-                        continue
-                    columns = [name for name, _ in ingested_file["schema"]]
-                    select_query, _ = engine.build_select_query(t, columns)
-                    select_queries.append(select_query)
-
-                if select_queries:
-                    union_query = " UNION ALL ".join(select_queries)
-                    connection.execute(f"CREATE OR REPLACE TABLE events AS {union_query}")
-                    row = connection.execute("SELECT COUNT(*) FROM events").fetchone()
-                    row_count = row[0] if row is not None else 0
-                    for ingested_file in ingested_files:
-                        ingested_file["normalized_table"] = "events"
-                        ingested_file["normalized_row_count"] = row_count
+        ingested_files = [f for f in ready_files if f["status"] == "ingested"]
+        if ingested_files:
+            _run_batch_normalization(connection, ingested_files)
 
     if errors:
         for error in errors:

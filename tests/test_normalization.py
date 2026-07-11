@@ -4,9 +4,6 @@ from collections.abc import Sequence
 from datetime import datetime
 from pathlib import Path
 
-import pytest
-
-from ovs_logs.core.database import Database
 from ovs_logs.core.ingestion.adapters import load_csv, load_json, load_text_log
 from ovs_logs.core.normalization import NormalizationEngine
 from ovs_logs.core.text_parsing import parse_text_log
@@ -16,14 +13,8 @@ NORMALIZED_CSV_ROW_COUNT = 2
 NORMALIZED_LOG_ROW_COUNT = 2
 
 
-@pytest.fixture
-def db():
-    """In-memory DuckDB instance for normalization tests."""
-    with Database(":memory:") as conn:
-        yield conn
-
-
 def _schema_types(schema: Sequence[tuple[str, str]]) -> dict[str, str]:
+    """Extract lowercased column names to dtype mapping from a DuckDB DESCRIBE result."""
     return {name.lower(): dtype for name, dtype in schema}
 
 
@@ -146,3 +137,44 @@ def test_normalize_json_epoch_timestamp(db, tmp_path: Path) -> None:
     assert result.mapping["event_timestamp"] == "ts"
     rows = db.execute("SELECT event_timestamp, source_ip FROM events").fetchall()
     assert rows[0] == (datetime(2015, 5, 12, 15, 20, 0), "1.2.3.4")
+
+
+def test_normalize_batch_appends_without_data_loss(db, tmp_path: Path) -> None:
+    """A second batch must append to ``events`` rather than overwrite it."""
+    first = tmp_path / "first.csv"
+    first.write_text("timestamp,client_ip,status,method\n2024-01-01T00:00:00,1.2.3.4,200,GET\n")
+    second = tmp_path / "second.csv"
+    second.write_text("timestamp,client_ip,status,method\n2024-01-02T00:00:00,5.6.7.8,404,POST\n")
+
+    engine = NormalizationEngine()
+
+    load_first = load_csv(validate_log_file(first), db, table_name="raw_first")
+    count_after_first = engine.normalize_batch(db, [("raw_first", [n for n, _ in load_first.schema])])
+    assert count_after_first == 1
+
+    load_second = load_csv(validate_log_file(second), db, table_name="raw_second")
+    count_after_second = engine.normalize_batch(db, [("raw_second", [n for n, _ in load_second.schema])])
+
+    assert count_after_second == 2  # first batch rows retained
+    ips = {row[0] for row in db.execute("SELECT source_ip FROM events").fetchall()}
+    assert ips == {"1.2.3.4", "5.6.7.8"}
+
+
+def test_normalize_batch_empty_returns_zero(db) -> None:
+    assert NormalizationEngine().normalize_batch(db, []) == 0
+
+
+def test_normalize_batch_is_idempotent_per_source(db, tmp_path: Path) -> None:
+    """Re-normalizing the same raw table must not duplicate rows in ``events``."""
+    file = tmp_path / "same.csv"
+    file.write_text("timestamp,client_ip,status,method\n2024-01-01T00:00:00,1.2.3.4,200,GET\n")
+
+    engine = NormalizationEngine()
+    load = load_csv(validate_log_file(file), db, table_name="raw_same")
+    columns = [n for n, _ in load.schema]
+
+    first = engine.normalize_batch(db, [("raw_same", columns)])
+    second = engine.normalize_batch(db, [("raw_same", columns)])
+
+    assert first == 1
+    assert second == 1  # unchanged: source already merged, no duplicate appended

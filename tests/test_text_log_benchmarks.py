@@ -22,8 +22,9 @@ import duckdb
 import pytest
 
 from ovs_logs.core.database import Database
-from ovs_logs.core.ingestion.adapters import LoadResult, load_text_log
+from ovs_logs.core.ingestion.adapters import build_result, load_text_log
 from ovs_logs.core.normalization import NormalizationEngine
+from ovs_logs.core.sql_utils import quote_identifier
 from ovs_logs.core.validation import validate_log_file
 
 logger = logging.getLogger(__name__)
@@ -188,10 +189,6 @@ def _measure(fn: Callable[..., Any], *args: Any, **kwargs: Any) -> tuple[Any, fl
     return result, elapsed, max(peak, 0)
 
 
-def _quote_identifier(identifier: str) -> str:
-    return '"' + identifier.replace('"', '""') + '"'
-
-
 def _safe_unlink(path: Path) -> None:
     """Best-effort removal of a temporary file.
 
@@ -202,15 +199,6 @@ def _safe_unlink(path: Path) -> None:
     """
     with contextlib.suppress(OSError):
         path.unlink()
-
-
-def _reload_result(connection: duckdb.DuckDBPyConnection, table_name: str) -> LoadResult:
-    quoted = _quote_identifier(table_name)
-    row = connection.execute(f"SELECT COUNT(*) FROM {quoted}").fetchone()
-    row_count = int(row[0]) if row else 0
-    schema_rows = connection.execute(f"DESCRIBE {quoted}").fetchall()
-    schema = [(r[0], r[1]) for r in schema_rows]
-    return LoadResult(table_name=table_name, row_count=row_count, schema=schema)
 
 
 def build_samples(tmp_path: Path, sizes: list[int] | None = None) -> dict[int, list[LogSample]]:
@@ -457,7 +445,7 @@ def _regex_python_loop(sample: LogSample) -> BenchmarkResult:
                     "?, header=true, delim=',', all_varchar=true)",
                     [str(tmp)],
                 )
-                reloaded = _reload_result(db, "raw")
+                reloaded = build_result(db, "raw")
                 NormalizationEngine().normalize_table(db, reloaded)
                 return rows
             finally:
@@ -544,7 +532,7 @@ def _parser_based(sample: LogSample) -> BenchmarkResult:
                 "?, header=true, delim=',', all_varchar=true)",
                 [str(tmp)],
             )
-            reloaded = _reload_result(db_conn, "raw")
+            reloaded = build_result(db_conn, "raw")
             NormalizationEngine().normalize_table(db_conn, reloaded)
             return rows
         finally:
@@ -587,7 +575,7 @@ def _hybrid(sample: LogSample) -> BenchmarkResult:
                 "?, header=true, delim=',', all_varchar=true)",
                 [str(tmp)],
             )
-            reloaded = _reload_result(db_conn, "raw")
+            reloaded = build_result(db_conn, "raw")
             NormalizationEngine().normalize_table(db_conn, reloaded)
             return rows
         finally:
@@ -644,30 +632,30 @@ def _duckdb_regex_native(sample: LogSample) -> BenchmarkResult:
     patterns = _DUCKDB_NATIVE_PATTERNS.get(prefix, _DUCKDB_NATIVE_PATTERNS["ambiguous"])
     hits = dict.fromkeys(["timestamp", "source_ip", "status_code", "event_type"], 0)
     columns = ["timestamp", "source_ip", "status_code", "event_type"]
-    raw_table = _quote_identifier("raw")
+    raw_table = quote_identifier("raw")
 
     def _process(conn: duckdb.DuckDBPyConnection) -> int:
         log = validate_log_file(sample.path)
         load_result = load_text_log(log, conn, table_name="raw")
         rows = load_result.row_count
         for col in columns:
-            quoted_col = _quote_identifier(col)
+            quoted_col = quote_identifier(col)
             with contextlib.suppress(duckdb.BinderException):
                 conn.execute(f"ALTER TABLE {raw_table} ADD COLUMN {quoted_col} VARCHAR")
         set_clauses = []
         for col, (_pat, _flags) in patterns.items():
-            quoted_col = _quote_identifier(col)
+            quoted_col = quote_identifier(col)
             set_clauses.append(f"{quoted_col} = COALESCE(regexp_extract(line, ?, 1, ?), '')")
         params: list[str] = []
         for _col, (pat, flags) in patterns.items():
             params.extend([pat, flags])
         conn.execute(f"UPDATE {raw_table} SET {', '.join(set_clauses)}", params)
-        count_exprs = ", ".join(f"COUNT_IF({_quote_identifier(col)} <> '')" for col in columns)
+        count_exprs = ", ".join(f"COUNT_IF({quote_identifier(col)} <> '')" for col in columns)
         counts = conn.execute(f"SELECT {count_exprs} FROM {raw_table}").fetchone()
         if counts is not None:
             for key, value in zip(columns, counts, strict=True):
                 hits[key] = value or 0
-        reloaded = _reload_result(conn, "raw")
+        reloaded = build_result(conn, "raw")
         NormalizationEngine().normalize_table(conn, reloaded)
         return rows
 

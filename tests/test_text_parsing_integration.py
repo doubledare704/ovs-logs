@@ -12,23 +12,10 @@ from typer.testing import CliRunner, Result
 from ovs_logs.cli.main import app
 from ovs_logs.core.database import Database
 
+from .conftest import make_db, make_temp_file
+
 APP_PATH = Path(__file__).resolve().parents[1] / "src" / "ovs_logs" / "ui" / "app.py"
 runner = CliRunner()
-
-
-def _make_db(tmp_path: Path, table_sql: list[tuple[str, str]]) -> Path:
-    """Create a temp DuckDB file with the given (name, ddl) user tables."""
-    db = tmp_path / "ovs_logs.db"
-    with duckdb.connect(str(db)) as conn:
-        for name, ddl in table_sql:
-            conn.execute(f'CREATE TABLE "{name}" AS {ddl}')
-    return db
-
-
-def _make_temp_file(tmp_path: Path, name: str, content: str) -> Path:
-    path = tmp_path / name
-    path.write_text(content, encoding="utf-8")
-    return path
 
 
 def _invoke_ingest(file_path: Path, file_type: str, db: Path, table: str) -> Result:
@@ -57,7 +44,7 @@ def _describe_columns(conn: duckdb.DuckDBPyConnection, table: str) -> dict[str, 
 
 def _run_ui_ingest(tmp_path: Path, log_file: Path) -> AppTest:
     """Helper to run Streamlit AppTest ingestion."""
-    db = _make_db(tmp_path, [("alpha", "SELECT 1")])
+    db = make_db(tmp_path, [("alpha", "SELECT 1")])
     at = AppTest.from_file(str(APP_PATH)).run()
     at.sidebar.text_input(key="db_path").set_value(str(db)).run()
 
@@ -69,7 +56,7 @@ def _run_ui_ingest(tmp_path: Path, log_file: Path) -> AppTest:
 
 def test_cli_ingest_structured_web_access_log(tmp_path: Path) -> None:
     """CLI: web access logs should normalize into the events table."""
-    access_log = _make_temp_file(
+    access_log = make_temp_file(
         tmp_path,
         "access.log",
         '192.168.1.1 - - [01/Jan/2024:00:00:00 +0000] "GET / HTTP/1.1" 200 1234\n'
@@ -108,7 +95,7 @@ def test_cli_ingest_structured_web_access_log(tmp_path: Path) -> None:
 
 def test_cli_ingest_ambiguous_text_fallback_raw(tmp_path: Path) -> None:
     """CLI: ambiguous text should fall back to a raw single-column table."""
-    ambiguous = _make_temp_file(
+    ambiguous = make_temp_file(
         tmp_path,
         "ambiguous.txt",
         "This is just some random text.\nNothing here matches any pattern.\n",
@@ -133,7 +120,7 @@ def test_cli_ingest_ambiguous_text_fallback_raw(tmp_path: Path) -> None:
 
 def test_cli_ingest_syslog_structured(tmp_path: Path) -> None:
     """CLI: syslog entries should normalize into structured event fields."""
-    syslog = _make_temp_file(
+    syslog = make_temp_file(
         tmp_path,
         "syslog.log",
         "Jan  1 00:00:00 hostname sshd[1234]: Accepted password for user1 from 192.168.1.100\n"
@@ -161,7 +148,7 @@ def test_cli_ingest_syslog_structured(tmp_path: Path) -> None:
 
 def test_cli_ingest_jsonline_structured(tmp_path: Path) -> None:
     """CLI: JSON Lines input should normalize into structured event columns."""
-    jsonline = _make_temp_file(
+    jsonline = make_temp_file(
         tmp_path,
         "app.txt",
         '{"ts": "2024-01-01T00:00:00Z", "src_ip": "1.2.3.4", "status": 200, "component": "GET"}\n'
@@ -193,7 +180,7 @@ def test_cli_ingest_jsonline_structured(tmp_path: Path) -> None:
 
 def test_ui_upload_web_access_log_structured_preview(tmp_path: Path) -> None:
     """UI: uploaded web access logs should show structured preview columns."""
-    access_log = _make_temp_file(
+    access_log = make_temp_file(
         tmp_path,
         "access.log",
         '192.168.1.1 - - [01/Jan/2024:00:00:00 +0000] "GET / HTTP/1.1" 200 1234\n'
@@ -223,7 +210,7 @@ def test_ui_upload_web_access_log_structured_preview(tmp_path: Path) -> None:
 
 def test_ui_upload_ambiguous_text_fallback_warning(tmp_path: Path) -> None:
     """UI: ambiguous text should fall back to a raw preview table."""
-    ambiguous = _make_temp_file(
+    ambiguous = make_temp_file(
         tmp_path,
         "ambiguous.txt",
         "This is just some random text.\nNothing here matches any pattern.\n",
@@ -249,7 +236,7 @@ def test_ui_upload_ambiguous_text_fallback_warning(tmp_path: Path) -> None:
 
 def test_ui_upload_syslog_structured_preview(tmp_path: Path) -> None:
     """UI: syslog uploads should show structured preview columns."""
-    syslog = _make_temp_file(
+    syslog = make_temp_file(
         tmp_path,
         "syslog.log",
         "Jan  1 00:00:00 hostname sshd[1234]: Accepted password for user1 from 192.168.1.100\n"
@@ -275,7 +262,7 @@ def test_ui_upload_syslog_structured_preview(tmp_path: Path) -> None:
 
 def test_ui_upload_jsonline_structured_preview(tmp_path: Path) -> None:
     """UI: JSON Lines uploads should show structured preview columns."""
-    jsonline = _make_temp_file(
+    jsonline = make_temp_file(
         tmp_path,
         "app.txt",
         '{"ts": "2024-01-01T00:00:00Z", "src_ip": "1.2.3.4", "status": 200, "component": "GET"}\n'
@@ -304,7 +291,7 @@ def test_ui_upload_jsonline_structured_preview(tmp_path: Path) -> None:
 
 def test_ui_upload_nginx_jsonline_structured_preview(tmp_path: Path) -> None:
     """UI: nginx JSON-line uploads should show structured preview columns."""
-    nginx_json = _make_temp_file(
+    nginx_json = make_temp_file(
         tmp_path,
         "nginx.txt",
         '{"time": "17/May/2015:08:05:32 +0000", "remote_ip": "192.168.1.1", "remote_user": "-", '

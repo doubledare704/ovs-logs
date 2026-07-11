@@ -7,6 +7,7 @@ import pytest
 from ovs_logs.core.analysis.indicators import (
     IndicatorProcessor,
     SuspiciousIndicator,
+    extract_unique_ips,
 )
 
 INDICATORS_TOTAL_COUNT = 5
@@ -83,3 +84,15 @@ def test_indicator_invalid_severity_rejected() -> None:
             description="Test",
             evidence={},
         )
+
+
+def test_extract_unique_ips_skips_empty_and_non_string() -> None:
+    indicators = [
+        SuspiciousIndicator(type="top_talkers", severity="Low", description="d", evidence={"source_ip": "1.2.3.4"}),
+        SuspiciousIndicator(type="top_talkers", severity="Low", description="d", evidence={"source_ip": ""}),
+        SuspiciousIndicator(type="top_talkers", severity="Low", description="d", evidence={"source_ip": None}),
+        SuspiciousIndicator(type="top_talkers", severity="Low", description="d", evidence={"source_ip": "1.2.3.4"}),
+        SuspiciousIndicator(type="event_distribution", severity="Low", description="d", evidence={"event_type": "GET"}),
+    ]
+
+    assert extract_unique_ips(indicators) == ["1.2.3.4"]

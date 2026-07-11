@@ -4,22 +4,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import duckdb
 import pytest
 from streamlit.testing.v1 import AppTest
 
 from ovs_logs.core.ingestion import adapters as adapters_mod
 
+from .conftest import make_db, make_temp_file
+
 APP_PATH = Path(__file__).resolve().parents[1] / "src" / "ovs_logs" / "ui" / "app.py"
-
-
-def _make_db(tmp_path: Path, table_sql: list[tuple[str, str]]) -> Path:
-    """Create a temp DuckDB file with the given (name, ddl) user tables."""
-    db = tmp_path / "ovs_logs.db"
-    with duckdb.connect(str(db)) as conn:
-        for name, ddl in table_sql:
-            conn.execute(f'CREATE TABLE "{name}" AS {ddl}')
-    return db
 
 
 def test_app_renders_without_errors(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -74,7 +66,7 @@ def test_missing_db_shows_error(tmp_path: Path) -> None:
 
 
 def test_recent_tables_lists_user_tables_only(tmp_path: Path) -> None:
-    db = _make_db(
+    db = make_db(
         tmp_path,
         [
             ("events_2026", "SELECT 1 AS id"),
@@ -96,10 +88,10 @@ def test_recent_tables_lists_user_tables_only(tmp_path: Path) -> None:
 
 
 def test_changing_db_path_refreshes_tables(tmp_path: Path) -> None:
-    db_a = _make_db(tmp_path, [("alpha", "SELECT 1")])
+    db_a = make_db(tmp_path, [("alpha", "SELECT 1")])
     db_b_dir = tmp_path / "other"
     db_b_dir.mkdir()
-    db_b = _make_db(db_b_dir, [("beta", "SELECT 1")])
+    db_b = make_db(db_b_dir, [("beta", "SELECT 1")])
 
     at = AppTest.from_file(str(APP_PATH)).run()
     at.sidebar.text_input[2].set_value(str(db_a)).run()
@@ -112,7 +104,7 @@ def test_changing_db_path_refreshes_tables(tmp_path: Path) -> None:
 
 
 def test_changing_db_path_clears_stale_table_selection(tmp_path: Path) -> None:
-    db = _make_db(tmp_path, [("alpha", "SELECT 1")])
+    db = make_db(tmp_path, [("alpha", "SELECT 1")])
     missing = tmp_path / "missing.db"
 
     at = AppTest.from_file(str(APP_PATH)).run()
@@ -126,7 +118,7 @@ def test_changing_db_path_clears_stale_table_selection(tmp_path: Path) -> None:
 
 
 def test_selecting_table_persists_to_session_state(tmp_path: Path) -> None:
-    db = _make_db(
+    db = make_db(
         tmp_path,
         [("alpha", "SELECT 1"), ("beta", "SELECT 2")],
     )
@@ -136,15 +128,9 @@ def test_selecting_table_persists_to_session_state(tmp_path: Path) -> None:
     assert at.session_state["selected_table"] == "beta"
 
 
-def _make_temp_file(tmp_path: Path, name: str, content: str) -> Path:
-    path = tmp_path / name
-    path.write_text(content, encoding="utf-8")
-    return path
-
-
 def test_upload_and_validate_file(tmp_path: Path) -> None:
-    db = _make_db(tmp_path, [("alpha", "SELECT 1")])
-    file_path = _make_temp_file(tmp_path, "sample.log", "line1\nline2\n")
+    db = make_db(tmp_path, [("alpha", "SELECT 1")])
+    file_path = make_temp_file(tmp_path, "sample.log", "line1\nline2\n")
 
     at = AppTest.from_file(str(APP_PATH)).run()
     at.sidebar.text_input[2].set_value(str(db)).run()
@@ -158,8 +144,8 @@ def test_upload_and_validate_file(tmp_path: Path) -> None:
 
 
 def test_duplicate_upload_is_skipped(tmp_path: Path) -> None:
-    db = _make_db(tmp_path, [("alpha", "SELECT 1")])
-    file_path = _make_temp_file(tmp_path, "duplicate.log", "line1\nline2\n")
+    db = make_db(tmp_path, [("alpha", "SELECT 1")])
+    file_path = make_temp_file(tmp_path, "duplicate.log", "line1\nline2\n")
 
     at = AppTest.from_file(str(APP_PATH)).run()
     at.sidebar.text_input[2].set_value(str(db)).run()
@@ -174,8 +160,8 @@ def test_duplicate_upload_is_skipped(tmp_path: Path) -> None:
 
 
 def test_raw_preview_displays_preview_text(tmp_path: Path) -> None:
-    db = _make_db(tmp_path, [("alpha", "SELECT 1")])
-    file_path = _make_temp_file(tmp_path, "raw.log", "first line\nsecond line\n")
+    db = make_db(tmp_path, [("alpha", "SELECT 1")])
+    file_path = make_temp_file(tmp_path, "raw.log", "first line\nsecond line\n")
 
     at = AppTest.from_file(str(APP_PATH)).run()
     at.sidebar.text_input[2].set_value(str(db)).run()
@@ -192,8 +178,8 @@ def test_raw_preview_displays_preview_text(tmp_path: Path) -> None:
 
 
 def test_ingested_table_preview_after_process(tmp_path: Path) -> None:
-    db = _make_db(tmp_path, [("alpha", "SELECT 1")])
-    file_path = _make_temp_file(tmp_path, "process.log", "line1\nline2\n")
+    db = make_db(tmp_path, [("alpha", "SELECT 1")])
+    file_path = make_temp_file(tmp_path, "process.log", "line1\nline2\n")
 
     at = AppTest.from_file(str(APP_PATH)).run()
     at.sidebar.text_input[2].set_value(str(db)).run()
@@ -211,7 +197,7 @@ def test_ingested_table_preview_after_process(tmp_path: Path) -> None:
 
 
 def test_selected_table_renders_data_preview(tmp_path: Path) -> None:
-    db = _make_db(tmp_path, [("alpha", "SELECT 1 AS id, 'x' AS name")])
+    db = make_db(tmp_path, [("alpha", "SELECT 1 AS id, 'x' AS name")])
     at = AppTest.from_file(str(APP_PATH)).run()
     at.sidebar.text_input[2].set_value(str(db)).run()
     at.sidebar.selectbox[0].set_value("alpha").run()
@@ -219,7 +205,7 @@ def test_selected_table_renders_data_preview(tmp_path: Path) -> None:
 
 
 def test_selected_analyzable_table_renders_timeline(tmp_path: Path) -> None:
-    db = _make_db(
+    db = make_db(
         tmp_path,
         [
             (
@@ -238,7 +224,7 @@ def test_selected_analyzable_table_renders_timeline(tmp_path: Path) -> None:
 
 
 def test_selected_non_analyzable_table_shows_info(tmp_path: Path) -> None:
-    db = _make_db(tmp_path, [("reports", "SELECT 'hello' AS note")])
+    db = make_db(tmp_path, [("reports", "SELECT 'hello' AS note")])
     at = AppTest.from_file(str(APP_PATH)).run()
     at.sidebar.text_input[2].set_value(str(db)).run()
     at.sidebar.selectbox[0].set_value("reports").run()
@@ -246,7 +232,7 @@ def test_selected_non_analyzable_table_shows_info(tmp_path: Path) -> None:
 
 
 def test_selected_table_shows_potential_signals_in_tab1(tmp_path: Path) -> None:
-    db = _make_db(
+    db = make_db(
         tmp_path,
         [
             (
@@ -268,8 +254,8 @@ def test_selected_table_shows_potential_signals_in_tab1(tmp_path: Path) -> None:
 
 
 def test_evtx_upload_preview_shows_records(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    db = _make_db(tmp_path, [("alpha", "SELECT 1")])
-    file_path = _make_temp_file(tmp_path, "sample.evtx", "EVT marker bytes")
+    db = make_db(tmp_path, [("alpha", "SELECT 1")])
+    file_path = make_temp_file(tmp_path, "sample.evtx", "EVT marker bytes")
 
     class FakeParser:
         def __init__(self, path: str) -> None:
@@ -310,8 +296,8 @@ def test_evtx_upload_preview_shows_records(tmp_path: Path, monkeypatch: pytest.M
 
 
 def test_ingested_web_log_shows_potential_signals(tmp_path: Path) -> None:
-    db = _make_db(tmp_path, [("alpha", "SELECT 1")])
-    access_log = _make_temp_file(
+    db = make_db(tmp_path, [("alpha", "SELECT 1")])
+    access_log = make_temp_file(
         tmp_path,
         "access.log",
         '192.168.1.1 - - [01/Jan/2024:00:00:00 +0000] "GET / HTTP/1.1" 200 1234\n'

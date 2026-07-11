@@ -5,7 +5,6 @@ from pathlib import Path
 import pytest
 
 from ovs_logs.core.analysis.engine import AnalysisEngine
-from ovs_logs.core.database import Database
 from ovs_logs.core.ingestion.adapters import load_csv
 from ovs_logs.core.normalization import NormalizationEngine
 from ovs_logs.core.validation import validate_log_file
@@ -21,13 +20,6 @@ POST_COUNT = 1
 TEMPORAL_BUCKETS_COUNT = 2
 TEMPORAL_BUCKET_0_COUNT = 4
 TEMPORAL_BUCKET_1_COUNT = 1
-
-
-@pytest.fixture
-def db():
-    """In-memory DuckDB instance pre-populated with normalized events."""
-    with Database(":memory:") as conn:
-        yield conn
 
 
 @pytest.fixture
@@ -104,5 +96,25 @@ def test_error_spikes_raw_varchar_status_code(db) -> None:
 
     errors = results["error_spikes"]
     assert len(errors) == ERROR_SPIKES_COUNT
+    assert any(row["status_code"] == ERROR_STATUS_404 for row in errors)
+    assert any(row["status_code"] == ERROR_STATUS_500 for row in errors)
+
+
+def test_aliased_query_handles_mixed_case_columns(db) -> None:
+    """Uppercase raw column names must resolve via case-preserving quoted identifiers."""
+    db.execute('CREATE TABLE raw_mixed ("Timestamp" VARCHAR, "Client_IP" VARCHAR, "Status" VARCHAR, "Method" VARCHAR)')
+    db.execute(
+        "INSERT INTO raw_mixed VALUES "
+        "('2024-01-01T00:00:00', '1.2.3.4', '404', 'GET'), "
+        "('2024-01-01T00:00:01', '1.2.3.4', '500', 'POST')"
+    )
+
+    # Should not raise a binder error despite uppercase quoted identifiers.
+    results = AnalysisEngine().run_queries(
+        db, table_name="raw_mixed", thresholds={"error_spikes": {"min_errors": 1, "limit": 10}}
+    )
+
+    errors = results["error_spikes"]
+    assert any(row["source_ip"] == "1.2.3.4" for row in errors)
     assert any(row["status_code"] == ERROR_STATUS_404 for row in errors)
     assert any(row["status_code"] == ERROR_STATUS_500 for row in errors)
