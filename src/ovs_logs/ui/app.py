@@ -30,6 +30,7 @@ from ovs_logs.core.normalization import NormalizationEngine
 from ovs_logs.core.text_parsing import parse_text_log
 from ovs_logs.core.validation import SUPPORTED_FORMATS, LogFile, validate_log_file
 from ovs_logs.ui.analysis_view import render_analysis_results
+from ovs_logs.ui.timeline_view import render_timeline_card
 
 logger = logging.getLogger(__name__)
 
@@ -482,7 +483,7 @@ def render_sidebar() -> None:
     )
 
 
-def main() -> None:
+def main() -> None:  # noqa: PLR0912, PLR0915
     """Streamlit entry point for the OVS-Log dashboard."""
     st.set_page_config(page_title="OVS-Log", layout="wide")
     st.title("OVS-Log Dashboard")
@@ -490,52 +491,82 @@ def main() -> None:
     _initialize_session_state()
     render_sidebar()
 
-    st.header("Upload & Ingest Logs")
-    uploaded_files = st.file_uploader(
-        "Upload log files",
-        type=list(_ALLOWED_UPLOAD_TYPES),
-        accept_multiple_files=True,
-        key="log_file_uploader",
+    db_path = st.session_state.get("db_path", settings.database.path)
+    selected_table = st.session_state.get("selected_table")
+
+    tab_ingest, tab_timeline, tab_intel, tab_mit = st.tabs(
+        ["Ingest & Signals", "Attack Timeline", "Intelligence", "Mitigation"]
     )
 
-    if uploaded_files:
-        for uploaded_file in uploaded_files:
-            created, message = _register_uploaded_file(uploaded_file)
-            if not created and message:
-                st.warning(message)
-            elif created and uploaded_file.size > _LARGE_FILE_BYTES:
-                st.warning(f"This is a large upload ({_format_size(uploaded_file.size)}). Preview is limited.")
+    with tab_ingest:
+        st.header("Upload & Ingest Logs")
+        uploaded_files = st.file_uploader(
+            "Upload log files",
+            type=list(_ALLOWED_UPLOAD_TYPES),
+            accept_multiple_files=True,
+            key="log_file_uploader",
+        )
 
-    for file_state in st.session_state["uploaded_files"]:
-        if file_state["status"] == "pending":
-            _validate_uploaded_file(file_state)
+        if uploaded_files:
+            for uploaded_file in uploaded_files:
+                created, message = _register_uploaded_file(uploaded_file)
+                if not created and message:
+                    st.warning(message)
+                elif created and uploaded_file.size > _LARGE_FILE_BYTES:
+                    st.warning(f"This is a large upload ({_format_size(uploaded_file.size)}). Preview is limited.")
 
-    _render_upload_status_summary()
-    _render_uploaded_files_overview()
+        for file_state in st.session_state["uploaded_files"]:
+            if file_state["status"] == "pending":
+                _validate_uploaded_file(file_state)
 
-    if st.button("Process & Analyze", key="process_ingest"):
-        _process_ready_files(st.session_state.get("db_path", settings.database.path))
+        _render_upload_status_summary()
+        _render_uploaded_files_overview()
 
-    _render_ingested_table_preview()
+        if st.button("Process & Analyze", key="process_ingest"):
+            _process_ready_files(st.session_state.get("db_path", settings.database.path))
 
-    selected_table = st.session_state.get("selected_table")
-    db_path = st.session_state.get("db_path", settings.database.path)
-    if not selected_table:
-        st.info("Configure the sidebar to begin analyzing ingested logs.")
-        return
+        _render_ingested_table_preview()
 
-    st.subheader(f"Active table: {selected_table}")
-    if not db_path:
-        st.info("Set a valid database path in the sidebar to preview and analyze this table.")
-        return
+        ingested_normalized = sorted(
+            {
+                file_state["normalized_table"]
+                for file_state in st.session_state.get("uploaded_files", [])
+                if file_state.get("status") == "ingested" and file_state.get("normalized_table")
+            }
+        )
 
-    try:
-        with Database(db_path) as connection:
-            _render_selected_table(connection, selected_table)
-            st.subheader("Analysis")
-            render_analysis_results(connection, selected_table)
-    except (OSError, duckdb.Error) as exc:
-        st.error(f"Unable to analyze table '{selected_table}': {exc}")
+        if not selected_table:
+            st.info("Configure the sidebar to begin analyzing ingested logs.")
+        elif not db_path:
+            st.info("Set a valid database path in the sidebar to preview and analyze this table.")
+        elif selected_table not in ingested_normalized:
+            st.subheader(f"Active table: {selected_table}")
+            try:
+                with Database(db_path) as connection:
+                    _render_selected_table(connection, selected_table)
+                    st.subheader("Potential signals")
+                    render_analysis_results(connection, selected_table)
+            except (OSError, duckdb.Error) as exc:
+                st.error(f"Unable to analyze table '{selected_table}': {exc}")
+
+    with tab_timeline:
+        if not selected_table:
+            st.info("Select a table in the sidebar to view its attack timeline.")
+        elif not db_path:
+            st.info("Set a valid database path in the sidebar to preview and analyze this table.")
+        else:
+            try:
+                with Database(db_path) as connection:
+                    st.subheader("Attack Timeline")
+                    render_timeline_card(connection, selected_table)
+            except (OSError, duckdb.Error) as exc:
+                st.error(f"Unable to analyze table '{selected_table}': {exc}")
+
+    with tab_intel:
+        st.info("Coming soon.")
+
+    with tab_mit:
+        st.info("Coming soon.")
 
 
 if __name__ == "__main__":
