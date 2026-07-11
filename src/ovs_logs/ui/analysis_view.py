@@ -28,9 +28,9 @@ def has_analyzable_columns(connection: duckdb.DuckDBPyConnection, table_name: st
         return False
 
     # Check if any column matches a target field or any of its aliases
-    all_analyzable = set(FIELD_ALIASES.keys())
+    all_analyzable = {k.lower() for k in FIELD_ALIASES}
     for aliases in FIELD_ALIASES.values():
-        all_analyzable.update(aliases)
+        all_analyzable.update(a.lower() for a in aliases)
 
     return any(col in all_analyzable for col in columns)
 

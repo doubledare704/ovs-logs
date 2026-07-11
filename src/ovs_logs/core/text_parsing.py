@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from collections.abc import Callable
 from pathlib import Path
@@ -20,6 +21,8 @@ from ovs_logs.core.ingestion.adapters import (
 )
 from ovs_logs.core.sql_utils import quote_identifier, resolve_table_name
 from ovs_logs.core.validation import LogFile
+
+logger = logging.getLogger(__name__)
 
 
 def _detect_text_format(path: Path) -> str:
@@ -255,14 +258,18 @@ def ingest_text_log_structured(
 ) -> LoadResult:
     """Ingest a text log with structured parsing, falling back to raw on failure.
 
-    Attempts ``parse_text_log`` first. If the format detection or structured
-    extraction raises ``ValueError``, falls back to ``load_text_log`` for a
-    single-column raw table.
+    Attempts ``parse_text_log`` first. If format detection or structured
+    extraction fails (``ValueError`` or a DuckDB error), falls back to
+    ``load_text_log`` for a single-column raw table. The table name is resolved
+    once up front and reused for both attempts so a failed structured pass does
+    not leave an orphaned table under a different name.
     """
+    name = resolve_table_name(log_file, table_name)
     try:
-        return parse_text_log(log_file, connection, table_name=table_name)
-    except ValueError:
-        return load_text_log(log_file, connection, table_name=table_name)
+        return parse_text_log(log_file, connection, table_name=name)
+    except (ValueError, duckdb.Error) as exc:
+        logger.warning("Structured parse failed for %s; falling back to raw ingest: %s", log_file.path, exc)
+        return load_text_log(log_file, connection, table_name=name)
 
 
 ADAPTERS: dict[str, Callable[..., LoadResult]] = {

@@ -75,11 +75,11 @@ class ThreatIntelClient:
     ) -> None:
         cfg = abuseipdb_settings or settings.abuseipdb
         self.api_key = api_key
-        self.endpoint = endpoint or cfg.api_url
-        self.timeout = timeout or cfg.timeout
-        self.max_retries = max_retries or cfg.max_retries
-        self.backoff_seconds = backoff_seconds or cfg.backoff_seconds
-        rate_limit = max_requests_per_minute or cfg.max_requests_per_minute
+        self.endpoint = endpoint if endpoint is not None else cfg.api_url
+        self.timeout = timeout if timeout is not None else cfg.timeout
+        self.max_retries = max_retries if max_retries is not None else cfg.max_retries
+        self.backoff_seconds = backoff_seconds if backoff_seconds is not None else cfg.backoff_seconds
+        rate_limit = max_requests_per_minute if max_requests_per_minute is not None else cfg.max_requests_per_minute
         self.rate_limiter = RateLimiter(max_requests_per_minute=rate_limit)
         self._cache: dict[str, ReputationResult] = {}
 

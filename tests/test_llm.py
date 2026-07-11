@@ -26,6 +26,15 @@ class FakeLLMProvider(LLMProvider):
         return self.response
 
 
+def test_provider_explicit_falsy_overrides_are_honored() -> None:
+    """Explicit falsy values (0, "") must override settings defaults, not be discarded."""
+    provider = OpenAICompatibleProvider(api_key="sk-test", endpoint="", model="", timeout=0)
+
+    assert provider.endpoint == ""
+    assert provider.model == ""
+    assert provider.timeout == 0
+
+
 def _sample_response() -> str:
     return """
 ```json

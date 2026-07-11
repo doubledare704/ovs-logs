@@ -17,6 +17,24 @@ EXIT_VALIDATION_ERROR = 3
 EXIT_NOT_SUPPORTED = 4
 EXIT_UNEXPECTED = 1
 
+# Ordered classification ladder shared by ``classify_error`` and ``error_category``.
+# The first matching entry wins; anything unmatched falls back to the "unexpected"
+# defaults. Keeping this single source of truth prevents the exit code and the
+# displayed category from drifting apart.
+_CLASSIFICATIONS: list[tuple[tuple[type[Exception], ...], int, str]] = [
+    ((FileNotFoundError, PermissionError), EXIT_FILE_ERROR, "File error"),
+    ((ValueError,), EXIT_VALIDATION_ERROR, "Validation error"),
+    ((NotImplementedError,), EXIT_NOT_SUPPORTED, "Not supported"),
+]
+
+
+def _classify(exc: Exception) -> tuple[int, str]:
+    """Return the ``(exit_code, label)`` pair for ``exc`` from the shared ladder."""
+    for exc_types, exit_code, label in _CLASSIFICATIONS:
+        if isinstance(exc, exc_types):
+            return exit_code, label
+    return EXIT_UNEXPECTED, "Unexpected error"
+
 
 def classify_error(exc: Exception) -> int:
     """Map an exception to its corresponding CLI exit code.
@@ -27,17 +45,9 @@ def classify_error(exc: Exception) -> int:
     Returns:
         One of the ``EXIT_*`` constants defined in this module.
     """
-    if isinstance(exc, (FileNotFoundError, PermissionError)):
-        logger.error("File error: %s", exc)
-        return EXIT_FILE_ERROR
-    if isinstance(exc, ValueError):
-        logger.error("Validation error: %s", exc)
-        return EXIT_VALIDATION_ERROR
-    if isinstance(exc, NotImplementedError):
-        logger.error("Not supported: %s", exc)
-        return EXIT_NOT_SUPPORTED
-    logger.error("Unexpected error: %s", exc)
-    return EXIT_UNEXPECTED
+    exit_code, label = _classify(exc)
+    logger.error("%s: %s", label, exc)
+    return exit_code
 
 
 def error_category(exc: Exception) -> str:
@@ -46,10 +56,4 @@ def error_category(exc: Exception) -> str:
     Returns one of ``"File error"``, ``"Validation error"``, ``"Not supported"``,
     or ``"Unexpected error"``.
     """
-    if isinstance(exc, (FileNotFoundError, PermissionError)):
-        return "File error"
-    if isinstance(exc, ValueError):
-        return "Validation error"
-    if isinstance(exc, NotImplementedError):
-        return "Not supported"
-    return "Unexpected error"
+    return _classify(exc)[1]

@@ -37,9 +37,9 @@ class OpenAICompatibleProvider(LLMProvider):
     ) -> None:
         cfg = llm_settings or settings.llm
         self.api_key = api_key
-        self.endpoint = endpoint or cfg.api_url
-        self.model = model or cfg.model
-        self.timeout = timeout or cfg.timeout
+        self.endpoint = endpoint if endpoint is not None else cfg.api_url
+        self.model = model if model is not None else cfg.model
+        self.timeout = timeout if timeout is not None else cfg.timeout
 
     def generate(self, prompt: str) -> str:
         headers = {

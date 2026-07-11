@@ -313,14 +313,14 @@ def export_rule(
         with Database(db) as connection:
             report = ReportStore().get_report(connection, report_id)
     except Exception as exc:
-        console.print(f"[bold red]{error_category(exc)}:[/bold red] {exc}")
+        _print_error(exc)
         raise typer.Exit(code=classify_error(exc)) from exc
 
     if report.mitigation.format.lower() != rule_format.lower():
         exc = ValueError(
             f"Requested format '{rule_format}' does not match report mitigation format '{report.mitigation.format}'"
         )
-        console.print(f"[bold red]{error_category(exc)}:[/bold red] {exc}")
+        _print_error(exc)
         raise typer.Exit(code=classify_error(exc)) from exc
 
     try:
@@ -328,7 +328,7 @@ def export_rule(
         output.write_text(report.mitigation.content, encoding="utf-8")
         console.print(f"[bold]Rule written to:[/bold] {output}")
     except Exception as exc:
-        console.print(f"[bold red]{error_category(exc)}:[/bold red] {exc}")
+        _print_error(exc)
         raise typer.Exit(code=classify_error(exc)) from exc
 
 

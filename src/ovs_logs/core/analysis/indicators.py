@@ -8,14 +8,19 @@ from typing import Any
 from ovs_logs.config.settings import AnalysisThresholds, settings
 
 
+def _thresholds_dict(source: AnalysisThresholds) -> dict[str, int]:
+    """Build the threshold mapping from any settings object exposing the four fields."""
+    return {
+        "top_talkers": source.top_talkers,
+        "error_spikes": source.error_spikes,
+        "event_distribution": source.event_distribution,
+        "temporal_anomaly": source.temporal_anomaly,
+    }
+
+
 def _default_thresholds() -> dict[str, int]:
     """Return the default indicator thresholds as a template-name mapping."""
-    return {
-        "top_talkers": settings.thresholds.top_talkers,
-        "error_spikes": settings.thresholds.error_spikes,
-        "event_distribution": settings.thresholds.event_distribution,
-        "temporal_anomaly": settings.thresholds.temporal_anomaly,
-    }
+    return _thresholds_dict(settings.thresholds)
 
 
 @dataclass(frozen=True)
@@ -42,12 +47,7 @@ class IndicatorProcessor:
         thresholds_settings: AnalysisThresholds | None = None,
     ) -> None:
         if thresholds_settings is not None:
-            self.thresholds = {
-                "top_talkers": thresholds_settings.top_talkers,
-                "error_spikes": thresholds_settings.error_spikes,
-                "event_distribution": thresholds_settings.event_distribution,
-                "temporal_anomaly": thresholds_settings.temporal_anomaly,
-            }
+            self.thresholds = _thresholds_dict(thresholds_settings)
         else:
             self.thresholds = _default_thresholds()
         if thresholds:
@@ -109,6 +109,6 @@ def extract_unique_ips(indicators: list[SuspiciousIndicator]) -> list[str]:
     ips: set[str] = set()
     for indicator in indicators:
         ip = indicator.evidence.get("source_ip")
-        if isinstance(ip, str):
+        if isinstance(ip, str) and ip:
             ips.add(ip)
     return sorted(ips)

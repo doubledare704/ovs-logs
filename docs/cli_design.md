@@ -136,7 +136,7 @@ ovs-log export-rule --report-id <uuid> --output <path>
 
 - `--report-id` (required): UUID of the saved report.
 - `--output` (required): File path to write the rule content.
-- `--format` (optional): Expected rule format (default: `sigma`). Validates against the stored mitigation's format.
+- `--format` (optional): Expected rule format (default: `sigma`). Any string is accepted; it is not an enforced closed-set CLI choice. The value is compared against the stored mitigation's format and rejected only on mismatch. Currently supported formats are `sigma`, `yara-l`, and `spl`.
 - `--db` (optional): DuckDB database path.
 
 ### 2.5. Command: `ovs-log version`

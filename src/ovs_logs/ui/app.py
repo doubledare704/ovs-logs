@@ -36,6 +36,7 @@ logger = logging.getLogger(__name__)
 _SYSTEM_TABLE_PREFIXES: tuple[str, ...] = (
     "sqlite_",
     "pg_",
+    "_ovs_",
 )
 
 _SYSTEM_SCHEMAS: tuple[str, ...] = (
@@ -208,22 +209,18 @@ def _run_batch_normalization(
     connection: duckdb.DuckDBPyConnection,
     ingested_files: list[dict[str, Any]],
 ) -> None:
-    """Run normalization on all successfully ingested files into the unified ``events`` table."""
-    engine = NormalizationEngine()
-    select_queries: list[str] = []
-    for ingested_file in ingested_files:
-        t = ingested_file["ingest_table"]
-        if not t or not ingested_file.get("schema"):
-            continue
-        columns = [name for name, _ in ingested_file["schema"]]
-        select_query, _ = engine.build_select_query(t, columns)
-        select_queries.append(select_query)
+    """Run normalization on all successfully ingested files into the unified ``events`` table.
 
-    if select_queries:
-        union_query = " UNION ALL ".join(select_queries)
-        connection.execute(f"CREATE OR REPLACE TABLE events AS {union_query}")
-        row = connection.execute("SELECT COUNT(*) FROM events").fetchone()
-        row_count = row[0] if row is not None else 0
+    Delegates the SQL orchestration to :meth:`NormalizationEngine.normalize_batch`
+    so the UI and CLI share a single, append-safe batching path.
+    """
+    tables = [
+        (ingested_file["ingest_table"], [name for name, _ in ingested_file["schema"]])
+        for ingested_file in ingested_files
+        if ingested_file.get("ingest_table") and ingested_file.get("schema")
+    ]
+    row_count = NormalizationEngine().normalize_batch(connection, tables)
+    if row_count:
         for ingested_file in ingested_files:
             ingested_file["normalized_table"] = "events"
             ingested_file["normalized_row_count"] = row_count
@@ -262,9 +259,9 @@ def _process_ready_files(db_path: str) -> None:
             finally:
                 Path(file_state["temp_path"]).unlink(missing_ok=True)
 
-            ingested_files = [f for f in ready_files if f["status"] == "ingested"]
-            if ingested_files:
-                _run_batch_normalization(connection, ingested_files)
+        ingested_files = [f for f in ready_files if f["status"] == "ingested"]
+        if ingested_files:
+            _run_batch_normalization(connection, ingested_files)
 
     if errors:
         for error in errors:
