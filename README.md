@@ -1,4 +1,4 @@
-# OVS-Log
+# OVS-Logs
 
 Local AI-powered log tracer and DFIR assistant.
 
