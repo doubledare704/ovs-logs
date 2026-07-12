@@ -20,10 +20,19 @@ def _seed_report(db_path: Path) -> None:
 
 
 def test_mitigation_empty_reports_shows_info(tmp_path: Path) -> None:
-    db = make_db(tmp_path, [("reports", "SELECT 'hello' AS note")])
+    db = make_db(
+        tmp_path,
+        [
+            (
+                "events_like",
+                "SELECT '1.2.3.4' AS source_ip, 404 AS status_code, 'GET' AS event_type, "
+                "TIMESTAMP '2024-01-01 00:00:00' AS event_timestamp, 'msg' AS raw_message",
+            )
+        ],
+    )
     at = AppTest.from_file(str(APP_PATH)).run()
     at.sidebar.text_input[2].set_value(str(db)).run()
-    at.sidebar.selectbox[0].set_value("reports").run()
+    at.sidebar.selectbox[0].set_value("events_like").run()
 
     assert not at.exception
     assert any("No saved reports" in info.value for info in at.info)
@@ -53,11 +62,13 @@ def test_mitigation_saved_report_renders_mitre_and_rule(tmp_path: Path) -> None:
     assert len(at.code) >= 1
 
 
-def test_mitigation_non_analyzable_table_shows_info(tmp_path: Path) -> None:
+def test_mitigation_non_analyzable_table_still_shows_saved_reports(tmp_path: Path) -> None:
     db = make_db(tmp_path, [("reports", "SELECT 'hello' AS note")])
+    _seed_report(db)
     at = AppTest.from_file(str(APP_PATH)).run()
     at.sidebar.text_input[2].set_value(str(db)).run()
     at.sidebar.selectbox[0].set_value("reports").run()
 
     assert not at.exception
-    assert any("No analyzable fields" in info.value for info in at.info)
+    # Saved reports are global and must remain accessible even for a non-analyzable table
+    assert any(s.label == "Select a report" for s in at.selectbox)
