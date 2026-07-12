@@ -4,12 +4,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import duckdb
 import pytest
 from streamlit.testing.v1 import AppTest
 
 from ovs_logs.core.ingestion import adapters as adapters_mod
+from ovs_logs.core.persistence import ReportStore
 
-from .conftest import make_db, make_temp_file
+from .conftest import make_db, make_temp_file, sample_report
 
 APP_PATH = Path(__file__).resolve().parents[1] / "src" / "ovs_logs" / "ui" / "app.py"
 
@@ -314,3 +316,15 @@ def test_ingested_web_log_shows_potential_signals(tmp_path: Path) -> None:
     has_indicators = any(df.value is not None and "Type" in df.value.columns for df in at.dataframe)
     has_info = any("No suspicious indicators" in info.value or "No analyzable fields" in info.value for info in at.info)
     assert has_indicators or has_info
+
+
+def test_internal_report_table_excluded_from_navigator(tmp_path: Path) -> None:
+    db = make_db(tmp_path, [("events_2026", "SELECT 1 AS id")])
+    with duckdb.connect(str(db)) as conn:
+        ReportStore().save_report(conn, sample_report())
+
+    at = AppTest.from_file(str(APP_PATH)).run()
+    at.sidebar.text_input[2].set_value(str(db)).run()
+
+    assert "events_2026" in at.sidebar.selectbox[0].options
+    assert ReportStore.TABLE_NAME not in at.sidebar.selectbox[0].options
