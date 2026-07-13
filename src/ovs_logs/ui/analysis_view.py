@@ -14,6 +14,7 @@ import duckdb
 import streamlit as st
 
 from ovs_logs.core.analysis import AnalysisEngine, IndicatorProcessor
+from ovs_logs.core.analysis.indicators import SuspiciousIndicator
 from ovs_logs.core.normalization import FIELD_ALIASES
 from ovs_logs.core.sql_utils import quote_identifier
 
@@ -35,6 +36,28 @@ def has_analyzable_columns(connection: duckdb.DuckDBPyConnection, table_name: st
     return any(col in all_analyzable for col in columns)
 
 
+def compute_indicators(
+    connection: duckdb.DuckDBPyConnection,
+    table_name: str,
+) -> list[SuspiciousIndicator]:
+    """Compute suspicious indicators for ``table_name`` without rendering.
+
+    Returns an empty list for non-analyzable tables or query errors, matching
+    the fallback behavior of :func:`render_analysis_results`.
+    """
+    if not has_analyzable_columns(connection, table_name):
+        return []
+
+    try:
+        raw_results = AnalysisEngine().run_queries(connection, table_name=table_name)
+        indicators = IndicatorProcessor().process(raw_results)
+    except duckdb.Error:
+        logger.exception("Failed to analyze table %s", table_name)
+        return []
+
+    return indicators
+
+
 def render_analysis_results(connection: duckdb.DuckDBPyConnection, table_name: str) -> None:
     """Render suspicious indicators for ``table_name`` as a Streamlit table.
 
@@ -45,13 +68,7 @@ def render_analysis_results(connection: duckdb.DuckDBPyConnection, table_name: s
         st.info("No analyzable fields in this table")
         return
 
-    try:
-        raw_results = AnalysisEngine().run_queries(connection, table_name=table_name)
-        indicators = IndicatorProcessor().process(raw_results)
-    except duckdb.Error:
-        logger.exception("Failed to analyze table %s", table_name)
-        st.error("Analysis failed while querying or processing this table.")
-        return
+    indicators = compute_indicators(connection, table_name)
 
     if not indicators:
         st.info("No suspicious indicators found in this table.")

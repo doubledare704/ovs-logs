@@ -29,12 +29,12 @@ def _detect_language(fmt: str) -> str:
 def render_mitigation_tab(connection: duckdb.DuckDBPyConnection, table_name: str) -> None:
     """Render the Mitigation tab for ``table_name``.
 
-    Loads saved incident reports and lets the user pick one to view its
-    mitigation rule and download it. Saved reports are global and do not
-    depend on the currently selected table.
+    Loads incident reports scoped to ``table_name`` (legacy reports without a
+    source table remain visible) and lets the user pick one to view its
+    mitigation rule and download it.
     """
     try:
-        reports = ReportStore().get_all_reports(connection)
+        reports = ReportStore().get_all_reports(connection, source_table=table_name)
     except duckdb.Error:
         logger.exception("Failed to load saved reports for mitigation tab")
         st.error("Failed to load saved reports.")

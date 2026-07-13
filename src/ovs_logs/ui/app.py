@@ -430,6 +430,22 @@ def render_sidebar() -> None:
         help="Path to the local DuckDB file used for ingestion and analysis.",
     )
 
+    llm_endpoint = st.sidebar.text_input(
+        "LLM Endpoint (optional)",
+        value=os.getenv("OVS_LOGS_LLM_API_URL", ""),
+        key="llm_endpoint",
+        help="Override the OpenAI-compatible chat completions endpoint used for report synthesis.",
+    )
+    st.session_state["LLM_ENDPOINT"] = llm_endpoint
+
+    llm_model = st.sidebar.text_input(
+        "LLM Model (optional)",
+        value=os.getenv("OVS_LOGS_LLM_MODEL", ""),
+        key="llm_model",
+        help="Override the model name sent to the LLM provider.",
+    )
+    st.session_state["LLM_MODEL"] = llm_model
+
     st.sidebar.subheader("Recent Tables")
 
     if not db_path:
