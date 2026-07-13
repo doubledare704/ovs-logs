@@ -436,7 +436,7 @@ def render_sidebar() -> None:
         key="llm_endpoint",
         help="Override the OpenAI-compatible chat completions endpoint used for report synthesis.",
     )
-    st.session_state["LLM_ENDPOINT"] = llm_endpoint
+    st.session_state["LLM_ENDPOINT"] = llm_endpoint or None
 
     llm_model = st.sidebar.text_input(
         "LLM Model (optional)",
@@ -444,7 +444,7 @@ def render_sidebar() -> None:
         key="llm_model",
         help="Override the model name sent to the LLM provider.",
     )
-    st.session_state["LLM_MODEL"] = llm_model
+    st.session_state["LLM_MODEL"] = llm_model or None
 
     st.sidebar.subheader("Recent Tables")
 

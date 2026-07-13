@@ -24,6 +24,7 @@ class ReportStore:
     TABLE_NAME = "_ovs_incident_reports"
 
     def _migrate_legacy_table(self, connection: duckdb.DuckDBPyConnection) -> None:
+        """Rename the legacy ``incident_reports`` table if it exists and the new one does not."""
         try:
             existing = {
                 row[0]
@@ -39,6 +40,7 @@ class ReportStore:
             )
 
     def _ensure_table(self, connection: duckdb.DuckDBPyConnection) -> None:
+        """Create the reports table if it does not exist and run migrations."""
         self._migrate_legacy_table(connection)
         connection.execute(
             f"""
@@ -78,11 +80,12 @@ class ReportStore:
         report_id = str(uuid.uuid4())
         created_at = datetime.now(UTC).replace(tzinfo=None).isoformat()
         payload = json.dumps(report.to_dict(), ensure_ascii=False, default=str)
+        quoted_table = quote_identifier(self.TABLE_NAME)
         connection.execute(
             f"""
-            INSERT INTO {quote_identifier(self.TABLE_NAME)} (report_id, created_at, report_json, source_table)
+            INSERT INTO {quoted_table} (report_id, created_at, report_json, source_table)
             VALUES (?, ?, ?, ?)
-            """,
+            """,  # TABLE_NAME is constant, sanitized via quote_identifier
             [report_id, created_at, payload, source_table],
         )
         return report_id
@@ -113,12 +116,12 @@ class ReportStore:
         self._ensure_table(connection)
         if source_table is None:
             rows = connection.execute(
-                f"SELECT report_id, created_at, report_json "
+                f"SELECT report_id, created_at, report_json "  # TABLE_NAME is constant
                 f"FROM {quote_identifier(self.TABLE_NAME)} ORDER BY created_at DESC"
             ).fetchall()
         else:
             rows = connection.execute(
-                f"SELECT report_id, created_at, report_json "
+                f"SELECT report_id, created_at, report_json "  # TABLE_NAME is constant
                 f"FROM {quote_identifier(self.TABLE_NAME)} "
                 f"WHERE source_table = ? OR source_table IS NULL "
                 f"ORDER BY created_at DESC",

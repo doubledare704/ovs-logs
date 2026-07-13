@@ -12,6 +12,7 @@ import logging
 import re
 
 import duckdb
+import requests
 import streamlit as st
 
 from ovs_logs.core.analysis.indicators import SuspiciousIndicator
@@ -49,12 +50,8 @@ def _extract_ips(indicators: list[SuspiciousIndicator]) -> list[str]:
     ips: set[str] = set()
     for indicator in indicators:
         evidence = indicator.evidence
-        if isinstance(evidence, dict):
-            value = evidence.get("source_ip")
-            if value:
-                ips.add(str(value))
-        elif isinstance(evidence, str):
-            ips.update(_IPV4_PATTERN.findall(evidence))
+        if evidence:
+            ips.update(_IPV4_PATTERN.findall(str(evidence)))
     return sorted(ips)
 
 
@@ -62,6 +59,7 @@ def _generate_and_save_report(
     connection: duckdb.DuckDBPyConnection,
     table_name: str,
     indicators: list[SuspiciousIndicator],
+    *,
     enrich_intel: bool,
 ) -> None:
     """Synthesize an incident report from ``indicators`` and persist it."""
@@ -88,7 +86,7 @@ def _generate_and_save_report(
     try:
         synthesizer = LLMSynthesizer(provider)
         report = synthesizer.synthesize(indicators, threat_intel=threat_intel)
-    except Exception:
+    except (ValueError, requests.exceptions.RequestException):
         logger.exception("LLM synthesis failed for table %s", table_name)
         st.error("LLM synthesis failed. The response was incomplete.")
         return
@@ -104,9 +102,8 @@ def render_intelligence_tab(connection: duckdb.DuckDBPyConnection, table_name: s
     together with their MITRE ATT&CK mappings. When indicators are present, a
     form lets the user synthesize and persist a new incident report.
     """
-    render_analysis_results(connection, table_name)
-
     indicators = compute_indicators(connection, table_name)
+    render_analysis_results(connection, table_name, indicators=indicators)
 
     st.divider()
     st.subheader("LLM Report")
@@ -127,10 +124,10 @@ def render_intelligence_tab(connection: duckdb.DuckDBPyConnection, table_name: s
             )
 
     if generate_clicked:
-        _generate_and_save_report(connection, table_name, indicators, enrich_intel)
+        _generate_and_save_report(connection, table_name, indicators, enrich_intel=enrich_intel)
 
     try:
-        reports = ReportStore().get_all_reports(connection)
+        reports = ReportStore().get_all_reports(connection, source_table=table_name)
     except duckdb.Error:
         logger.exception("Failed to load saved reports for intelligence tab")
         st.error("Failed to load saved reports.")

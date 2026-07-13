@@ -58,17 +58,24 @@ def compute_indicators(
     return indicators
 
 
-def render_analysis_results(connection: duckdb.DuckDBPyConnection, table_name: str) -> None:
+def render_analysis_results(
+    connection: duckdb.DuckDBPyConnection,
+    table_name: str,
+    indicators: list[SuspiciousIndicator] | None = None,
+) -> None:
     """Render suspicious indicators for ``table_name`` as a Streamlit table.
 
     Catches query errors and tables without analyzable fields, showing an
     informational fallback instead. No LLM or AbuseIPDB calls are made.
+    When ``indicators`` are pre-computed they are used directly, avoiding a
+    duplicate run of the analysis engine.
     """
     if not has_analyzable_columns(connection, table_name):
         st.info("No analyzable fields in this table")
         return
 
-    indicators = compute_indicators(connection, table_name)
+    if indicators is None:
+        indicators = compute_indicators(connection, table_name)
 
     if not indicators:
         st.info("No suspicious indicators found in this table.")

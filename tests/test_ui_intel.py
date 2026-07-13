@@ -8,6 +8,7 @@ from unittest.mock import Mock, patch
 
 import duckdb
 from streamlit.testing.v1 import AppTest
+from streamlit.testing.v1.element_tree import Button
 
 from ovs_logs.core.persistence import ReportStore
 
@@ -29,7 +30,7 @@ REQUIRED_REPORT_FIELDS = {
 }
 
 
-def _generate_button(at: AppTest):
+def _generate_button(at: AppTest) -> Button:
     """Return the 'Generate Report' form submit button from the rendered app."""
     for button in at.button:
         if button.label == "Generate Report":
@@ -129,6 +130,37 @@ def test_generate_report_success(tmp_path: Path, monkeypatch) -> None:
     assert not at.exception
     assert any("Report saved" in s.value for s in at.success)
     assert any("Saved Reports" in h.value for h in at.subheader)
+
+
+def test_intel_saved_reports_scoped_to_table(tmp_path: Path) -> None:
+    """Saved reports should be scoped to the selected table."""
+    db = make_db(
+        tmp_path,
+        [
+            (
+                "events_like",
+                "SELECT '1.2.3.4' AS source_ip, 404 AS status_code, 'GET' AS event_type, "
+                "TIMESTAMP '2024-01-01 00:00:00' AS event_timestamp, 'msg' AS raw_message",
+            ),
+            (
+                "other_table",
+                "SELECT '5.6.7.8' AS source_ip, 200 AS status_code, 'POST' AS event_type, "
+                "TIMESTAMP '2024-01-02 00:00:00' AS event_timestamp, 'msg' AS raw_message",
+            ),
+        ],
+    )
+    # Seed a report for events_like and one for other_table
+    with duckdb.connect(str(db)) as conn:
+        ReportStore().save_report(conn, sample_report(), source_table="events_like")
+        ReportStore().save_report(conn, sample_report(), source_table="other_table")
+
+    at = AppTest.from_file(str(APP_PATH)).run()
+    at.sidebar.text_input[2].set_value(str(db)).run()
+    at.sidebar.selectbox[0].set_value("events_like").run()
+
+    assert not at.exception
+    # Should show the scoped reports section
+    assert any("Saved Reports" in subheader.value for subheader in at.subheader)
 
 
 def test_generate_report_abuseipdb_enrichment_failure(tmp_path: Path, monkeypatch) -> None:
