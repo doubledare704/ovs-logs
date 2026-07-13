@@ -8,6 +8,7 @@ import duckdb
 import pytest
 from streamlit.testing.v1 import AppTest
 
+from ovs_logs.config.settings import settings
 from ovs_logs.core.ingestion import adapters as adapters_mod
 from ovs_logs.core.persistence import ReportStore
 
@@ -22,14 +23,14 @@ def test_app_renders_without_errors(monkeypatch: pytest.MonkeyPatch) -> None:
 
     at = AppTest.from_file(str(APP_PATH)).run()
     assert not at.exception
-    # 2 password inputs (AbuseIPDB + LLM) + db path + 2 optional LLM config inputs = 5 in sidebar
+    # 2 password inputs (AbuseIPDB + LLM) + 3 text inputs (LLM endpoint + LLM model + db path) = 5
     expected_sidebar_inputs = 5
     assert len(at.sidebar.text_input) == expected_sidebar_inputs
     assert at.sidebar.text_input[0].label == "AbuseIPDB API Key"
     assert at.sidebar.text_input[1].label == "LLM API Key"
-    assert at.sidebar.text_input[2].label == "Database path"
-    assert at.sidebar.text_input[3].label == "LLM Endpoint (optional)"
-    assert at.sidebar.text_input[4].label == "LLM Model (optional)"
+    assert at.sidebar.text_input[2].label == "LLM endpoint"
+    assert at.sidebar.text_input[3].label == "LLM model"
+    assert at.sidebar.text_input[4].label == "Database path"
 
 
 def test_api_keys_default_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -330,3 +331,32 @@ def test_internal_report_table_excluded_from_navigator(tmp_path: Path) -> None:
 
     assert "events_2026" in at.sidebar.selectbox[0].options
     assert ReportStore.TABLE_NAME not in at.sidebar.selectbox[0].options
+
+
+def test_sidebar_llm_widgets_persist_to_session_state(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("ABUSEIPDB_API_KEY", raising=False)
+    monkeypatch.delenv("LLM_API_KEY", raising=False)
+
+    at = AppTest.from_file(str(APP_PATH)).run()
+    assert at.session_state["LLM_PRESET"] == "OpenAI"
+    assert at.session_state["LLM_ENDPOINT"] == settings.llm.api_url
+    assert at.session_state["LLM_MODEL"] == "gpt-4o-mini"
+
+
+def test_sidebar_llm_preset_clears_dependent_fields(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("ABUSEIPDB_API_KEY", raising=False)
+    monkeypatch.delenv("LLM_API_KEY", raising=False)
+
+    at = AppTest.from_file(str(APP_PATH)).run()
+
+    # Switch preset to Ollama-local
+    at.sidebar.selectbox[0].set_value("Ollama-local").run()
+    assert at.session_state["LLM_PRESET"] == "Ollama-local"
+    assert at.session_state["LLM_ENDPOINT"] == "http://localhost:11434/v1/chat/completions"
+    assert at.session_state["LLM_MODEL"] == "llama3"
+
+    # Switch preset to Custom — endpoint/model should be empty
+    at.sidebar.selectbox[0].set_value("Custom").run()
+    assert at.session_state["LLM_PRESET"] == "Custom"
+    assert at.session_state["LLM_ENDPOINT"] == ""
+    assert at.session_state["LLM_MODEL"] == ""

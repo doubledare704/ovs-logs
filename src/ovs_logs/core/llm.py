@@ -58,6 +58,21 @@ class OpenAICompatibleProvider(LLMProvider):
         return response.json()["choices"][0]["message"]["content"]
 
 
+def create_llm_provider(
+    api_key: str,
+    endpoint: str | None = None,
+    model: str | None = None,
+    timeout: int | None = None,
+) -> LLMProvider:
+    """Create an LLM provider from explicit parameters.
+
+    Raises ``ValueError`` if *api_key* is empty.
+    """
+    if not api_key:
+        raise ValueError("LLM API key is required")
+    return OpenAICompatibleProvider(api_key=api_key, endpoint=endpoint, model=model, timeout=timeout)
+
+
 class PromptBuilder:
     """Builds a prompt that asks the LLM for a structured incident report."""
 

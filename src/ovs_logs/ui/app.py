@@ -48,6 +48,12 @@ _SYSTEM_SCHEMAS: tuple[str, ...] = (
 
 _ALLOWED_UPLOAD_TYPES: tuple[str, ...] = tuple(sorted(SUPPORTED_FORMATS))
 
+
+def _on_llm_preset_change() -> None:
+    st.session_state.pop("llm_endpoint", None)
+    st.session_state.pop("llm_model", None)
+
+
 _KB = 1024
 _MB = 1024 * 1024
 _LARGE_FILE_BYTES = 100 * _MB
@@ -420,6 +426,33 @@ def render_sidebar() -> None:
         help="Used by the LLM provider to synthesize incident context.",
     )
     st.session_state["LLM_API_KEY"] = llm_key
+
+    st.sidebar.subheader("LLM Configuration")
+
+    preset = st.sidebar.selectbox(
+        "Provider preset",
+        options=list(settings.LLM_PRESETS.keys()),
+        index=list(settings.LLM_PRESETS.keys()).index("OpenAI"),
+        key="llm_preset",
+        on_change=_on_llm_preset_change,
+    )
+    preset_cfg = settings.LLM_PRESETS[preset]
+    endpoint_default = settings.llm.api_url if preset_cfg.endpoint == "__default__" else preset_cfg.endpoint
+    llm_endpoint = st.sidebar.text_input(
+        "LLM endpoint",
+        value=st.session_state.get("llm_endpoint", endpoint_default),
+        key="llm_endpoint",
+    )
+    model_default = preset_cfg.model or ""
+    llm_model = st.sidebar.text_input(
+        "LLM model",
+        value=st.session_state.get("llm_model", model_default),
+        key="llm_model",
+    )
+
+    st.session_state["LLM_PRESET"] = preset
+    st.session_state["LLM_ENDPOINT"] = llm_endpoint
+    st.session_state["LLM_MODEL"] = llm_model
 
     st.sidebar.subheader("Database")
 

@@ -89,6 +89,27 @@ def _load_database_settings() -> DatabaseSettings:
 
 
 @dataclass(frozen=True)
+class LLMPreset:
+    """A named preset for LLM provider endpoint and model."""
+
+    name: str
+    endpoint: str
+    model: str
+
+
+LLM_PRESETS: dict[str, LLMPreset] = {
+    "OpenAI": LLMPreset(name="OpenAI", endpoint="__default__", model="gpt-4o-mini"),
+    "Ollama-local": LLMPreset(
+        name="Ollama-local",
+        endpoint="http://localhost:11434/v1/chat/completions",
+        model="llama3",
+    ),
+    "Azure": LLMPreset(name="Azure", endpoint="", model=""),
+    "Custom": LLMPreset(name="Custom", endpoint="", model=""),
+}
+
+
+@dataclass(frozen=True)
 class TextParseConfig:
     """Runtime tuneables for text-log structured extraction."""
 
