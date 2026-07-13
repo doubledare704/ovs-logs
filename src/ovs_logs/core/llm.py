@@ -58,6 +58,11 @@ class OpenAICompatibleProvider(LLMProvider):
         return response.json()["choices"][0]["message"]["content"]
 
 
+_ERR_API_KEY_REQUIRED = "LLM API key is required"
+_ERR_ENDPOINT_REQUIRED = "LLM endpoint is required"
+_ERR_MODEL_REQUIRED = "LLM model is required"
+
+
 def create_llm_provider(
     api_key: str,
     endpoint: str | None = None,
@@ -66,10 +71,17 @@ def create_llm_provider(
 ) -> LLMProvider:
     """Create an LLM provider from explicit parameters.
 
-    Raises ``ValueError`` if *api_key* is empty.
+    Raises ``ValueError`` if *api_key*, *endpoint*, or *model* are
+    explicitly set to an empty string.  ``None`` values are passed through
+    to :class:`OpenAICompatibleProvider`, which falls back to
+    ``settings.llm`` defaults.
     """
     if not api_key:
-        raise ValueError("LLM API key is required")
+        raise ValueError(_ERR_API_KEY_REQUIRED)
+    if endpoint == "":
+        raise ValueError(_ERR_ENDPOINT_REQUIRED)
+    if model == "":
+        raise ValueError(_ERR_MODEL_REQUIRED)
     return OpenAICompatibleProvider(api_key=api_key, endpoint=endpoint, model=model, timeout=timeout)
 
 

@@ -7,17 +7,12 @@ from typing import Any
 import pytest
 
 from ovs_logs.config.settings import settings
-from ovs_logs.core.llm import LLMProvider, OpenAICompatibleProvider
+from ovs_logs.core.llm import OpenAICompatibleProvider
 from ovs_logs.core.threat_intel import ThreatIntelClient
 from ovs_logs.ui.llm_wiring import (
     build_llm_provider,
     build_threat_intel_client,
 )
-
-
-class _StubProvider(LLMProvider):
-    def generate(self, prompt: str) -> str:
-        return ""
 
 
 def test_build_llm_provider_with_preset_endpoint() -> None:
@@ -64,6 +59,30 @@ def test_build_llm_provider_raises_on_empty_key() -> None:
         "LLM_MODEL": "",
     }
     with pytest.raises(ValueError, match="LLM API key is required"):
+        build_llm_provider(state)
+
+
+def test_build_llm_provider_raises_on_empty_endpoint() -> None:
+    """Azure preset has empty endpoint; no user override → ValueError."""
+    state: dict[str, Any] = {
+        "LLM_API_KEY": "test-key",
+        "LLM_PRESET": "Azure",
+        "LLM_ENDPOINT": "",
+        "LLM_MODEL": "",
+    }
+    with pytest.raises(ValueError, match="LLM endpoint is required"):
+        build_llm_provider(state)
+
+
+def test_build_llm_provider_raises_on_empty_model() -> None:
+    """Azure preset has empty model; no user override → ValueError."""
+    state: dict[str, Any] = {
+        "LLM_API_KEY": "test-key",
+        "LLM_PRESET": "Azure",
+        "LLM_ENDPOINT": "https://azure.example.com",
+        "LLM_MODEL": "",
+    }
+    with pytest.raises(ValueError, match="LLM model is required"):
         build_llm_provider(state)
 
 

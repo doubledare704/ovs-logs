@@ -21,7 +21,7 @@ import streamlit as st
 if TYPE_CHECKING:
     from streamlit.runtime.uploaded_file_manager import UploadedFile
 
-from ovs_logs.config.settings import settings
+from ovs_logs.config.settings import DEFAULT_ENDPOINT_SENTINEL, LLM_PRESETS, settings
 from ovs_logs.core.database import Database
 from ovs_logs.core.ingestion.adapters import iter_evtx_record_summaries
 from ovs_logs.core.normalization import NormalizationEngine
@@ -50,6 +50,11 @@ _ALLOWED_UPLOAD_TYPES: tuple[str, ...] = tuple(sorted(SUPPORTED_FORMATS))
 
 
 def _on_llm_preset_change() -> None:
+    """Clear user-entered endpoint/model when the preset changes.
+
+    The sidebar text inputs for LLM endpoint and model will re-read their
+    default values from ``LLM_PRESETS`` on the next rerun.
+    """
     st.session_state.pop("llm_endpoint", None)
     st.session_state.pop("llm_model", None)
 
@@ -431,13 +436,13 @@ def render_sidebar() -> None:
 
     preset = st.sidebar.selectbox(
         "Provider preset",
-        options=list(settings.LLM_PRESETS.keys()),
-        index=list(settings.LLM_PRESETS.keys()).index("OpenAI"),
+        options=list(LLM_PRESETS.keys()),
+        index=list(LLM_PRESETS.keys()).index("OpenAI"),
         key="llm_preset",
         on_change=_on_llm_preset_change,
     )
-    preset_cfg = settings.LLM_PRESETS[preset]
-    endpoint_default = settings.llm.api_url if preset_cfg.endpoint == "__default__" else preset_cfg.endpoint
+    preset_cfg = LLM_PRESETS[preset]
+    endpoint_default = settings.llm.api_url if preset_cfg.endpoint == DEFAULT_ENDPOINT_SENTINEL else preset_cfg.endpoint
     llm_endpoint = st.sidebar.text_input(
         "LLM endpoint",
         value=st.session_state.get("llm_endpoint", endpoint_default),
