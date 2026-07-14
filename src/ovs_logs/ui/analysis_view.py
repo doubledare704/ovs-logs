@@ -70,11 +70,10 @@ def render_analysis_results(
     When ``indicators`` are pre-computed they are used directly, avoiding a
     duplicate run of the analysis engine.
     """
-    if not has_analyzable_columns(connection, table_name):
-        st.info("No analyzable fields in this table")
-        return
-
     if indicators is None:
+        if not has_analyzable_columns(connection, table_name):
+            st.info("No analyzable fields in this table")
+            return
         indicators = compute_indicators(connection, table_name)
 
     if not indicators:

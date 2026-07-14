@@ -79,8 +79,8 @@ def _generate_and_save_report(
 
     provider = OpenAICompatibleProvider(
         api_key=st.session_state["LLM_API_KEY"],
-        endpoint=st.session_state.get("LLM_ENDPOINT"),
-        model=st.session_state.get("LLM_MODEL"),
+        endpoint=st.session_state.get("LLM_ENDPOINT") or None,
+        model=st.session_state.get("LLM_MODEL") or None,
     )
 
     try:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import json
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -149,10 +150,12 @@ def test_intel_saved_reports_scoped_to_table(tmp_path: Path) -> None:
             ),
         ],
     )
-    # Seed a report for events_like and one for other_table
+    # Seed distinguishable reports for events_like and other_table so scoping is observable
+    events_report = dataclasses.replace(sample_report(), title="EVENTS_LIKE_REPORT")
+    other_report = dataclasses.replace(sample_report(), title="OTHER_TABLE_REPORT")
     with duckdb.connect(str(db)) as conn:
-        ReportStore().save_report(conn, sample_report(), source_table="events_like")
-        ReportStore().save_report(conn, sample_report(), source_table="other_table")
+        ReportStore().save_report(conn, events_report, source_table="events_like")
+        ReportStore().save_report(conn, other_report, source_table="other_table")
 
     at = AppTest.from_file(str(APP_PATH)).run()
     at.sidebar.text_input[2].set_value(str(db)).run()
@@ -161,6 +164,10 @@ def test_intel_saved_reports_scoped_to_table(tmp_path: Path) -> None:
     assert not at.exception
     # Should show the scoped reports section
     assert any("Saved Reports" in subheader.value for subheader in at.subheader)
+    # Only the selected table's report should be visible
+    labels = [e.label for e in at.expander]
+    assert any("EVENTS_LIKE_REPORT" in label for label in labels)
+    assert not any("OTHER_TABLE_REPORT" in label for label in labels)
 
 
 def test_generate_report_abuseipdb_enrichment_failure(tmp_path: Path, monkeypatch) -> None:
