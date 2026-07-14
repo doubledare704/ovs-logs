@@ -36,6 +36,7 @@ def test_build_llm_provider_openai_preset_uses_settings_url() -> None:
         "LLM_MODEL": "",
     }
     provider = build_llm_provider(state)
+    assert isinstance(provider, OpenAICompatibleProvider)
     assert provider.endpoint == settings.llm.api_url
 
 
@@ -47,6 +48,7 @@ def test_build_llm_provider_custom_preset_uses_session_state() -> None:
         "LLM_MODEL": "my-custom-model",
     }
     provider = build_llm_provider(state)
+    assert isinstance(provider, OpenAICompatibleProvider)
     assert provider.endpoint == "https://custom.example.com/v1/chat/completions"
     assert provider.model == "my-custom-model"
 
@@ -84,6 +86,35 @@ def test_build_llm_provider_raises_on_empty_model() -> None:
     }
     with pytest.raises(ValueError, match="LLM model is required"):
         build_llm_provider(state)
+
+
+def test_build_llm_provider_openai_preset_user_override_wins() -> None:
+    """User-entered endpoint/model must take precedence over the OpenAI preset."""
+    state: dict[str, Any] = {
+        "LLM_API_KEY": "test-key",
+        "LLM_PRESET": "OpenAI",
+        "LLM_ENDPOINT": "https://my-proxy.example.com/v1/chat/completions",
+        "LLM_MODEL": "gpt-4o",
+    }
+    provider = build_llm_provider(state)
+    assert isinstance(provider, OpenAICompatibleProvider)
+    assert provider.endpoint == "https://my-proxy.example.com/v1/chat/completions"
+    assert provider.endpoint != settings.llm.api_url
+    assert provider.model == "gpt-4o"
+
+
+def test_build_llm_provider_ollama_preset_user_override_wins() -> None:
+    """User-entered endpoint/model must take precedence over the Ollama-local preset."""
+    state: dict[str, Any] = {
+        "LLM_API_KEY": "test-key",
+        "LLM_PRESET": "Ollama-local",
+        "LLM_ENDPOINT": "https://my-proxy.example.com/v1/chat/completions",
+        "LLM_MODEL": "custom-llama",
+    }
+    provider = build_llm_provider(state)
+    assert isinstance(provider, OpenAICompatibleProvider)
+    assert provider.endpoint == "https://my-proxy.example.com/v1/chat/completions"
+    assert provider.model == "custom-llama"
 
 
 def test_build_threat_intel_client_returns_none_on_empty_key() -> None:

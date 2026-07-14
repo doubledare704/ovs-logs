@@ -434,10 +434,11 @@ def render_sidebar() -> None:
 
     st.sidebar.subheader("LLM Configuration")
 
+    preset_names = list(LLM_PRESETS.keys())
     preset = st.sidebar.selectbox(
         "Provider preset",
-        options=list(LLM_PRESETS.keys()),
-        index=list(LLM_PRESETS.keys()).index("OpenAI"),
+        options=preset_names,
+        index=preset_names.index("OpenAI"),
         key="llm_preset",
         on_change=_on_llm_preset_change,
     )

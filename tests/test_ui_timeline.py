@@ -6,7 +6,7 @@ from pathlib import Path
 
 from streamlit.testing.v1 import AppTest
 
-from .conftest import make_db
+from .conftest import make_db, selectbox_by_label, text_input_by_label
 
 APP_PATH = Path(__file__).resolve().parents[1] / "src" / "ovs_logs" / "ui" / "app.py"
 
@@ -29,8 +29,8 @@ def test_timeline_analyzable_table_renders_metrics_and_table(tmp_path: Path) -> 
         ],
     )
     at = AppTest.from_file(str(APP_PATH)).run()
-    at.sidebar.text_input[2].set_value(str(db)).run()
-    at.sidebar.selectbox[0].set_value("events_like").run()
+    text_input_by_label(at, "Database path").set_value(str(db)).run()
+    selectbox_by_label(at, "Select a table").set_value("events_like").run()
 
     assert not at.exception
     assert len(at.metric) == 4
@@ -42,8 +42,8 @@ def test_timeline_analyzable_table_renders_metrics_and_table(tmp_path: Path) -> 
 def test_timeline_non_analyzable_table_shows_info(tmp_path: Path) -> None:
     db = make_db(tmp_path, [("reports", "SELECT 'hello' AS note")])
     at = AppTest.from_file(str(APP_PATH)).run()
-    at.sidebar.text_input[2].set_value(str(db)).run()
-    at.sidebar.selectbox[0].set_value("reports").run()
+    text_input_by_label(at, "Database path").set_value(str(db)).run()
+    selectbox_by_label(at, "Select a table").set_value("reports").run()
 
     assert not at.exception
     assert any("No analyzable fields" in info.value for info in at.info)
@@ -62,8 +62,8 @@ def test_timeline_empty_analyzable_table_shows_info(tmp_path: Path) -> None:
         ],
     )
     at = AppTest.from_file(str(APP_PATH)).run()
-    at.sidebar.text_input[2].set_value(str(db)).run()
-    at.sidebar.selectbox[0].set_value("empty_events").run()
+    text_input_by_label(at, "Database path").set_value(str(db)).run()
+    selectbox_by_label(at, "Select a table").set_value("empty_events").run()
 
     assert not at.exception
     assert any("No events found" in info.value for info in at.info)
@@ -81,8 +81,8 @@ def test_timeline_malformed_status_code_renders_without_error(tmp_path: Path) ->
         ],
     )
     at = AppTest.from_file(str(APP_PATH)).run()
-    at.sidebar.text_input[2].set_value(str(db)).run()
-    at.sidebar.selectbox[0].set_value("bad_status").run()
+    text_input_by_label(at, "Database path").set_value(str(db)).run()
+    selectbox_by_label(at, "Select a table").set_value("bad_status").run()
 
     assert not at.exception
     assert len(at.metric) == 4

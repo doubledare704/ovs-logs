@@ -11,6 +11,8 @@ from pathlib import Path
 
 import duckdb
 import pytest
+from streamlit.testing.v1 import AppTest
+from streamlit.testing.v1.element_tree import Selectbox, TextInput
 
 from ovs_logs.core.analysis.indicators import SuspiciousIndicator
 from ovs_logs.core.database import Database
@@ -45,6 +47,25 @@ def make_db(tmp_path: Path, table_sql: list[tuple[str, str]]) -> Path:
         for name, ddl in table_sql:
             conn.execute(f'CREATE TABLE "{name}" AS {ddl}')
     return db
+
+
+def selectbox_by_label(at: AppTest, label: str) -> Selectbox:
+    """Return the sidebar selectbox whose label matches ``label``.
+
+    The sidebar renders multiple selectboxes (e.g. the LLM provider preset and
+    the table navigator). Resolving by label keeps tests robust to sidebar
+    ordering changes instead of relying on a hard-coded index.
+    """
+    return next(select for select in at.sidebar.selectbox if select.label == label)
+
+
+def text_input_by_label(at: AppTest, label: str) -> TextInput:
+    """Return the sidebar text input whose label matches ``label``.
+
+    Resolving by label keeps tests robust to sidebar ordering changes instead
+    of relying on a hard-coded index.
+    """
+    return next(field for field in at.sidebar.text_input if field.label == label)
 
 
 def make_temp_file(tmp_path: Path, name: str, content: str) -> Path:
