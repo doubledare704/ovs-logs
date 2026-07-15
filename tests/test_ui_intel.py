@@ -103,8 +103,8 @@ def test_generate_report_missing_llm_key(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.delenv("LLM_API_KEY", raising=False)
     monkeypatch.delenv("ABUSEIPDB_API_KEY", raising=False)
     at.run()
-    at.sidebar.text_input[2].set_value(str(db)).run()
-    at.sidebar.selectbox[0].set_value("events_like").run()
+    text_input_by_label(at, "Database path").set_value(str(db)).run()
+    selectbox_by_label(at, "Select a table").set_value("events_like").run()
 
     # Button is disabled when no key
     assert _generate_button(at).disabled is True
@@ -115,8 +115,8 @@ def test_generate_report_success(tmp_path: Path, monkeypatch) -> None:
     at = AppTest.from_file(str(APP_PATH))
     monkeypatch.setenv("LLM_API_KEY", "sk-test")
     at.run()
-    at.sidebar.text_input[2].set_value(str(db)).run()
-    at.sidebar.selectbox[0].set_value("events_like").run()
+    text_input_by_label(at, "Database path").set_value(str(db)).run()
+    selectbox_by_label(at, "Select a table").set_value("events_like").run()
 
     # Toggle off AbuseIPDB
     at.toggle[0].set_value(False).run()
@@ -158,8 +158,8 @@ def test_intel_saved_reports_scoped_to_table(tmp_path: Path) -> None:
         ReportStore().save_report(conn, other_report, source_table="other_table")
 
     at = AppTest.from_file(str(APP_PATH)).run()
-    at.sidebar.text_input[2].set_value(str(db)).run()
-    at.sidebar.selectbox[0].set_value("events_like").run()
+    text_input_by_label(at, "Database path").set_value(str(db)).run()
+    selectbox_by_label(at, "Select a table").set_value("events_like").run()
 
     assert not at.exception
     # Should show the scoped reports section
@@ -176,8 +176,8 @@ def test_generate_report_abuseipdb_enrichment_failure(tmp_path: Path, monkeypatc
     monkeypatch.setenv("LLM_API_KEY", "sk-test")
     monkeypatch.setenv("ABUSEIPDB_API_KEY", "bad-key")
     at.run()
-    at.sidebar.text_input[2].set_value(str(db)).run()
-    at.sidebar.selectbox[0].set_value("events_like").run()
+    text_input_by_label(at, "Database path").set_value(str(db)).run()
+    selectbox_by_label(at, "Select a table").set_value("events_like").run()
 
     at.toggle[0].set_value(True).run()
 
