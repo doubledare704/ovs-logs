@@ -24,6 +24,7 @@ class ReportStore:
     TABLE_NAME = "_ovs_incident_reports"
 
     def _migrate_legacy_table(self, connection: duckdb.DuckDBPyConnection) -> None:
+        """Rename the legacy ``incident_reports`` table if it exists and the new one does not."""
         try:
             existing = {
                 row[0]
@@ -39,29 +40,53 @@ class ReportStore:
             )
 
     def _ensure_table(self, connection: duckdb.DuckDBPyConnection) -> None:
+        """Create the reports table if it does not exist and run migrations."""
         self._migrate_legacy_table(connection)
         connection.execute(
             f"""
             CREATE TABLE IF NOT EXISTS {quote_identifier(self.TABLE_NAME)} (
                 report_id VARCHAR PRIMARY KEY,
                 created_at TIMESTAMP,
-                report_json VARCHAR
+                report_json VARCHAR,
+                source_table VARCHAR
             )
             """
         )
+        self._add_source_table_column(connection)
 
-    def save_report(self, connection: duckdb.DuckDBPyConnection, report: IncidentReport) -> str:
+    def _add_source_table_column(self, connection: duckdb.DuckDBPyConnection) -> None:
+        """Ensure the ``source_table`` column exists on already-created tables."""
+        try:
+            existing = {
+                row[0]
+                for row in connection.execute(
+                    "SELECT column_name FROM information_schema.columns WHERE table_schema = 'main' AND table_name = ?",
+                    [self.TABLE_NAME],
+                ).fetchall()
+            }
+        except duckdb.Error:
+            return
+        if "source_table" not in existing:
+            connection.execute(f"ALTER TABLE {quote_identifier(self.TABLE_NAME)} ADD COLUMN source_table VARCHAR")
+
+    def save_report(
+        self,
+        connection: duckdb.DuckDBPyConnection,
+        report: IncidentReport,
+        source_table: str | None = None,
+    ) -> str:
         """Serialize a report and return its generated report_id."""
         self._ensure_table(connection)
         report_id = str(uuid.uuid4())
         created_at = datetime.now(UTC).replace(tzinfo=None).isoformat()
         payload = json.dumps(report.to_dict(), ensure_ascii=False, default=str)
+        quoted_table = quote_identifier(self.TABLE_NAME)
         connection.execute(
             f"""
-            INSERT INTO {quote_identifier(self.TABLE_NAME)} (report_id, created_at, report_json)
-            VALUES (?, ?, ?)
-            """,
-            [report_id, created_at, payload],
+            INSERT INTO {quoted_table} (report_id, created_at, report_json, source_table)
+            VALUES (?, ?, ?, ?)
+            """,  # TABLE_NAME is constant, sanitized via quote_identifier
+            [report_id, created_at, payload, source_table],
         )
         return report_id
 
@@ -76,17 +101,32 @@ class ReportStore:
             raise ValueError(f"Report not found: {report_id}")
         return IncidentReport.from_dict(json.loads(row[0]))
 
-    def get_all_reports(self, connection: duckdb.DuckDBPyConnection) -> list[dict[str, Any]]:
-        """Return all stored reports ordered by created_at descending.
+    def get_all_reports(
+        self,
+        connection: duckdb.DuckDBPyConnection,
+        source_table: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Return stored reports ordered by created_at descending.
 
-        Corrupted rows are skipped with a warning log so a single bad record
-        does not crash the UI.
+        When ``source_table`` is provided, only reports scoped to that table are
+        returned, plus legacy reports with no ``source_table`` so pre-migration
+        records remain visible everywhere. Corrupted rows are skipped with a
+        warning log so a single bad record does not crash the UI.
         """
         self._ensure_table(connection)
-        rows = connection.execute(
-            f"SELECT report_id, created_at, report_json "
-            f"FROM {quote_identifier(self.TABLE_NAME)} ORDER BY created_at DESC"
-        ).fetchall()
+        if source_table is None:
+            rows = connection.execute(
+                f"SELECT report_id, created_at, report_json "  # TABLE_NAME is constant
+                f"FROM {quote_identifier(self.TABLE_NAME)} ORDER BY created_at DESC"
+            ).fetchall()
+        else:
+            rows = connection.execute(
+                f"SELECT report_id, created_at, report_json "  # TABLE_NAME is constant
+                f"FROM {quote_identifier(self.TABLE_NAME)} "
+                f"WHERE source_table = ? OR source_table IS NULL "
+                f"ORDER BY created_at DESC",
+                [source_table],
+            ).fetchall()
         results: list[dict[str, Any]] = []
         for row in rows:
             report_id, created_at, payload = row
