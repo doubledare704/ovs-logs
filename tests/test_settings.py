@@ -25,6 +25,11 @@ def test_singleton_has_expected_defaults() -> None:
     assert settings.threat_lists.cache_dir == ".ovs_logs/threat_lists"
     assert settings.threat_lists.max_age_hours == 24
     assert settings.threat_lists.timeout == 10
+    assert settings.threat_lists.base_url == "https://iplists.firehol.org/files"
+    assert settings.threat_lists.default_lists == ("firehol_level1", "firehol_abusers_30d")
+    assert settings.threat_lists.cache_dir == ".ovs_logs/threat_lists"
+    assert settings.threat_lists.max_age_hours == 24
+    assert settings.threat_lists.timeout == 10
 
 
 ENV_ABUSEIPDB_TIMEOUT = 20
