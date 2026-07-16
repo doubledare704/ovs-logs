@@ -1,5 +1,6 @@
 """Tests for the dataclass-based settings module."""
 
+import tempfile
 from unittest.mock import patch
 
 from ovs_logs.config.settings import (
@@ -36,7 +37,7 @@ ENV_THRESHOLD_ERROR_SPIKES = 75
 ENV_THRESHOLD_EVENT_DISTRIBUTION = 200
 ENV_THRESHOLD_TEMPORAL_ANOMALY = 150
 ENV_TEXT_PARSE_MAX_LINES_PER_FILE = 500
-ENV_THREATLIST_CACHE_DIR = "/tmp/ovs_logs_threats"
+ENV_THREATLIST_CACHE_DIR = tempfile.mkdtemp(prefix="ovs_logs_threats_")
 ENV_THREATLIST_MAX_AGE_HOURS = 48
 ENV_THREATLIST_TIMEOUT = 30
 

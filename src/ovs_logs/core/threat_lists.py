@@ -28,6 +28,9 @@ logger = logging.getLogger(__name__)
 class ThreatListError(Exception):
     """Raised when a threat-list operation fails irrecoverably."""
 
+    _NETWORK_FAILED = "Failed to download {name}: {exc}"
+    _HTTP_FAILED = "Failed to download {name}: HTTP {status_code}"
+
 
 _HTTP_OK = 200
 _HTTP_NOT_MODIFIED = 304
@@ -134,7 +137,7 @@ def download_list(
         if ns_path.is_file():
             logger.warning("Network error downloading %s, keeping cached copy: %s", name, exc)
             return "cached"
-        raise ThreatListError(f"Failed to download {name}: {exc}") from exc
+        raise ThreatListError(ThreatListError._NETWORK_FAILED.format(name=name, exc=exc)) from exc
 
     if response.status_code == _HTTP_NOT_MODIFIED:
         # Unchanged — refresh the fetched_at timestamp
@@ -151,7 +154,7 @@ def download_list(
         if ns_path.is_file():
             logger.warning("HTTP %d for %s, keeping cached copy", response.status_code, name)
             return "cached"
-        raise ThreatListError(f"Failed to download {name}: HTTP {response.status_code}")
+        raise ThreatListError(ThreatListError._HTTP_FAILED.format(name=name, status_code=response.status_code))
 
     # Success — write netset + sidecar
     ns_path = netset_path(name, cache_dir)

@@ -254,7 +254,7 @@ def test_update_lists_mixed_results(tmp_path: Path) -> None:
 
     session = create_autospec(requests.Session, instance=True)
 
-    def _get(url: str, **kwargs: object) -> Mock:
+    def _get(url: str, **_kwargs: object) -> Mock:
         if "firehol_level1" in url:
             return Mock(status_code=200, headers={}, content=b"1.2.3.0/24\n")
         if "firehol_abusers_30d" in url:
