@@ -102,3 +102,91 @@ def test_migration_renames_legacy_table(db: duckdb.DuckDBPyConnection) -> None:
     }
     assert ReportStore.TABLE_NAME in tables
     assert "incident_reports" not in tables
+
+
+def test_save_report_stores_source_table(db: duckdb.DuckDBPyConnection) -> None:
+    store = ReportStore()
+    report_id = store.save_report(db, sample_report(), source_table="events")
+    row = db.execute(
+        f"SELECT source_table FROM {quote_identifier(store.TABLE_NAME)} WHERE report_id = ?",
+        [report_id],
+    ).fetchone()
+    assert row is not None
+    assert row[0] == "events"
+
+
+def test_get_all_reports_filters_by_source_table(db: duckdb.DuckDBPyConnection) -> None:
+    store = ReportStore()
+    store._ensure_table(db)
+    payload = json.dumps(sample_report().to_dict(), ensure_ascii=False, default=str)
+    db.execute(
+        f"INSERT INTO {quote_identifier(store.TABLE_NAME)} "
+        "(report_id, created_at, report_json, source_table) VALUES (?, ?, ?, ?), (?, ?, ?, ?)",
+        ["r_a", "2024-01-01 00:00:00", payload, "A", "r_b", "2024-06-01 00:00:00", payload, "B"],
+    )
+
+    results_a = store.get_all_reports(db, source_table="A")
+    results_b = store.get_all_reports(db, source_table="B")
+
+    assert [r["report_id"] for r in results_a] == ["r_a"]
+    assert [r["report_id"] for r in results_b] == ["r_b"]
+
+
+def test_get_all_reports_null_fallback(db: duckdb.DuckDBPyConnection) -> None:
+    store = ReportStore()
+    store._ensure_table(db)
+    payload = json.dumps(sample_report().to_dict(), ensure_ascii=False, default=str)
+    db.execute(
+        f"INSERT INTO {quote_identifier(store.TABLE_NAME)} "
+        "(report_id, created_at, report_json, source_table) VALUES (?, ?, ?, ?)",
+        ["r_legacy", "2024-01-01 00:00:00", payload, None],
+    )
+
+    results = store.get_all_reports(db, source_table="anything")
+
+    assert [r["report_id"] for r in results] == ["r_legacy"]
+
+
+def test_migrate_adds_source_table_column(db: duckdb.DuckDBPyConnection) -> None:
+    # Simulate an old 3-column table (no source_table)
+    db.execute(
+        f'CREATE TABLE "{ReportStore.TABLE_NAME}" '
+        "(report_id VARCHAR PRIMARY KEY, created_at TIMESTAMP, report_json VARCHAR)"
+    )
+    payload = json.dumps(sample_report().to_dict(), ensure_ascii=False, default=str)
+    db.execute(
+        f'INSERT INTO "{ReportStore.TABLE_NAME}" (report_id, created_at, report_json) VALUES (?, ?, ?)',
+        ["r1", "2024-03-01 00:00:00", payload],
+    )
+
+    # Trigger migration by calling get_all_reports (which calls _ensure_table)
+    store = ReportStore()
+    store.get_all_reports(db)
+
+    cols = {
+        r[0]
+        for r in db.execute(
+            "SELECT column_name FROM information_schema.columns WHERE table_schema = 'main' AND table_name = ?",
+            [ReportStore.TABLE_NAME],
+        ).fetchall()
+    }
+    assert "source_table" in cols
+
+
+def test_save_report_via_legacy_shape_still_works(db: duckdb.DuckDBPyConnection) -> None:
+    # First run migration to add column
+    db.execute(
+        f'CREATE TABLE "{ReportStore.TABLE_NAME}" '
+        "(report_id VARCHAR PRIMARY KEY, created_at TIMESTAMP, report_json VARCHAR)"
+    )
+    store = ReportStore()
+    store.get_all_reports(db)  # triggers migration
+
+    # Now save using 2-arg style (no source_table) - should store NULL
+    report_id = store.save_report(db, sample_report())
+    row = db.execute(
+        f"SELECT source_table FROM {quote_identifier(store.TABLE_NAME)} WHERE report_id = ?",
+        [report_id],
+    ).fetchone()
+    assert row is not None
+    assert row[0] is None

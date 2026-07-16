@@ -29,9 +29,10 @@ def _detect_language(fmt: str) -> str:
 def render_mitigation_tab(connection: duckdb.DuckDBPyConnection, table_name: str) -> None:
     """Render the Mitigation tab for ``table_name``.
 
-    Loads incident reports scoped to ``table_name`` (legacy reports without a
-    source table remain visible) and lets the user pick one to view its
-    mitigation rule and download it.
+    Loads saved incident reports and lets the user pick one to view its
+    mitigation rule and download it. Reports are scoped to the selected
+    table; legacy reports without a source table (``NULL`` source_table)
+    remain visible under every table as a migration compromise.
     """
     try:
         reports = ReportStore().get_all_reports(connection, source_table=table_name)
