@@ -1,5 +1,6 @@
 """Tests for the dataclass-based settings module."""
 
+import tempfile
 from unittest.mock import patch
 
 from ovs_logs.config.settings import (
@@ -19,6 +20,16 @@ def test_singleton_has_expected_defaults() -> None:
     assert settings.database.path == ".ovs_logs/ovs_logs.db"
     assert settings.text_parse.structured is True
     assert settings.text_parse.max_lines_per_file == 0
+    assert settings.threat_lists.base_url == "https://iplists.firehol.org/files"
+    assert settings.threat_lists.default_lists == ("firehol_level1", "firehol_abusers_30d")
+    assert settings.threat_lists.cache_dir == ".ovs_logs/threat_lists"
+    assert settings.threat_lists.max_age_hours == 24
+    assert settings.threat_lists.timeout == 10
+    assert settings.threat_lists.base_url == "https://iplists.firehol.org/files"
+    assert settings.threat_lists.default_lists == ("firehol_level1", "firehol_abusers_30d")
+    assert settings.threat_lists.cache_dir == ".ovs_logs/threat_lists"
+    assert settings.threat_lists.max_age_hours == 24
+    assert settings.threat_lists.timeout == 10
 
 
 ENV_ABUSEIPDB_TIMEOUT = 20
@@ -31,6 +42,9 @@ ENV_THRESHOLD_ERROR_SPIKES = 75
 ENV_THRESHOLD_EVENT_DISTRIBUTION = 200
 ENV_THRESHOLD_TEMPORAL_ANOMALY = 150
 ENV_TEXT_PARSE_MAX_LINES_PER_FILE = 500
+ENV_THREATLIST_CACHE_DIR = tempfile.mkdtemp(prefix="ovs_logs_threats_")
+ENV_THREATLIST_MAX_AGE_HOURS = 48
+ENV_THREATLIST_TIMEOUT = 30
 
 
 def test_environment_variables_override_defaults() -> None:
@@ -50,6 +64,10 @@ def test_environment_variables_override_defaults() -> None:
         "OVS_LOGS_DB_PATH": "/tmp/ovs_logs.db",
         "OVS_LOGS_STRUCTURED": "false",
         "OVS_LOGS_PARSE_LIMIT": str(ENV_TEXT_PARSE_MAX_LINES_PER_FILE),
+        "OVS_LOGS_THREATLIST_BASE_URL": "https://custom.firehol.org/files",
+        "OVS_LOGS_THREATLIST_CACHE_DIR": ENV_THREATLIST_CACHE_DIR,
+        "OVS_LOGS_THREATLIST_MAX_AGE_HOURS": str(ENV_THREATLIST_MAX_AGE_HOURS),
+        "OVS_LOGS_THREATLIST_TIMEOUT": str(ENV_THREATLIST_TIMEOUT),
     }
 
     with patch.dict("os.environ", env, clear=False):
@@ -74,3 +92,8 @@ def test_environment_variables_override_defaults() -> None:
 
     assert s.text_parse.structured is False
     assert s.text_parse.max_lines_per_file == ENV_TEXT_PARSE_MAX_LINES_PER_FILE
+
+    assert s.threat_lists.base_url == env["OVS_LOGS_THREATLIST_BASE_URL"]
+    assert s.threat_lists.cache_dir == ENV_THREATLIST_CACHE_DIR
+    assert s.threat_lists.max_age_hours == ENV_THREATLIST_MAX_AGE_HOURS
+    assert s.threat_lists.timeout == ENV_THREATLIST_TIMEOUT
