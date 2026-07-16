@@ -40,11 +40,18 @@ class ReportStore:
             )
 
     def _migrate_add_source_table(self, connection: duckdb.DuckDBPyConnection) -> None:
+        """Add the ``source_table`` column if it does not exist.
+
+        DuckDB has no reliable ``IF NOT EXISTS`` for ``ADD COLUMN``, so we
+        guard against re-execution by inspecting ``information_schema.columns``
+        with a case-insensitive column-name check.
+        """
         rows = connection.execute(
             "SELECT column_name FROM information_schema.columns WHERE table_schema = 'main' AND table_name = ?",
             [self.TABLE_NAME],
         ).fetchall()
-        if ("source_table",) not in rows:
+        existing_columns = {row[0].lower() for row in rows}
+        if "source_table" not in existing_columns:
             connection.execute(f"ALTER TABLE {quote_identifier(self.TABLE_NAME)} ADD COLUMN source_table VARCHAR")
 
     def _ensure_table(self, connection: duckdb.DuckDBPyConnection) -> None:
@@ -105,18 +112,13 @@ class ReportStore:
         warning log so a single bad record does not crash the UI.
         """
         self._ensure_table(connection)
-        if source_table is None:
-            rows = connection.execute(
-                f"SELECT report_id, created_at, report_json "
-                f"FROM {quote_identifier(self.TABLE_NAME)} ORDER BY created_at DESC"
-            ).fetchall()
-        else:
-            rows = connection.execute(
-                f"SELECT report_id, created_at, report_json "
-                f"FROM {quote_identifier(self.TABLE_NAME)} "
-                f"WHERE source_table = ? OR source_table IS NULL ORDER BY created_at DESC",
-                [source_table],
-            ).fetchall()
+        query = f"SELECT report_id, created_at, report_json FROM {quote_identifier(self.TABLE_NAME)}"
+        params: list[str] = []
+        if source_table is not None:
+            query += " WHERE source_table = ? OR source_table IS NULL"
+            params.append(source_table)
+        query += " ORDER BY created_at DESC"
+        rows = connection.execute(query, params).fetchall()
         results: list[dict[str, Any]] = []
         for row in rows:
             report_id, created_at, payload = row
