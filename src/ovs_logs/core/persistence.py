@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 import uuid
 from datetime import UTC, datetime
 from typing import Any
@@ -16,6 +17,8 @@ from ovs_logs.core.sql_utils import quote_identifier
 logger = logging.getLogger(__name__)
 
 LEGACY_TABLE_NAME = "incident_reports"
+
+_MIGRATION_LOCK = threading.Lock()
 
 
 class ReportStore:
@@ -55,19 +58,19 @@ class ReportStore:
             connection.execute(f"ALTER TABLE {quote_identifier(self.TABLE_NAME)} ADD COLUMN source_table VARCHAR")
 
     def _ensure_table(self, connection: duckdb.DuckDBPyConnection) -> None:
-        """Create the reports table if it does not exist and run migrations."""
-        self._migrate_legacy_table(connection)
-        connection.execute(
-            f"""
-            CREATE TABLE IF NOT EXISTS {quote_identifier(self.TABLE_NAME)} (
-                report_id VARCHAR PRIMARY KEY,
-                created_at TIMESTAMP,
-                report_json VARCHAR,
-                source_table VARCHAR
+        with _MIGRATION_LOCK:
+            self._migrate_legacy_table(connection)
+            connection.execute(
+                f"""
+                CREATE TABLE IF NOT EXISTS {quote_identifier(self.TABLE_NAME)} (
+                    report_id VARCHAR PRIMARY KEY,
+                    created_at TIMESTAMP,
+                    report_json VARCHAR,
+                    source_table VARCHAR
+                )
+                """
             )
-            """
-        )
-        self._migrate_add_source_table(connection)
+            self._migrate_add_source_table(connection)
     def save_report(
         self,
         connection: duckdb.DuckDBPyConnection,

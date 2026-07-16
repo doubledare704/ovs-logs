@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
+from pathlib import Path
 
 import duckdb
 import pytest
@@ -190,3 +192,45 @@ def test_save_report_via_legacy_shape_still_works(db: duckdb.DuckDBPyConnection)
     ).fetchone()
     assert row is not None
     assert row[0] is None
+
+
+def test_concurrent_migration_is_safe(tmp_path: Path) -> None:
+    db_path = tmp_path / "race.duckdb"
+    with duckdb.connect(str(db_path)) as seed:
+        seed.execute(
+            'CREATE TABLE "_ovs_incident_reports" '
+            "(report_id VARCHAR PRIMARY KEY, created_at TIMESTAMP, report_json VARCHAR)"
+        )
+
+    errors: list[tuple[str, str]] = []
+    barrier = threading.Barrier(2)
+
+    def worker(name: str) -> None:
+        try:
+            conn = duckdb.connect(str(db_path))
+            barrier.wait()
+            ReportStore()._ensure_table(conn)
+            conn.close()
+        except Exception as exc:  # capture any race failure
+            errors.append((name, f"{type(exc).__name__}: {exc}"))
+
+    t1 = threading.Thread(target=worker, args=("t1",))
+    t2 = threading.Thread(target=worker, args=("t2",))
+    t1.start()
+    t2.start()
+    t1.join()
+    t2.join()
+
+    assert not errors, f"Concurrent migration raised: {errors}"
+
+    with duckdb.connect(str(db_path)) as conn:
+        cols = {
+            r[0]
+            for r in conn.execute(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_schema = 'main' AND table_name = ?",
+                [ReportStore.TABLE_NAME],
+            ).fetchall()
+        }
+    assert "source_table" in cols
+
