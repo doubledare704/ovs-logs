@@ -227,10 +227,8 @@ def test_concurrent_migration_is_safe(tmp_path: Path) -> None:
         cols = {
             r[0]
             for r in conn.execute(
-                "SELECT column_name FROM information_schema.columns "
-                "WHERE table_schema = 'main' AND table_name = ?",
+                "SELECT column_name FROM information_schema.columns WHERE table_schema = 'main' AND table_name = ?",
                 [ReportStore.TABLE_NAME],
             ).fetchall()
         }
     assert "source_table" in cols
-

@@ -71,6 +71,7 @@ class ReportStore:
                 """
             )
             self._migrate_add_source_table(connection)
+
     def save_report(
         self,
         connection: duckdb.DuckDBPyConnection,

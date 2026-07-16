@@ -99,13 +99,13 @@ def test_mitigation_filters_by_table(tmp_path: Path) -> None:
     _seed_linked_report(db, "A")
 
     at = AppTest.from_file(str(APP_PATH)).run()
-    at.sidebar.text_input[2].set_value(str(db)).run()
-    at.sidebar.selectbox[0].set_value("A").run()
+    text_input_by_label(at, "Database path").set_value(str(db)).run()
+    selectbox_by_label(at, "Select a table").set_value("A").run()
 
     assert not at.exception
     assert any(s.label == "Select a report" for s in at.selectbox)
 
     # Switch to table B - should show "No saved reports"
-    at.sidebar.selectbox[0].set_value("B").run()
+    selectbox_by_label(at, "Select a table").set_value("B").run()
     assert any("No saved reports" in info.value for info in at.info)
     assert not any(s.label == "Select a report" for s in at.selectbox)
