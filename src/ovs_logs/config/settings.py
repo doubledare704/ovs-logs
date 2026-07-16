@@ -129,6 +129,26 @@ def _load_text_parse_settings() -> TextParseConfig:
 
 
 @dataclass(frozen=True)
+class ThreatListSettings:
+    """FireHOL IP-list configuration for offline threat enrichment."""
+
+    base_url: str = "https://iplists.firehol.org/files"
+    default_lists: tuple[str, ...] = ("firehol_level1", "firehol_abusers_30d")
+    cache_dir: str = ".ovs_logs/threat_lists"
+    max_age_hours: int = 24
+    timeout: int = 10
+
+
+def _load_threat_list_settings() -> ThreatListSettings:
+    return ThreatListSettings(
+        base_url=_str_env("OVS_LOGS_THREATLIST_BASE_URL", ThreatListSettings.base_url),
+        cache_dir=_str_env("OVS_LOGS_THREATLIST_CACHE_DIR", ThreatListSettings.cache_dir),
+        max_age_hours=_int_env("OVS_LOGS_THREATLIST_MAX_AGE_HOURS", ThreatListSettings.max_age_hours),
+        timeout=_int_env("OVS_LOGS_THREATLIST_TIMEOUT", ThreatListSettings.timeout),
+    )
+
+
+@dataclass(frozen=True)
 class Settings:
     """Project-wide configuration singleton."""
 
@@ -137,6 +157,7 @@ class Settings:
     thresholds: AnalysisThresholds = field(default_factory=_load_thresholds)
     database: DatabaseSettings = field(default_factory=_load_database_settings)
     text_parse: TextParseConfig = field(default_factory=_load_text_parse_settings)
+    threat_lists: ThreatListSettings = field(default_factory=_load_threat_list_settings)
 
 
 settings = Settings()

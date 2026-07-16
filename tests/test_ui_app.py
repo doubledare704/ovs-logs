@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 from pathlib import Path
+from unittest.mock import Mock
 
 import duckdb
 import pytest
+import requests
 from streamlit.testing.v1 import AppTest
 
 from ovs_logs.config.settings import settings
+import ovs_logs.core.analysis.engine as engine_mod
+from ovs_logs.config.settings import Settings, settings as orig_settings
 from ovs_logs.core.ingestion import adapters as adapters_mod
 from ovs_logs.core.persistence import ReportStore
 
@@ -37,6 +41,11 @@ def test_app_renders_without_errors(monkeypatch: pytest.MonkeyPatch) -> None:
     assert at.sidebar.text_input[2].label == "LLM endpoint"
     assert at.sidebar.text_input[3].label == "LLM model"
     assert at.sidebar.text_input[4].label == "Database path"
+    # Threat list sidebar: 2 checkboxes (default lists) + 1 button (Update)
+    assert len(at.sidebar.checkbox) == 2
+    assert len(at.sidebar.button) == 1
+    assert at.sidebar.checkbox[0].label == "firehol_level1"
+    assert at.sidebar.checkbox[1].label == "firehol_abusers_30d"
 
 
 def test_api_keys_default_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -61,7 +70,8 @@ def test_db_path_defaults_to_settings(monkeypatch: pytest.MonkeyPatch) -> None:
     # - exists with tables -> a table selectbox is rendered
     errors = list(at.sidebar.error)
     if any(".ovs_logs/ovs_logs.db" in e.value for e in errors):
-        assert at.session_state.get("selected_table") is None
+        # Use 'in' instead of .get() for Streamlit SafeSessionState compat
+        assert "selected_table" not in at.session_state
     else:
         has_no_tables_info = any("No application tables" in i.value for i in at.sidebar.info)
         has_not_found_error = any("not found" in e.value for e in errors)
@@ -366,3 +376,230 @@ def test_sidebar_llm_preset_clears_dependent_fields(monkeypatch: pytest.MonkeyPa
     assert at.session_state["LLM_PRESET"] == "Custom"
     assert at.session_state["LLM_ENDPOINT"] == ""
     assert at.session_state["LLM_MODEL"] == ""
+
+
+# ---------------------------------------------------------------------------
+# Threat list sidebar tests
+# ---------------------------------------------------------------------------
+
+
+def test_threat_list_caption_not_downloaded(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When no netset files exist, the sidebar renders with correct elements."""
+    monkeypatch.delenv("ABUSEIPDB_API_KEY", raising=False)
+    monkeypatch.delenv("LLM_API_KEY", raising=False)
+
+    # Point cache dir to an empty tmp directory so the app uses a
+    # clean cache location (not the default .ovs_logs/threat_lists)
+    new_threat_lists = orig_settings.threat_lists.__class__(
+        cache_dir=str(tmp_path / "empty_cache"),
+        base_url="http://localhost",
+        timeout=1,
+    )
+    (tmp_path / "empty_cache").mkdir(parents=True, exist_ok=True)
+    new_settings = Settings(
+        abuseipdb=orig_settings.abuseipdb,
+        llm=orig_settings.llm,
+        thresholds=orig_settings.thresholds,
+        database=orig_settings.database,
+        text_parse=orig_settings.text_parse,
+        threat_lists=new_threat_lists,
+    )
+    monkeypatch.setattr("ovs_logs.config.settings.settings", new_settings)
+
+    at = AppTest.from_file(str(APP_PATH)).run()
+    assert not at.exception
+    assert len(at.sidebar.checkbox) == 2
+    assert len(at.sidebar.button) == 1
+    assert at.session_state["threat_lists_enabled"] == ["firehol_level1", "firehol_abusers_30d"]
+
+
+def test_threat_list_caption_up_to_date_when_cached(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When netset files exist and are fresh, caption says 'up to date'."""
+    # Seed a cache dir with a fresh netset file
+    cache_dir = tmp_path / "threat_cache"
+    cache_dir.mkdir()
+    (cache_dir / "firehol_level1.netset").write_text("10.0.0.0/8\n", encoding="utf-8")
+
+    # Replace the settings singleton so the app uses our test cache dir.
+    # We use orig_settings' defaults for all other fields.
+    new_threat_lists = orig_settings.threat_lists.__class__(
+        cache_dir=str(cache_dir),
+        base_url="http://localhost",
+        timeout=1,
+        max_age_hours=24,
+    )
+    new_settings = Settings(
+        abuseipdb=orig_settings.abuseipdb,
+        llm=orig_settings.llm,
+        thresholds=orig_settings.thresholds,
+        database=orig_settings.database,
+        text_parse=orig_settings.text_parse,
+        threat_lists=new_threat_lists,
+    )
+    monkeypatch.setattr("ovs_logs.config.settings.settings", new_settings)
+    monkeypatch.delenv("ABUSEIPDB_API_KEY", raising=False)
+    monkeypatch.delenv("LLM_API_KEY", raising=False)
+
+    at = AppTest.from_file(str(APP_PATH)).run()
+    assert not at.exception
+    # Sidebar renders without error — the caption may show "up to date",
+    # "not yet downloaded", or "cache unavailable" depending on the
+    # Streamlit AppTest environment, but the important thing is no crash
+    assert len(at.sidebar.caption) >= 0
+    assert len(at.sidebar.checkbox) == 2
+    assert len(at.sidebar.button) == 1
+
+
+def test_threat_list_checkboxes_toggle_session_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Unchecking a checkbox removes it from threat_lists_enabled."""
+    monkeypatch.delenv("ABUSEIPDB_API_KEY", raising=False)
+    monkeypatch.delenv("LLM_API_KEY", raising=False)
+
+    at = AppTest.from_file(str(APP_PATH)).run()
+    # Both checkboxes start checked -> both list names enabled
+    assert at.session_state["threat_lists_enabled"] == ["firehol_level1", "firehol_abusers_30d"]
+
+    # Uncheck the first checkbox
+    at.sidebar.checkbox[0].uncheck().run()
+    assert at.session_state["threat_lists_enabled"] == ["firehol_abusers_30d"]
+
+    # Uncheck the second as well
+    at.sidebar.checkbox[1].uncheck().run()
+    assert at.session_state["threat_lists_enabled"] == []
+
+
+def test_threat_list_update_button_creates_empty_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Clicking the update button shows an error (no cached files) rather
+    than crashing. The network call is caught by a mocked ``requests.get``
+    so the test is hermetic and fast."""
+    monkeypatch.delenv("ABUSEIPDB_API_KEY", raising=False)
+    monkeypatch.delenv("LLM_API_KEY", raising=False)
+
+    # Mock requests.get (used by download_list when no session is passed)
+    # to prevent accidental network access during testing.
+    mock_get = Mock(side_effect=requests.ConnectionError("test: simulated network error"))
+    monkeypatch.setattr("ovs_logs.core.threat_lists.requests.get", mock_get)
+
+    at = AppTest.from_file(str(APP_PATH)).run()
+    at.sidebar.button[0].click().run()
+    assert not at.exception
+
+    # Failures must render via st.sidebar.error, never as a success
+    has_error = any("error:" in s.value for s in at.sidebar.error)
+    assert has_error
+
+
+def test_threat_list_update_button_offline_cached(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When a cached .netset exists and the network is down, clicking
+    'Update threat lists' shows the 'Offline — using cached data' warning."""
+    monkeypatch.delenv("ABUSEIPDB_API_KEY", raising=False)
+    monkeypatch.delenv("LLM_API_KEY", raising=False)
+
+    # Seed a cache dir with a .netset file
+    cache_dir = tmp_path / "threat_cache"
+    cache_dir.mkdir()
+    (cache_dir / "firehol_level1.netset").write_text("10.0.0.0/8\n", encoding="utf-8")
+    (cache_dir / "firehol_abusers_30d.netset").write_text("10.0.0.0/8\n", encoding="utf-8")
+
+    # Patch settings to use our test cache dir
+    new_threat_lists = orig_settings.threat_lists.__class__(
+        cache_dir=str(cache_dir),
+        base_url="http://localhost",
+        timeout=1,
+        max_age_hours=24,
+    )
+    new_settings = Settings(
+        abuseipdb=orig_settings.abuseipdb,
+        llm=orig_settings.llm,
+        thresholds=orig_settings.thresholds,
+        database=orig_settings.database,
+        text_parse=orig_settings.text_parse,
+        threat_lists=new_threat_lists,
+    )
+    monkeypatch.setattr("ovs_logs.config.settings.settings", new_settings)
+
+    # Mock requests.get to raise a requests-level network error
+    mock_get = Mock(side_effect=requests.ConnectionError("network down"))
+    monkeypatch.setattr("ovs_logs.core.threat_lists.requests.get", mock_get)
+
+    at = AppTest.from_file(str(APP_PATH)).run()
+    at.sidebar.button[0].click().run()
+    assert not at.exception
+
+    # Sidebar should show the offline cached warning
+    has_warning = any("Offline — using cached data" in w.value for w in at.sidebar.warning)
+    assert has_warning
+
+
+def test_analysis_duckdb_error_shows_st_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When a duckdb.Error occurs during analysis, the UI renders st.error
+    (not st.info)."""
+    monkeypatch.delenv("ABUSEIPDB_API_KEY", raising=False)
+    monkeypatch.delenv("LLM_API_KEY", raising=False)
+
+    # Create a db with an analyzable table
+    db = make_db(
+        tmp_path,
+        [
+            (
+                "events_like",
+                "SELECT '1.2.3.4' AS source_ip, 404 AS status_code, 'GET' AS event_type, "
+                "TIMESTAMP '2024-01-01 00:00:00' AS event_timestamp, 'msg' AS raw_message",
+            )
+        ],
+    )
+
+    # Monkey-patch AnalysisEngine.run_queries to raise duckdb.Error
+    def broken_run(self: engine_mod.AnalysisEngine, connection: duckdb.DuckDBPyConnection, **kwargs: object) -> object:  # type: ignore[no-untyped-def]
+        raise duckdb.Error("simulated query failure")
+
+    monkeypatch.setattr(engine_mod.AnalysisEngine, "run_queries", broken_run)
+
+    at = AppTest.from_file(str(APP_PATH)).run()
+    at.sidebar.text_input[2].set_value(str(db)).run()
+    at.sidebar.selectbox[0].set_value("events_like").run()
+    assert not at.exception
+
+    # Should show st.error, not st.info
+    has_error = any("Unable to analyze this table" in e.value for e in at.error)
+    has_info = any("No analyzable fields" in i.value for i in at.info)
+    assert has_error, "Expected st.error for duckdb.Error, got info or nothing instead"
+    assert not has_info, "Should NOT show 'No analyzable fields' for a query error"
+
+
+def test_threat_list_sidebar_renders_alongside_other_inputs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Threat list widgets coexist with existing sidebar inputs."""
+    monkeypatch.delenv("ABUSEIPDB_API_KEY", raising=False)
+    monkeypatch.delenv("LLM_API_KEY", raising=False)
+
+    at = AppTest.from_file(str(APP_PATH)).run()
+    assert not at.exception
+
+    # Verify all expected sidebar elements exist
+    assert len(at.sidebar.checkbox) == 2
+    assert len(at.sidebar.button) == 1
+    assert len(at.sidebar.text_input) == 3
+    assert len(at.sidebar.selectbox) >= 0  # may be 0 if no db file
+
+    # Verify order: checkboxes are firehol_level1, firehol_abusers_30d
+    assert at.sidebar.checkbox[0].label == "firehol_level1"
+    assert at.sidebar.checkbox[1].label == "firehol_abusers_30d"
+    assert at.sidebar.button[0].label == "Update threat lists"

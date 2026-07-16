@@ -27,6 +27,12 @@ from ovs_logs.core.ingestion.adapters import iter_evtx_record_summaries
 from ovs_logs.core.normalization import NormalizationEngine
 from ovs_logs.core.sql_utils import quote_identifier
 from ovs_logs.core.text_parsing import ADAPTERS
+from ovs_logs.core.threat_lists import (
+    ensure_cache_dir as tl_ensure_cache_dir,
+    is_loaded as tl_is_loaded,
+    stale_lists as tl_stale_lists,
+    update_lists as tl_update_lists,
+)
 from ovs_logs.core.validation import SUPPORTED_FORMATS, validate_log_file
 from ovs_logs.ui.analysis_view import render_analysis_results
 from ovs_logs.ui.intel_view import render_intelligence_tab
@@ -410,6 +416,83 @@ def _render_ingested_table_preview() -> None:
                     st.error(f"Unable to preview ingested table: {exc}")
 
 
+def _render_sidebar_threat_lists() -> None:  # noqa: PLR0912
+    """Render the Threat Lists sidebar section with checkboxes, freshness
+    caption, and an update button.
+
+    This section is extracted into its own function to reduce the complexity
+    of :func:`render_sidebar`. All state is persisted via ``st.session_state``.
+    Errors in threat-list operations are caught gracefully and shown as
+    sidebar warnings, never breaking the rest of the UI.
+    """
+    st.sidebar.subheader("Threat Lists")
+
+    threat_cache_dir = settings.threat_lists.cache_dir
+    try:
+        tl_ensure_cache_dir(threat_cache_dir)
+    except OSError:
+        logger.exception("Failed to create threat-list cache dir")
+        st.sidebar.warning("Threat list cache directory unavailable")
+        return
+    default_lists = list(settings.threat_lists.default_lists)
+    enabled: list[str] = []
+    for list_name in default_lists:
+        checked = st.sidebar.checkbox(
+            list_name,
+            value=True,
+            key=f"threat_list_{list_name}",
+            help=f"Enable matching against {list_name}",
+        )
+        if checked:
+            enabled.append(list_name)
+    st.session_state["threat_lists_enabled"] = enabled
+
+    # Freshness caption (best-effort, never breaks sidebar)
+    try:
+        if enabled and tl_is_loaded(enabled, threat_cache_dir):
+            stale = tl_stale_lists(
+                enabled,
+                threat_cache_dir,
+                max_age_hours=settings.threat_lists.max_age_hours,
+            )
+            if stale:
+                st.sidebar.caption(f"Stale lists: {', '.join(stale)}")
+            else:
+                st.sidebar.caption("Threat lists up to date")
+        else:
+            st.sidebar.caption("Threat lists not yet downloaded")
+    except OSError as exc:
+        logger.warning("Unable to check threat-list freshness: %s", exc)
+        st.sidebar.caption("Threat list cache unavailable")
+
+    if not st.sidebar.button("Update threat lists", key="update_threat_lists"):
+        return
+    if not enabled:
+        st.sidebar.warning("Enable at least one threat list first.")
+        return
+    with st.spinner("Downloading threat lists..."):
+        try:
+            tl_ensure_cache_dir(threat_cache_dir)
+            results = tl_update_lists(
+                enabled,
+                threat_cache_dir,
+                timeout=settings.threat_lists.timeout,
+                base_url=settings.threat_lists.base_url,
+            )
+            cached = [k for k, v in results.items() if v == "cached"]
+            errors = [f"{k}: {v}" for k, v in results.items() if v.startswith("error")]
+            succeeded = [f"{k}: {v}" for k, v in results.items() if v in ("updated", "unchanged")]
+            if cached:
+                st.sidebar.warning(f"Offline — using cached data for: {', '.join(cached)}")
+            if errors:
+                st.sidebar.error("; ".join(errors))
+            if succeeded:
+                st.sidebar.success("; ".join(succeeded))
+        except OSError as exc:
+            logger.exception("Failed to update threat lists")
+            st.sidebar.error(f"Failed to update threat lists: {exc}")
+
+
 def render_sidebar() -> None:
     """Render the configuration sidebar and persist state in session_state."""
     st.sidebar.title("OVS-Log Configuration")
@@ -469,6 +552,9 @@ def render_sidebar() -> None:
         help="Path to the local DuckDB file used for ingestion and analysis.",
     )
 
+    _render_sidebar_threat_lists()
+
+    # ------------------------------------------------------------------ #
     st.sidebar.subheader("Recent Tables")
 
     if not db_path:

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from ovs_logs.config.settings import AnalysisThresholds, settings
@@ -31,6 +31,7 @@ class SuspiciousIndicator:
     severity: str
     description: str
     evidence: dict[str, Any]
+    threat_lists: list[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         if self.severity not in {"Low", "Medium", "High"}:
