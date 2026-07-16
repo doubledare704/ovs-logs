@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 import uuid
 from datetime import UTC, datetime
 from typing import Any
@@ -16,6 +17,8 @@ from ovs_logs.core.sql_utils import quote_identifier
 logger = logging.getLogger(__name__)
 
 LEGACY_TABLE_NAME = "incident_reports"
+
+_MIGRATION_LOCK = threading.Lock()
 
 
 class ReportStore:
@@ -39,35 +42,35 @@ class ReportStore:
                 f"ALTER TABLE {quote_identifier(LEGACY_TABLE_NAME)} RENAME TO {quote_identifier(self.TABLE_NAME)}"
             )
 
-    def _ensure_table(self, connection: duckdb.DuckDBPyConnection) -> None:
-        """Create the reports table if it does not exist and run migrations."""
-        self._migrate_legacy_table(connection)
-        connection.execute(
-            f"""
-            CREATE TABLE IF NOT EXISTS {quote_identifier(self.TABLE_NAME)} (
-                report_id VARCHAR PRIMARY KEY,
-                created_at TIMESTAMP,
-                report_json VARCHAR,
-                source_table VARCHAR
-            )
-            """
-        )
-        self._add_source_table_column(connection)
+    def _migrate_add_source_table(self, connection: duckdb.DuckDBPyConnection) -> None:
+        """Add the ``source_table`` column if it does not exist.
 
-    def _add_source_table_column(self, connection: duckdb.DuckDBPyConnection) -> None:
-        """Ensure the ``source_table`` column exists on already-created tables."""
-        try:
-            existing = {
-                row[0]
-                for row in connection.execute(
-                    "SELECT column_name FROM information_schema.columns WHERE table_schema = 'main' AND table_name = ?",
-                    [self.TABLE_NAME],
-                ).fetchall()
-            }
-        except duckdb.Error:
-            return
-        if "source_table" not in existing:
+        DuckDB has no reliable ``IF NOT EXISTS`` for ``ADD COLUMN``, so we
+        guard against re-execution by inspecting ``information_schema.columns``
+        with a case-insensitive column-name check.
+        """
+        rows = connection.execute(
+            "SELECT column_name FROM information_schema.columns WHERE table_schema = 'main' AND table_name = ?",
+            [self.TABLE_NAME],
+        ).fetchall()
+        existing_columns = {row[0].lower() for row in rows}
+        if "source_table" not in existing_columns:
             connection.execute(f"ALTER TABLE {quote_identifier(self.TABLE_NAME)} ADD COLUMN source_table VARCHAR")
+
+    def _ensure_table(self, connection: duckdb.DuckDBPyConnection) -> None:
+        with _MIGRATION_LOCK:
+            self._migrate_legacy_table(connection)
+            connection.execute(
+                f"""
+                CREATE TABLE IF NOT EXISTS {quote_identifier(self.TABLE_NAME)} (
+                    report_id VARCHAR PRIMARY KEY,
+                    created_at TIMESTAMP,
+                    report_json VARCHAR,
+                    source_table VARCHAR
+                )
+                """
+            )
+            self._migrate_add_source_table(connection)
 
     def save_report(
         self,
@@ -80,12 +83,11 @@ class ReportStore:
         report_id = str(uuid.uuid4())
         created_at = datetime.now(UTC).replace(tzinfo=None).isoformat()
         payload = json.dumps(report.to_dict(), ensure_ascii=False, default=str)
-        quoted_table = quote_identifier(self.TABLE_NAME)
         connection.execute(
             f"""
-            INSERT INTO {quoted_table} (report_id, created_at, report_json, source_table)
+            INSERT INTO {quote_identifier(self.TABLE_NAME)} (report_id, created_at, report_json, source_table)
             VALUES (?, ?, ?, ?)
-            """,  # TABLE_NAME is constant, sanitized via quote_identifier
+            """,
             [report_id, created_at, payload, source_table],
         )
         return report_id
@@ -114,19 +116,13 @@ class ReportStore:
         warning log so a single bad record does not crash the UI.
         """
         self._ensure_table(connection)
-        if source_table is None:
-            rows = connection.execute(
-                f"SELECT report_id, created_at, report_json "  # TABLE_NAME is constant
-                f"FROM {quote_identifier(self.TABLE_NAME)} ORDER BY created_at DESC"
-            ).fetchall()
-        else:
-            rows = connection.execute(
-                f"SELECT report_id, created_at, report_json "  # TABLE_NAME is constant
-                f"FROM {quote_identifier(self.TABLE_NAME)} "
-                f"WHERE source_table = ? OR source_table IS NULL "
-                f"ORDER BY created_at DESC",
-                [source_table],
-            ).fetchall()
+        query = f"SELECT report_id, created_at, report_json FROM {quote_identifier(self.TABLE_NAME)}"
+        params: list[str] = []
+        if source_table is not None:
+            query += " WHERE source_table = ? OR source_table IS NULL"
+            params.append(source_table)
+        query += " ORDER BY created_at DESC"
+        rows = connection.execute(query, params).fetchall()
         results: list[dict[str, Any]] = []
         for row in rows:
             report_id, created_at, payload = row

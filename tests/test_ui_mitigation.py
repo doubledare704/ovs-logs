@@ -19,6 +19,11 @@ def _seed_report(db_path: Path) -> None:
         ReportStore().save_report(conn, sample_report())
 
 
+def _seed_linked_report(db_path: Path, table_name: str) -> None:
+    with duckdb.connect(str(db_path)) as conn:
+        ReportStore().save_report(conn, sample_report(), source_table=table_name)
+
+
 def test_mitigation_empty_reports_shows_info(tmp_path: Path) -> None:
     db = make_db(
         tmp_path,
@@ -72,3 +77,35 @@ def test_mitigation_non_analyzable_table_still_shows_saved_reports(tmp_path: Pat
     assert not at.exception
     # Saved reports are global and must remain accessible even for a non-analyzable table
     assert any(s.label == "Select a report" for s in at.selectbox)
+
+
+def test_mitigation_filters_by_table(tmp_path: Path) -> None:
+    db = make_db(
+        tmp_path,
+        [
+            (
+                "A",
+                "SELECT '1.2.3.4' AS source_ip, 404 AS status_code, 'GET' AS event_type, "
+                "TIMESTAMP '2024-01-01 00:00:00' AS event_timestamp, 'msg' AS raw_message",
+            ),
+            (
+                "B",
+                "SELECT '5.6.7.8' AS source_ip, 200 AS status_code, 'POST' AS event_type, "
+                "TIMESTAMP '2024-01-01 00:00:00' AS event_timestamp, 'msg' AS raw_message",
+            ),
+        ],
+    )
+    # Seed a report linked to table A
+    _seed_linked_report(db, "A")
+
+    at = AppTest.from_file(str(APP_PATH)).run()
+    text_input_by_label(at, "Database path").set_value(str(db)).run()
+    selectbox_by_label(at, "Select a table").set_value("A").run()
+
+    assert not at.exception
+    assert any(s.label == "Select a report" for s in at.selectbox)
+
+    # Switch to table B - should show "No saved reports"
+    selectbox_by_label(at, "Select a table").set_value("B").run()
+    assert any("No saved reports" in info.value for info in at.info)
+    assert not any(s.label == "Select a report" for s in at.selectbox)

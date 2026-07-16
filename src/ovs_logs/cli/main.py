@@ -103,7 +103,7 @@ def _perform_analysis(  # noqa: PLR0913
                     raise ValueError("--llm requires an LLM API key (set --llm-api-key or LLM_API_KEY)")
                 provider = OpenAICompatibleProvider(api_key=api_key)
                 report = LLMSynthesizer(provider).synthesize(indicators, threat_intel=threat_intel)
-            report_id = ReportStore().save_report(connection, report)
+            report_id = ReportStore().save_report(connection, report, source_table=table)
             console.print(f"[bold]Report saved:[/bold] {report_id}")
             _render_report(report)
 
