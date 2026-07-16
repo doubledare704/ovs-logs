@@ -56,7 +56,10 @@ def selectbox_by_label(at: AppTest, label: str) -> Selectbox:
     the table navigator). Resolving by label keeps tests robust to sidebar
     ordering changes instead of relying on a hard-coded index.
     """
-    return next(select for select in at.sidebar.selectbox if select.label == label)
+    try:
+        return next(select for select in at.sidebar.selectbox if select.label == label)
+    except StopIteration as exc:
+        raise AssertionError(f"Sidebar selectbox with label '{label}' not found") from exc
 
 
 def text_input_by_label(at: AppTest, label: str) -> TextInput:
@@ -65,7 +68,10 @@ def text_input_by_label(at: AppTest, label: str) -> TextInput:
     Resolving by label keeps tests robust to sidebar ordering changes instead
     of relying on a hard-coded index.
     """
-    return next(field for field in at.sidebar.text_input if field.label == label)
+    try:
+        return next(field for field in at.sidebar.text_input if field.label == label)
+    except StopIteration as exc:
+        raise AssertionError(f"Sidebar text input with label '{label}' not found") from exc
 
 
 def make_temp_file(tmp_path: Path, name: str, content: str) -> Path:
