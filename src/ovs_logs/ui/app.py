@@ -21,7 +21,7 @@ import streamlit as st
 if TYPE_CHECKING:
     from streamlit.runtime.uploaded_file_manager import UploadedFile
 
-from ovs_logs.config.settings import settings
+from ovs_logs.config.settings import DEFAULT_ENDPOINT_SENTINEL, LLM_PRESETS, settings
 from ovs_logs.core.database import Database
 from ovs_logs.core.ingestion.adapters import iter_evtx_record_summaries
 from ovs_logs.core.normalization import NormalizationEngine
@@ -47,6 +47,17 @@ _SYSTEM_SCHEMAS: tuple[str, ...] = (
 )
 
 _ALLOWED_UPLOAD_TYPES: tuple[str, ...] = tuple(sorted(SUPPORTED_FORMATS))
+
+
+def _on_llm_preset_change() -> None:
+    """Clear user-entered endpoint/model when the preset changes.
+
+    The sidebar text inputs for LLM endpoint and model will re-read their
+    default values from ``LLM_PRESETS`` on the next rerun.
+    """
+    st.session_state.pop("llm_endpoint", None)
+    st.session_state.pop("llm_model", None)
+
 
 _KB = 1024
 _MB = 1024 * 1024
@@ -421,6 +432,34 @@ def render_sidebar() -> None:
     )
     st.session_state["LLM_API_KEY"] = llm_key
 
+    st.sidebar.subheader("LLM Configuration")
+
+    preset_names = list(LLM_PRESETS.keys())
+    preset = st.sidebar.selectbox(
+        "Provider preset",
+        options=preset_names,
+        index=preset_names.index("OpenAI"),
+        key="llm_preset",
+        on_change=_on_llm_preset_change,
+    )
+    preset_cfg = LLM_PRESETS[preset]
+    endpoint_default = settings.llm.api_url if preset_cfg.endpoint == DEFAULT_ENDPOINT_SENTINEL else preset_cfg.endpoint
+    llm_endpoint = st.sidebar.text_input(
+        "LLM endpoint",
+        value=st.session_state.get("llm_endpoint", endpoint_default),
+        key="llm_endpoint",
+    )
+    model_default = preset_cfg.model or ""
+    llm_model = st.sidebar.text_input(
+        "LLM model",
+        value=st.session_state.get("llm_model", model_default),
+        key="llm_model",
+    )
+
+    st.session_state["LLM_PRESET"] = preset
+    st.session_state["LLM_ENDPOINT"] = llm_endpoint
+    st.session_state["LLM_MODEL"] = llm_model
+
     st.sidebar.subheader("Database")
 
     db_path = st.sidebar.text_input(
@@ -429,22 +468,6 @@ def render_sidebar() -> None:
         key="db_path",
         help="Path to the local DuckDB file used for ingestion and analysis.",
     )
-
-    llm_endpoint = st.sidebar.text_input(
-        "LLM Endpoint (optional)",
-        value=os.getenv("OVS_LOGS_LLM_API_URL", ""),
-        key="llm_endpoint",
-        help="Override the OpenAI-compatible chat completions endpoint used for report synthesis.",
-    )
-    st.session_state["LLM_ENDPOINT"] = llm_endpoint or None
-
-    llm_model = st.sidebar.text_input(
-        "LLM Model (optional)",
-        value=os.getenv("OVS_LOGS_LLM_MODEL", ""),
-        key="llm_model",
-        help="Override the model name sent to the LLM provider.",
-    )
-    st.session_state["LLM_MODEL"] = llm_model or None
 
     st.sidebar.subheader("Recent Tables")
 

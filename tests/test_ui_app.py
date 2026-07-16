@@ -8,10 +8,17 @@ import duckdb
 import pytest
 from streamlit.testing.v1 import AppTest
 
+from ovs_logs.config.settings import settings
 from ovs_logs.core.ingestion import adapters as adapters_mod
 from ovs_logs.core.persistence import ReportStore
 
-from .conftest import make_db, make_temp_file, sample_report
+from .conftest import (
+    make_db,
+    make_temp_file,
+    sample_report,
+    selectbox_by_label,
+    text_input_by_label,
+)
 
 APP_PATH = Path(__file__).resolve().parents[1] / "src" / "ovs_logs" / "ui" / "app.py"
 
@@ -22,14 +29,14 @@ def test_app_renders_without_errors(monkeypatch: pytest.MonkeyPatch) -> None:
 
     at = AppTest.from_file(str(APP_PATH)).run()
     assert not at.exception
-    # 2 password inputs (AbuseIPDB + LLM) + db path + 2 optional LLM config inputs = 5 in sidebar
+    # 2 password inputs (AbuseIPDB + LLM) + 3 text inputs (LLM endpoint + LLM model + db path) = 5
     expected_sidebar_inputs = 5
     assert len(at.sidebar.text_input) == expected_sidebar_inputs
     assert at.sidebar.text_input[0].label == "AbuseIPDB API Key"
     assert at.sidebar.text_input[1].label == "LLM API Key"
-    assert at.sidebar.text_input[2].label == "Database path"
-    assert at.sidebar.text_input[3].label == "LLM Endpoint (optional)"
-    assert at.sidebar.text_input[4].label == "LLM Model (optional)"
+    assert at.sidebar.text_input[2].label == "LLM endpoint"
+    assert at.sidebar.text_input[3].label == "LLM model"
+    assert at.sidebar.text_input[4].label == "Database path"
 
 
 def test_api_keys_default_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -65,7 +72,7 @@ def test_db_path_defaults_to_settings(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_missing_db_shows_error(tmp_path: Path) -> None:
     missing = tmp_path / "nope.db"
     at = AppTest.from_file(str(APP_PATH)).run()
-    at.sidebar.text_input[2].set_value(str(missing)).run()
+    text_input_by_label(at, "Database path").set_value(str(missing)).run()
     assert any(str(missing) in e.value for e in at.sidebar.error)
 
 
@@ -81,9 +88,9 @@ def test_recent_tables_lists_user_tables_only(tmp_path: Path) -> None:
     )
 
     at = AppTest.from_file(str(APP_PATH)).run()
-    at.sidebar.text_input[2].set_value(str(db)).run()
+    text_input_by_label(at, "Database path").set_value(str(db)).run()
 
-    sb = at.sidebar.selectbox[0]
+    sb = selectbox_by_label(at, "Select a table")
     assert sb.label == "Select a table"
     assert "events_2026" in sb.options
     assert "indicators" in sb.options
@@ -98,11 +105,11 @@ def test_changing_db_path_refreshes_tables(tmp_path: Path) -> None:
     db_b = make_db(db_b_dir, [("beta", "SELECT 1")])
 
     at = AppTest.from_file(str(APP_PATH)).run()
-    at.sidebar.text_input[2].set_value(str(db_a)).run()
-    assert at.sidebar.selectbox[0].options == ["alpha"]
+    text_input_by_label(at, "Database path").set_value(str(db_a)).run()
+    assert selectbox_by_label(at, "Select a table").options == ["alpha"]
 
-    at.sidebar.text_input[2].set_value(str(db_b)).run()
-    assert at.sidebar.selectbox[0].options == ["beta"]
+    text_input_by_label(at, "Database path").set_value(str(db_b)).run()
+    assert selectbox_by_label(at, "Select a table").options == ["beta"]
     # selected_table should follow the new list
     assert at.session_state["selected_table"] == "beta"
 
@@ -112,13 +119,13 @@ def test_changing_db_path_clears_stale_table_selection(tmp_path: Path) -> None:
     missing = tmp_path / "missing.db"
 
     at = AppTest.from_file(str(APP_PATH)).run()
-    at.sidebar.text_input[2].set_value(str(db)).run()
-    at.sidebar.selectbox[0].set_value("alpha").run()
+    text_input_by_label(at, "Database path").set_value(str(db)).run()
+    selectbox_by_label(at, "Select a table").set_value("alpha").run()
     assert at.session_state["selected_table"] == "alpha"
 
-    at.sidebar.text_input[2].set_value(str(missing)).run()
+    text_input_by_label(at, "Database path").set_value(str(missing)).run()
     assert "selected_table" not in at.session_state
-    assert len(at.sidebar.selectbox) == 0
+    assert not any(s.label == "Select a table" for s in at.sidebar.selectbox)
 
 
 def test_selecting_table_persists_to_session_state(tmp_path: Path) -> None:
@@ -127,8 +134,8 @@ def test_selecting_table_persists_to_session_state(tmp_path: Path) -> None:
         [("alpha", "SELECT 1"), ("beta", "SELECT 2")],
     )
     at = AppTest.from_file(str(APP_PATH)).run()
-    at.sidebar.text_input[2].set_value(str(db)).run()
-    at.sidebar.selectbox[0].set_value("beta").run()
+    text_input_by_label(at, "Database path").set_value(str(db)).run()
+    selectbox_by_label(at, "Select a table").set_value("beta").run()
     assert at.session_state["selected_table"] == "beta"
 
 
@@ -137,7 +144,7 @@ def test_upload_and_validate_file(tmp_path: Path) -> None:
     file_path = make_temp_file(tmp_path, "sample.log", "line1\nline2\n")
 
     at = AppTest.from_file(str(APP_PATH)).run()
-    at.sidebar.text_input[2].set_value(str(db)).run()
+    text_input_by_label(at, "Database path").set_value(str(db)).run()
 
     content = file_path.read_bytes()
     at.file_uploader[0].upload(file_path.name, content).run()
@@ -152,7 +159,7 @@ def test_duplicate_upload_is_skipped(tmp_path: Path) -> None:
     file_path = make_temp_file(tmp_path, "duplicate.log", "line1\nline2\n")
 
     at = AppTest.from_file(str(APP_PATH)).run()
-    at.sidebar.text_input[2].set_value(str(db)).run()
+    text_input_by_label(at, "Database path").set_value(str(db)).run()
 
     content = file_path.read_bytes()
     at.file_uploader[0].upload(file_path.name, content).run()
@@ -168,7 +175,7 @@ def test_raw_preview_displays_preview_text(tmp_path: Path) -> None:
     file_path = make_temp_file(tmp_path, "raw.log", "first line\nsecond line\n")
 
     at = AppTest.from_file(str(APP_PATH)).run()
-    at.sidebar.text_input[2].set_value(str(db)).run()
+    text_input_by_label(at, "Database path").set_value(str(db)).run()
 
     content = file_path.read_bytes()
     at.file_uploader[0].upload(file_path.name, content).run()
@@ -186,7 +193,7 @@ def test_ingested_table_preview_after_process(tmp_path: Path) -> None:
     file_path = make_temp_file(tmp_path, "process.log", "line1\nline2\n")
 
     at = AppTest.from_file(str(APP_PATH)).run()
-    at.sidebar.text_input[2].set_value(str(db)).run()
+    text_input_by_label(at, "Database path").set_value(str(db)).run()
 
     content = file_path.read_bytes()
     at.file_uploader[0].upload(file_path.name, content).run()
@@ -203,8 +210,8 @@ def test_ingested_table_preview_after_process(tmp_path: Path) -> None:
 def test_selected_table_renders_data_preview(tmp_path: Path) -> None:
     db = make_db(tmp_path, [("alpha", "SELECT 1 AS id, 'x' AS name")])
     at = AppTest.from_file(str(APP_PATH)).run()
-    at.sidebar.text_input[2].set_value(str(db)).run()
-    at.sidebar.selectbox[0].set_value("alpha").run()
+    text_input_by_label(at, "Database path").set_value(str(db)).run()
+    selectbox_by_label(at, "Select a table").set_value("alpha").run()
     assert any(df.value is not None and len(df.value) > 0 for df in at.dataframe)
 
 
@@ -220,8 +227,8 @@ def test_selected_analyzable_table_renders_timeline(tmp_path: Path) -> None:
         ],
     )
     at = AppTest.from_file(str(APP_PATH)).run()
-    at.sidebar.text_input[2].set_value(str(db)).run()
-    at.sidebar.selectbox[0].set_value("events_like").run()
+    text_input_by_label(at, "Database path").set_value(str(db)).run()
+    selectbox_by_label(at, "Select a table").set_value("events_like").run()
     assert any(subheader.value == "Attack Timeline" for subheader in at.subheader)
     assert len(at.metric) == 4
     assert any(df.value is not None and len(df.value) > 0 for df in at.dataframe)
@@ -230,8 +237,8 @@ def test_selected_analyzable_table_renders_timeline(tmp_path: Path) -> None:
 def test_selected_non_analyzable_table_shows_info(tmp_path: Path) -> None:
     db = make_db(tmp_path, [("reports", "SELECT 'hello' AS note")])
     at = AppTest.from_file(str(APP_PATH)).run()
-    at.sidebar.text_input[2].set_value(str(db)).run()
-    at.sidebar.selectbox[0].set_value("reports").run()
+    text_input_by_label(at, "Database path").set_value(str(db)).run()
+    selectbox_by_label(at, "Select a table").set_value("reports").run()
     assert any("No analyzable fields" in info.value for info in at.info)
 
 
@@ -247,8 +254,8 @@ def test_selected_table_shows_potential_signals_in_tab1(tmp_path: Path) -> None:
         ],
     )
     at = AppTest.from_file(str(APP_PATH)).run()
-    at.sidebar.text_input[2].set_value(str(db)).run()
-    at.sidebar.selectbox[0].set_value("events_like").run()
+    text_input_by_label(at, "Database path").set_value(str(db)).run()
+    selectbox_by_label(at, "Select a table").set_value("events_like").run()
 
     has_indicators = any(
         df.value is not None and "Type" in df.value.columns and "Severity" in df.value.columns for df in at.dataframe
@@ -285,7 +292,7 @@ def test_evtx_upload_preview_shows_records(tmp_path: Path, monkeypatch: pytest.M
     monkeypatch.setattr(adapters_mod, "PyEvtxParser", FakeParser)
 
     at = AppTest.from_file(str(APP_PATH)).run()
-    at.sidebar.text_input[2].set_value(str(db)).run()
+    text_input_by_label(at, "Database path").set_value(str(db)).run()
 
     content = file_path.read_bytes()
     at.file_uploader[0].upload(file_path.name, content).run()
@@ -309,7 +316,7 @@ def test_ingested_web_log_shows_potential_signals(tmp_path: Path) -> None:
     )
 
     at = AppTest.from_file(str(APP_PATH)).run()
-    at.sidebar.text_input[2].set_value(str(db)).run()
+    text_input_by_label(at, "Database path").set_value(str(db)).run()
 
     content = access_log.read_bytes()
     at.file_uploader[0].upload(access_log.name, content).run()
@@ -326,7 +333,36 @@ def test_internal_report_table_excluded_from_navigator(tmp_path: Path) -> None:
         ReportStore().save_report(conn, sample_report())
 
     at = AppTest.from_file(str(APP_PATH)).run()
-    at.sidebar.text_input[2].set_value(str(db)).run()
+    text_input_by_label(at, "Database path").set_value(str(db)).run()
 
-    assert "events_2026" in at.sidebar.selectbox[0].options
-    assert ReportStore.TABLE_NAME not in at.sidebar.selectbox[0].options
+    assert "events_2026" in selectbox_by_label(at, "Select a table").options
+    assert ReportStore.TABLE_NAME not in selectbox_by_label(at, "Select a table").options
+
+
+def test_sidebar_llm_widgets_persist_to_session_state(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("ABUSEIPDB_API_KEY", raising=False)
+    monkeypatch.delenv("LLM_API_KEY", raising=False)
+
+    at = AppTest.from_file(str(APP_PATH)).run()
+    assert at.session_state["LLM_PRESET"] == "OpenAI"
+    assert at.session_state["LLM_ENDPOINT"] == settings.llm.api_url
+    assert at.session_state["LLM_MODEL"] == "gpt-4o-mini"
+
+
+def test_sidebar_llm_preset_clears_dependent_fields(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("ABUSEIPDB_API_KEY", raising=False)
+    monkeypatch.delenv("LLM_API_KEY", raising=False)
+
+    at = AppTest.from_file(str(APP_PATH)).run()
+
+    # Switch preset to Ollama-local
+    selectbox_by_label(at, "Provider preset").set_value("Ollama-local").run()
+    assert at.session_state["LLM_PRESET"] == "Ollama-local"
+    assert at.session_state["LLM_ENDPOINT"] == "http://localhost:11434/v1/chat/completions"
+    assert at.session_state["LLM_MODEL"] == "llama3"
+
+    # Switch preset to Custom — endpoint/model should be empty
+    selectbox_by_label(at, "Provider preset").set_value("Custom").run()
+    assert at.session_state["LLM_PRESET"] == "Custom"
+    assert at.session_state["LLM_ENDPOINT"] == ""
+    assert at.session_state["LLM_MODEL"] == ""
