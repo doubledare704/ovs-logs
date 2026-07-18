@@ -12,7 +12,7 @@ from pathlib import Path
 import duckdb
 import pytest
 from streamlit.testing.v1 import AppTest
-from streamlit.testing.v1.element_tree import Selectbox, TextInput
+from streamlit.testing.v1.element_tree import Button, Checkbox, Selectbox, TextInput
 
 from ovs_logs.core.analysis.indicators import SuspiciousIndicator
 from ovs_logs.core.database import Database
@@ -72,6 +72,40 @@ def text_input_by_label(at: AppTest, label: str) -> TextInput:
         return next(field for field in at.sidebar.text_input if field.label == label)
     except StopIteration as exc:
         raise AssertionError(f"Sidebar text input with label '{label}' not found") from exc
+
+
+def checkbox_by_label(at: AppTest, label: str) -> Checkbox:
+    """Return the sidebar checkbox whose label matches ``label``.
+
+    Resolving by label keeps tests robust to sidebar ordering changes.
+    """
+    try:
+        return next(cb for cb in at.sidebar.checkbox if cb.label == label)
+    except StopIteration as exc:
+        raise AssertionError(f"Sidebar checkbox with label '{label}' not found") from exc
+
+
+def sidebar_button_by_label(at: AppTest, label: str) -> Button:
+    """Return the sidebar button whose label matches ``label``.
+
+    Resolving by label keeps tests robust to sidebar ordering changes.
+    """
+    try:
+        return next(btn for btn in at.sidebar.button if btn.label == label)
+    except StopIteration as exc:
+        raise AssertionError(f"Sidebar button with label '{label}' not found") from exc
+
+
+def button_by_label(at: AppTest, label: str) -> Button:
+    """Return the main-page button whose label matches ``label``.
+
+    Resolving by label keeps tests robust to button ordering changes instead
+    of relying on a hard-coded index.
+    """
+    try:
+        return next(btn for btn in at.button if btn.label == label)
+    except StopIteration as exc:
+        raise AssertionError(f"Main-page button with label '{label}' not found") from exc
 
 
 def make_temp_file(tmp_path: Path, name: str, content: str) -> Path:

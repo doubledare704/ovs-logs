@@ -84,17 +84,24 @@ def compute_indicators(
     return indicators
 
 
-def render_analysis_results(connection: duckdb.DuckDBPyConnection, table_name: str) -> None:
+def render_analysis_results(
+    connection: duckdb.DuckDBPyConnection,
+    table_name: str,
+    indicators: list[SuspiciousIndicator] | None = None,
+) -> None:
     """Render suspicious indicators for ``table_name`` as a Streamlit table.
 
-    Returns an empty list for non-analyzable tables or query errors, matching
-    the fallback behavior of :func:`render_analysis_results`.
+    When *indicators* is ``None`` (the default), the indicators are computed
+    from *connection* and *table_name* on the fly.  Pre-computed results may
+    be passed in to avoid duplicate computation when the caller already has
+    them.
     """
-    try:
-        indicators = compute_indicators(connection, table_name)
-    except duckdb.Error as exc:
-        st.error(f"Unable to analyze this table: {exc}")
-        return
+    if indicators is None:
+        try:
+            indicators = compute_indicators(connection, table_name)
+        except duckdb.Error as exc:
+            st.error(f"Unable to analyze this table: {exc}")
+            return
 
     if indicators is None:
         st.info("No analyzable fields in this table")

@@ -105,8 +105,8 @@ LLM_PRESETS: dict[str, LLMPreset] = {
     "OpenAI": LLMPreset(name="OpenAI", endpoint=DEFAULT_ENDPOINT_SENTINEL, model="gpt-4o-mini"),
     "Ollama-local": LLMPreset(
         name="Ollama-local",
-        endpoint="http://localhost:11434/v1/chat/completions",
-        model="llama3",
+        endpoint="http://localhost:11434",
+        model="qwen3.5:4b",
     ),
     "Azure": LLMPreset(name="Azure", endpoint="", model=""),
     "Custom": LLMPreset(name="Custom", endpoint="", model=""),

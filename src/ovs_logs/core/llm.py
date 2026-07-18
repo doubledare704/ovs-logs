@@ -3,16 +3,21 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from abc import ABC, abstractmethod
 from typing import Any, ClassVar
 
 import requests
+from ollama import Client
 
 from ovs_logs.config.settings import LLMSettings, settings
 from ovs_logs.core.analysis.indicators import SuspiciousIndicator
 from ovs_logs.core.report import IncidentReport
+from ovs_logs.core.report_schema import REPORT_JSON_SCHEMA
 from ovs_logs.core.threat_intel import ReputationResult
+
+logger = logging.getLogger(__name__)
 
 
 class LLMProvider(ABC):
@@ -21,6 +26,59 @@ class LLMProvider(ABC):
     @abstractmethod
     def generate(self, prompt: str) -> str:
         """Send a prompt and return the generated text."""
+
+
+class OllamaProvider(LLMProvider):
+    """Provider backed by the Ollama Python SDK for a local Ollama server.
+
+    Targets a local Ollama instance (``http://localhost:11434``) and enforces
+    structured output via Ollama's ``format`` parameter using
+    :data:`REPORT_JSON_SCHEMA`.  Uses ``stream=False`` so the full reply is
+    returned in a single response.
+    """
+
+    def __init__(
+        self,
+        api_key: str,
+        endpoint: str | None = None,
+        model: str | None = None,
+        timeout: int | None = None,
+        *,
+        llm_settings: LLMSettings | None = None,
+    ) -> None:
+
+        cfg = llm_settings or settings.llm
+        self.api_key = api_key
+        self.model = model if model is not None else cfg.model
+        self.timeout = timeout if timeout is not None else cfg.timeout
+        host = endpoint if endpoint is not None else cfg.api_url
+        self.host = host
+        self._client = Client(host=host, timeout=self.timeout)
+
+    def generate(self, prompt: str) -> str:
+        messages = [
+            {
+                "role": "system",
+                "content": "You are a DFIR analyst. Return the result as JSON conforming to the provided schema.",
+            },
+            {"role": "user", "content": prompt},
+        ]
+        try:
+            response = self._client.chat(
+                model=self.model,
+                messages=messages,
+                stream=False,
+                format=REPORT_JSON_SCHEMA,
+                options={"temperature": 0},
+            )
+        except Exception:
+            logger.debug("Ollama structured output unavailable; retrying without format", exc_info=True)
+            response = self._client.chat(
+                model=self.model,
+                messages=messages,
+                stream=False,
+            )
+        return response["message"]["content"]
 
 
 class OpenAICompatibleProvider(LLMProvider):
@@ -55,12 +113,13 @@ class OpenAICompatibleProvider(LLMProvider):
         }
         response = requests.post(self.endpoint, headers=headers, json=payload, timeout=self.timeout)
         response.raise_for_status()
-        return response.json()["choices"][0]["message"]["content"]
-
+        data = response.json()
+        return data["choices"][0]["message"]["content"]
 
 _ERR_API_KEY_REQUIRED = "LLM API key is required"
 _ERR_ENDPOINT_REQUIRED = "LLM endpoint is required"
 _ERR_MODEL_REQUIRED = "LLM model is required"
+_ERR_CLOUD_BLOCKED = "Ollama Cloud (ollama.com) is not supported; use a local Ollama endpoint such as http://localhost:11434"
 
 
 def create_llm_provider(
@@ -71,17 +130,28 @@ def create_llm_provider(
 ) -> LLMProvider:
     """Create an LLM provider from explicit parameters.
 
-    Raises ``ValueError`` if *api_key*, *endpoint*, or *model* are
-    explicitly set to an empty string.  ``None`` values are passed through
-    to :class:`OpenAICompatibleProvider`, which falls back to
-    ``settings.llm`` defaults.
+    Routes to :class:`OllamaProvider` only for a local Ollama server
+    (``localhost:11434``).  The Ollama Cloud API (``ollama.com``) is blocked
+    because its structured-output support is inconsistent and can return
+    unexpected fields.  Any other endpoint uses :class:`OpenAICompatibleProvider`.
+
+    Raises ``ValueError`` if *endpoint* or *model* are explicitly set to an
+    empty string, or if *endpoint* targets ``ollama.com``.  ``None`` values are
+    passed through to the provider, which falls back to ``settings.llm``
+    defaults.  An *api_key* is required by the OpenAI-compatible path;
+    Ollama-local may pass an empty placeholder.
     """
-    if not api_key:
-        raise ValueError(_ERR_API_KEY_REQUIRED)
     if endpoint == "":
         raise ValueError(_ERR_ENDPOINT_REQUIRED)
     if model == "":
         raise ValueError(_ERR_MODEL_REQUIRED)
+    endpoint_key = endpoint or settings.llm.api_url
+    if "ollama.com" in endpoint_key:
+        raise ValueError(_ERR_CLOUD_BLOCKED)
+    if "localhost:11434" in endpoint_key:
+        return OllamaProvider(api_key=api_key, endpoint=endpoint, model=model, timeout=timeout)
+    if not api_key:
+        raise ValueError(_ERR_API_KEY_REQUIRED)
     return OpenAICompatibleProvider(api_key=api_key, endpoint=endpoint, model=model, timeout=timeout)
 
 
