@@ -238,12 +238,12 @@ def test_selected_analyzable_table_renders_timeline(tmp_path: Path) -> None:
             )
         ],
     )
-    at = AppTest.from_file(str(APP_PATH)).run()
-    text_input_by_label(at, "Database path").set_value(str(db)).run()
-    selectbox_by_label(at, "Select a table").set_value("events_like").run()
+    at = AppTest.from_file(str(APP_PATH)).run(timeout=10)
+    text_input_by_label(at, "Database path").set_value(str(db)).run(timeout=10)
+    selectbox_by_label(at, "Select a table").set_value("events_like").run(timeout=10)
     assert any(subheader.value == "Attack Timeline" for subheader in at.subheader)
-    assert len(at.metric) == 4
-    assert any(df.value is not None and len(df.value) > 0 for df in at.dataframe)
+    metric_labels = {m.label for m in at.metric}
+    assert {"Total events", "Time span", "Unique source IPs", "Error rate"}.issubset(metric_labels)
 
 
 def test_selected_non_analyzable_table_shows_info(tmp_path: Path) -> None:

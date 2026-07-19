@@ -67,6 +67,44 @@ def _format_duration(span: timedelta) -> str:
     return " ".join(parts)
 
 
+def _build_where_clauses(
+    *,
+    source_ip: str | None = None,
+    min_status: int | None = None,
+    event_type: str | None = None,
+) -> list[str]:
+    """Build SQL WHERE fragment from optional filter parameters."""
+    clauses: list[str] = []
+    if source_ip is not None:
+        escaped = source_ip.replace("'", "''")
+        clauses.append(f"\"source_ip\" = '{escaped}'")
+    if min_status is not None:
+        clauses.append(f'"status_code" >= {int(min_status)}')
+    if event_type is not None:
+        escaped = event_type.replace("'", "''")
+        clauses.append(f"\"event_type\" = '{escaped}'")
+    return clauses
+
+
+def _wrap_with_filters(
+    base_sql: str,
+    *,
+    source_ip: str | None = None,
+    min_status: int | None = None,
+    event_type: str | None = None,
+) -> str:
+    """Wrap ``base_sql`` with optional WHERE filters."""
+    clauses = _build_where_clauses(
+        source_ip=source_ip,
+        min_status=min_status,
+        event_type=event_type,
+    )
+    if not clauses:
+        return base_sql
+    where = " AND ".join(clauses)
+    return f"SELECT * FROM ({base_sql}) AS _filtered WHERE {where}"
+
+
 def _build_metrics_query(sql: str) -> str:
     return (
         "SELECT COUNT(*) AS total_events, "
@@ -87,11 +125,14 @@ def _build_rows_query(sql: str, limit: int) -> str:
     )
 
 
-def build_timeline(
+def build_timeline(  # noqa: PLR0913
     connection: duckdb.DuckDBPyConnection,
     table_name: str = "events",
     *,
     limit: int = DEFAULT_TIMELINE_LIMIT,
+    source_ip: str | None = None,
+    min_status: int | None = None,
+    event_type: str | None = None,
 ) -> tuple[TimelineMetrics, list[TimelineRow]]:
     """Compute timeline metrics and event rows for ``table_name``.
 
@@ -104,6 +145,9 @@ def build_timeline(
         table_name: DuckDB table to query (defaults to ``events``).
         limit: Maximum number of event rows returned. Metrics are always computed
             over the full table.
+        source_ip: If set, only include events from this IP.
+        min_status: If set, only include events with ``status_code >= min_status``.
+        event_type: If set, only include events with this ``event_type``.
 
     Returns:
         A ``(TimelineMetrics, list[TimelineRow])`` tuple. ``duckdb.Error`` is
@@ -113,6 +157,13 @@ def build_timeline(
         wrapped = "SELECT * FROM events"
     else:
         wrapped = build_aliased_query("SELECT * FROM events", table_name, connection)
+
+    wrapped = _wrap_with_filters(
+        wrapped,
+        source_ip=source_ip,
+        min_status=min_status,
+        event_type=event_type,
+    )
 
     metrics_row = connection.execute(_build_metrics_query(wrapped)).fetchone()
     if metrics_row is None:

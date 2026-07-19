@@ -15,6 +15,7 @@ dependencies = [
     "evtx==0.12.1",
     "ollama>=0.6.2",
     "pydantic>=2.0",
+    "plotly>=5.24.0",
 ]
 
 [project.optional-dependencies]

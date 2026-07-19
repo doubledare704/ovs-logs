@@ -11,6 +11,7 @@ from ovs_logs.core.timeline import (
     TimelineRow,
     build_timeline,
 )
+from ovs_logs.ui.timeline_view import _status_color
 
 
 def test_metrics_over_seeded_events() -> None:
@@ -154,3 +155,98 @@ def test_row_truncation() -> None:
     assert len(rows) == 10
     assert metrics.total_events == 25
     assert metrics.unique_source_ips == 25
+
+
+def test_filter_by_source_ip() -> None:
+    with Database(":memory:") as conn:
+        conn.execute(
+            "CREATE TABLE events AS SELECT * FROM (VALUES "
+            "('2024-01-01 00:00:00'::TIMESTAMP, '1.2.3.4', 'GET', 200, 'ok'), "
+            "('2024-01-01 00:01:00'::TIMESTAMP, '5.6.7.8', 'POST', 404, 'bad'), "
+            "('2024-01-01 00:02:00'::TIMESTAMP, '1.2.3.4', 'GET', 200, 'ok2') "
+            ") AS t(event_timestamp, source_ip, event_type, status_code, raw_message)"
+        )
+
+        metrics, rows = build_timeline(conn, source_ip="1.2.3.4")
+
+    assert metrics.total_events == 2
+    assert len(rows) == 2
+    assert all(r.source_ip == "1.2.3.4" for r in rows)
+
+
+def test_filter_by_min_status() -> None:
+    with Database(":memory:") as conn:
+        conn.execute(
+            "CREATE TABLE events AS SELECT * FROM (VALUES "
+            "('2024-01-01 00:00:00'::TIMESTAMP, '1.2.3.4', 'GET', 200, 'ok'), "
+            "('2024-01-01 00:01:00'::TIMESTAMP, '5.6.7.8', 'POST', 404, 'bad'), "
+            "('2024-01-01 00:02:00'::TIMESTAMP, '9.9.9.9', 'PUT', 500, 'worse') "
+            ") AS t(event_timestamp, source_ip, event_type, status_code, raw_message)"
+        )
+
+        metrics, rows = build_timeline(conn, min_status=400)
+
+    assert metrics.total_events == 2
+    assert len(rows) == 2
+    assert all(r.status_code is not None and r.status_code >= 400 for r in rows)
+
+
+def test_filter_by_event_type() -> None:
+    with Database(":memory:") as conn:
+        conn.execute(
+            "CREATE TABLE events AS SELECT * FROM (VALUES "
+            "('2024-01-01 00:00:00'::TIMESTAMP, '1.2.3.4', 'GET', 200, 'ok'), "
+            "('2024-01-01 00:01:00'::TIMESTAMP, '5.6.7.8', 'POST', 404, 'bad'), "
+            "('2024-01-01 00:02:00'::TIMESTAMP, '9.9.9.9', 'GET', 200, 'ok2') "
+            ") AS t(event_timestamp, source_ip, event_type, status_code, raw_message)"
+        )
+
+        metrics, rows = build_timeline(conn, event_type="POST")
+
+    assert metrics.total_events == 1
+    assert len(rows) == 1
+    assert rows[0].event_type == "POST"
+
+
+def test_filter_combined() -> None:
+    with Database(":memory:") as conn:
+        conn.execute(
+            "CREATE TABLE events AS SELECT * FROM (VALUES "
+            "('2024-01-01 00:00:00'::TIMESTAMP, '1.2.3.4', 'GET', 200, 'ok'), "
+            "('2024-01-01 00:01:00'::TIMESTAMP, '5.6.7.8', 'POST', 404, 'bad'), "
+            "('2024-01-01 00:02:00'::TIMESTAMP, '1.2.3.4', 'POST', 500, 'worse') "
+            ") AS t(event_timestamp, source_ip, event_type, status_code, raw_message)"
+        )
+
+        metrics, rows = build_timeline(conn, source_ip="1.2.3.4", min_status=400)
+
+    assert metrics.total_events == 1
+    assert len(rows) == 1
+    assert rows[0].source_ip == "1.2.3.4"
+    assert rows[0].status_code == 500
+
+
+def test_filter_no_match() -> None:
+    with Database(":memory:") as conn:
+        conn.execute(
+            "CREATE TABLE events AS SELECT * FROM (VALUES "
+            "('2024-01-01 00:00:00'::TIMESTAMP, '1.2.3.4', 'GET', 200, 'ok') "
+            ") AS t(event_timestamp, source_ip, event_type, status_code, raw_message)"
+        )
+
+        metrics, rows = build_timeline(conn, source_ip="9.9.9.9")
+
+    assert metrics.total_events == 0
+    assert len(rows) == 0
+
+
+def test_status_color_mapping() -> None:
+    assert _status_color(200) == "#4CAF50"
+    assert _status_color(201) == "#4CAF50"
+    assert _status_color(301) == "#FFC107"
+    assert _status_color(399) == "#FFC107"
+    assert _status_color(400) == "#FF9800"
+    assert _status_color(499) == "#FF9800"
+    assert _status_color(500) == "#f44336"
+    assert _status_color(503) == "#f44336"
+    assert _status_color(None) == "#888888"
