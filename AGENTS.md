@@ -5,13 +5,16 @@ This document defines the rules and principles for agentic coding in the **OVS-L
 ## 1. Architectural Principles
 
 ### 1.1 Layered Architecture
+
 Maintain a strict separation of concerns between layers:
+
 - **Core Layer (`src/ovs_logs/core/`):** Pure business logic, data models, and database interactions. Must be independent of the presentation layer.
 - **Service Layer (`src/ovs_logs/core/ingestion/`, etc.):** Orchestrates core components to perform high-level tasks.
 - **CLI Layer (`src/ovs_logs/cli/`):** Typer-based command-line interface. Should be a thin wrapper around the Core/Service layers.
 - **UI Layer (`src/ovs_logs/ui/`):** Streamlit-based web interface. Should focus on presentation and session state, calling the same Core/Service logic as the CLI.
 
 ### 1.2 SOLID Principles
+
 - **Single Responsibility:** Each class and module should have one reason to change.
 - **Open/Closed:** Entities should be open for extension but closed for modification.
 - **Liskov Substitution:** Subtypes must be substitutable for their base types.
@@ -19,6 +22,7 @@ Maintain a strict separation of concerns between layers:
 - **Dependency Inversion:** Depend on abstractions, not concretions. Use dependency injection where appropriate.
 
 ### 1.3 DRY, KISS, and YAGNI
+
 - **DRY (Don't Repeat Yourself):** Abstract common logic into reusable functions or classes. Avoid duplicating the ingestion or analysis engine between CLI and UI.
 - **KISS (Keep It Simple, Stupid):** Prefer simple, readable solutions over complex, "clever" ones.
 - **YAGNI (You Ain't Gonna Need It):** Do not implement features or abstractions until they are actually needed.

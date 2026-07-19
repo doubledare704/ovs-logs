@@ -63,14 +63,48 @@ class IncidentReport:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> IncidentReport:
-        """Reconstruct an incident report from a dictionary."""
+        """Reconstruct an incident report from a dictionary.
+
+        Tolerates the LLM emitting ``time`` instead of ``timestamp`` for
+        timeline events, and varying MITRE mapping key names (``technique``
+        aliased to ``technique_id``, ``name`` to ``technique_name``) or
+        omitting ``tactic``/``description``, by normalizing and supplying
+        sensible defaults before construction.
+        """
+        timeline = []
+        for raw_item in data.get("timeline", []):
+            if not isinstance(raw_item, dict):
+                continue
+            item = dict(raw_item)
+            if "time" in item and "timestamp" not in item:
+                item["timestamp"] = item.pop("time")
+            item.setdefault("timestamp", "")
+            item.setdefault("description", "")
+            timeline.append(TimelineEvent(**item))
+        mitre_mappings = []
+        for raw_item in data.get("mitre_mappings", []):
+            item = raw_item if isinstance(raw_item, dict) else {}
+            item = dict(item)
+            if "technique" in item and "technique_id" not in item:
+                item["technique_id"] = item.pop("technique")
+            if "name" in item and "technique_name" not in item:
+                item["technique_name"] = item.pop("name")
+            item.setdefault("tactic", "")
+            item.setdefault("description", item.get("technique_name", ""))
+            mitre_mappings.append(MitreMapping(**item))
+        indicators = []
+        for raw_item in data.get("indicators", []):
+            item = raw_item if isinstance(raw_item, dict) else {}
+            item = dict(item)
+            item.setdefault("description", "")
+            indicators.append(SuspiciousIndicator(**item))
         return cls(
             title=data["title"],
             summary=data["summary"],
             severity=data["severity"],
-            timeline=[TimelineEvent(**item) for item in data.get("timeline", [])],
-            mitre_mappings=[MitreMapping(**item) for item in data.get("mitre_mappings", [])],
+            timeline=timeline,
+            mitre_mappings=mitre_mappings,
             mitigation=MitigationArtifact(**data["mitigation"]),
-            indicators=[SuspiciousIndicator(**item) for item in data.get("indicators", [])],
+            indicators=indicators,
             metadata=data.get("metadata", {}),
         )

@@ -56,13 +56,21 @@ _ALLOWED_UPLOAD_TYPES: tuple[str, ...] = tuple(sorted(SUPPORTED_FORMATS))
 
 
 def _on_llm_preset_change() -> None:
-    """Clear user-entered endpoint/model when the preset changes.
+    """Reset endpoint/model to the newly selected preset's defaults.
 
-    The sidebar text inputs for LLM endpoint and model will re-read their
-    default values from ``LLM_PRESETS`` on the next rerun.
+    Streamlit's ``text_input`` restores its previous widget value from widget
+    state even when ``value=`` changes, so the session_state keys must be
+    overwritten explicitly to avoid a stale URL (e.g. a bare ``.../api`` host)
+    lingering and producing malformed requests.
     """
-    st.session_state.pop("llm_endpoint", None)
-    st.session_state.pop("llm_model", None)
+    preset = st.session_state.get("llm_preset")
+    preset_cfg = LLM_PRESETS.get(preset) if preset else None
+    if preset_cfg:
+        endpoint_default = (
+            settings.llm.api_url if preset_cfg.endpoint == DEFAULT_ENDPOINT_SENTINEL else preset_cfg.endpoint
+        )
+        st.session_state["llm_endpoint"] = endpoint_default
+        st.session_state["llm_model"] = preset_cfg.model or ""
 
 
 _KB = 1024
@@ -527,17 +535,22 @@ def render_sidebar() -> None:
     )
     preset_cfg = LLM_PRESETS[preset]
     endpoint_default = settings.llm.api_url if preset_cfg.endpoint == DEFAULT_ENDPOINT_SENTINEL else preset_cfg.endpoint
+    if "llm_endpoint" not in st.session_state:
+        st.session_state["llm_endpoint"] = endpoint_default
+    if "llm_model" not in st.session_state:
+        st.session_state["llm_model"] = preset_cfg.model or ""
     llm_endpoint = st.sidebar.text_input(
         "LLM endpoint",
-        value=st.session_state.get("llm_endpoint", endpoint_default),
         key="llm_endpoint",
     )
-    model_default = preset_cfg.model or ""
     llm_model = st.sidebar.text_input(
         "LLM model",
-        value=st.session_state.get("llm_model", model_default),
         key="llm_model",
     )
+
+    endpoint_value = st.session_state["llm_endpoint"]
+    _is_ollama = ":11434" in endpoint_value
+    st.session_state["LLM_OLLAMA_LOCAL"] = _is_ollama
 
     st.session_state["LLM_PRESET"] = preset
     st.session_state["LLM_ENDPOINT"] = llm_endpoint

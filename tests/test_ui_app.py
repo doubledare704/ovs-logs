@@ -10,17 +10,19 @@ import pytest
 import requests
 from streamlit.testing.v1 import AppTest
 
-from ovs_logs.config.settings import settings
-import ovs_logs.core.analysis.engine as engine_mod
-from ovs_logs.config.settings import Settings, settings as orig_settings
-from ovs_logs.core.ingestion import adapters as adapters_mod
+from ovs_logs.config.settings import Settings, settings
+from ovs_logs.core.analysis import engine
+from ovs_logs.core.ingestion import adapters
 from ovs_logs.core.persistence import ReportStore
 
 from .conftest import (
+    button_by_label,
+    checkbox_by_label,
     make_db,
     make_temp_file,
     sample_report,
     selectbox_by_label,
+    sidebar_button_by_label,
     text_input_by_label,
 )
 
@@ -55,8 +57,8 @@ def test_api_keys_default_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
     at = AppTest.from_file(str(APP_PATH)).run()
     assert at.session_state["ABUSEIPDB_API_KEY"] == "abuse-key-123"
     assert at.session_state["LLM_API_KEY"] == "llm-key-456"
-    assert at.sidebar.text_input[0].value == "abuse-key-123"
-    assert at.sidebar.text_input[1].value == "llm-key-456"
+    assert text_input_by_label(at, "AbuseIPDB API Key").value == "abuse-key-123"
+    assert text_input_by_label(at, "LLM API Key").value == "llm-key-456"
 
 
 def test_db_path_defaults_to_settings(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -208,7 +210,7 @@ def test_ingested_table_preview_after_process(tmp_path: Path) -> None:
     content = file_path.read_bytes()
     at.file_uploader[0].upload(file_path.name, content).run()
 
-    at.button[0].click().run()
+    button_by_label(at, "Process & Analyze").click().run()
 
     uploaded_files = at.session_state["uploaded_files"]
     assert uploaded_files[0]["status"] == "ingested"
@@ -299,7 +301,7 @@ def test_evtx_upload_preview_shows_records(tmp_path: Path, monkeypatch: pytest.M
                 }
             ]
 
-    monkeypatch.setattr(adapters_mod, "PyEvtxParser", FakeParser)
+    monkeypatch.setattr(adapters, "PyEvtxParser", FakeParser)
 
     at = AppTest.from_file(str(APP_PATH)).run()
     text_input_by_label(at, "Database path").set_value(str(db)).run()
@@ -330,7 +332,7 @@ def test_ingested_web_log_shows_potential_signals(tmp_path: Path) -> None:
 
     content = access_log.read_bytes()
     at.file_uploader[0].upload(access_log.name, content).run()
-    at.button[0].click().run()
+    button_by_label(at, "Process & Analyze").click().run()
 
     has_indicators = any(df.value is not None and "Type" in df.value.columns for df in at.dataframe)
     has_info = any("No suspicious indicators" in info.value or "No analyzable fields" in info.value for info in at.info)
@@ -368,8 +370,8 @@ def test_sidebar_llm_preset_clears_dependent_fields(monkeypatch: pytest.MonkeyPa
     # Switch preset to Ollama-local
     selectbox_by_label(at, "Provider preset").set_value("Ollama-local").run()
     assert at.session_state["LLM_PRESET"] == "Ollama-local"
-    assert at.session_state["LLM_ENDPOINT"] == "http://localhost:11434/v1/chat/completions"
-    assert at.session_state["LLM_MODEL"] == "llama3"
+    assert at.session_state["LLM_ENDPOINT"] == "http://localhost:11434"
+    assert at.session_state["LLM_MODEL"] == "qwen3.5:4b"
 
     # Switch preset to Custom — endpoint/model should be empty
     selectbox_by_label(at, "Provider preset").set_value("Custom").run()
@@ -393,18 +395,18 @@ def test_threat_list_caption_not_downloaded(
 
     # Point cache dir to an empty tmp directory so the app uses a
     # clean cache location (not the default .ovs_logs/threat_lists)
-    new_threat_lists = orig_settings.threat_lists.__class__(
+    new_threat_lists = settings.threat_lists.__class__(
         cache_dir=str(tmp_path / "empty_cache"),
         base_url="http://localhost",
         timeout=1,
     )
     (tmp_path / "empty_cache").mkdir(parents=True, exist_ok=True)
     new_settings = Settings(
-        abuseipdb=orig_settings.abuseipdb,
-        llm=orig_settings.llm,
-        thresholds=orig_settings.thresholds,
-        database=orig_settings.database,
-        text_parse=orig_settings.text_parse,
+        abuseipdb=settings.abuseipdb,
+        llm=settings.llm,
+        thresholds=settings.thresholds,
+        database=settings.database,
+        text_parse=settings.text_parse,
         threat_lists=new_threat_lists,
     )
     monkeypatch.setattr("ovs_logs.config.settings.settings", new_settings)
@@ -427,19 +429,19 @@ def test_threat_list_caption_up_to_date_when_cached(
     (cache_dir / "firehol_level1.netset").write_text("10.0.0.0/8\n", encoding="utf-8")
 
     # Replace the settings singleton so the app uses our test cache dir.
-    # We use orig_settings' defaults for all other fields.
-    new_threat_lists = orig_settings.threat_lists.__class__(
+    # We use settings' defaults for all other fields.
+    new_threat_lists = settings.threat_lists.__class__(
         cache_dir=str(cache_dir),
         base_url="http://localhost",
         timeout=1,
         max_age_hours=24,
     )
     new_settings = Settings(
-        abuseipdb=orig_settings.abuseipdb,
-        llm=orig_settings.llm,
-        thresholds=orig_settings.thresholds,
-        database=orig_settings.database,
-        text_parse=orig_settings.text_parse,
+        abuseipdb=settings.abuseipdb,
+        llm=settings.llm,
+        thresholds=settings.thresholds,
+        database=settings.database,
+        text_parse=settings.text_parse,
         threat_lists=new_threat_lists,
     )
     monkeypatch.setattr("ovs_logs.config.settings.settings", new_settings)
@@ -468,15 +470,16 @@ def test_threat_list_checkboxes_toggle_session_state(
     assert at.session_state["threat_lists_enabled"] == ["firehol_level1", "firehol_abusers_30d"]
 
     # Uncheck the first checkbox
-    at.sidebar.checkbox[0].uncheck().run()
+    checkbox_by_label(at, "firehol_level1").uncheck().run()
     assert at.session_state["threat_lists_enabled"] == ["firehol_abusers_30d"]
 
     # Uncheck the second as well
-    at.sidebar.checkbox[1].uncheck().run()
+    checkbox_by_label(at, "firehol_abusers_30d").uncheck().run()
     assert at.session_state["threat_lists_enabled"] == []
 
 
 def test_threat_list_update_button_creates_empty_state(
+    tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Clicking the update button shows an error (no cached files) rather
@@ -485,13 +488,31 @@ def test_threat_list_update_button_creates_empty_state(
     monkeypatch.delenv("ABUSEIPDB_API_KEY", raising=False)
     monkeypatch.delenv("LLM_API_KEY", raising=False)
 
+    # Point cache dir to an empty tmp directory so there are no cached
+    # files to fall back on when the download fails.
+    new_threat_lists = settings.threat_lists.__class__(
+        cache_dir=str(tmp_path / "empty_cache"),
+        base_url="http://localhost",
+        timeout=1,
+    )
+    (tmp_path / "empty_cache").mkdir(parents=True, exist_ok=True)
+    new_settings = Settings(
+        abuseipdb=settings.abuseipdb,
+        llm=settings.llm,
+        thresholds=settings.thresholds,
+        database=settings.database,
+        text_parse=settings.text_parse,
+        threat_lists=new_threat_lists,
+    )
+    monkeypatch.setattr("ovs_logs.config.settings.settings", new_settings)
+
     # Mock requests.get (used by download_list when no session is passed)
     # to prevent accidental network access during testing.
     mock_get = Mock(side_effect=requests.ConnectionError("test: simulated network error"))
     monkeypatch.setattr("ovs_logs.core.threat_lists.requests.get", mock_get)
 
     at = AppTest.from_file(str(APP_PATH)).run()
-    at.sidebar.button[0].click().run()
+    sidebar_button_by_label(at, "Update threat lists").click().run()
     assert not at.exception
 
     # Failures must render via st.sidebar.error, never as a success
@@ -515,18 +536,18 @@ def test_threat_list_update_button_offline_cached(
     (cache_dir / "firehol_abusers_30d.netset").write_text("10.0.0.0/8\n", encoding="utf-8")
 
     # Patch settings to use our test cache dir
-    new_threat_lists = orig_settings.threat_lists.__class__(
+    new_threat_lists = settings.threat_lists.__class__(
         cache_dir=str(cache_dir),
         base_url="http://localhost",
         timeout=1,
         max_age_hours=24,
     )
     new_settings = Settings(
-        abuseipdb=orig_settings.abuseipdb,
-        llm=orig_settings.llm,
-        thresholds=orig_settings.thresholds,
-        database=orig_settings.database,
-        text_parse=orig_settings.text_parse,
+        abuseipdb=settings.abuseipdb,
+        llm=settings.llm,
+        thresholds=settings.thresholds,
+        database=settings.database,
+        text_parse=settings.text_parse,
         threat_lists=new_threat_lists,
     )
     monkeypatch.setattr("ovs_logs.config.settings.settings", new_settings)
@@ -536,7 +557,7 @@ def test_threat_list_update_button_offline_cached(
     monkeypatch.setattr("ovs_logs.core.threat_lists.requests.get", mock_get)
 
     at = AppTest.from_file(str(APP_PATH)).run()
-    at.sidebar.button[0].click().run()
+    sidebar_button_by_label(at, "Update threat lists").click().run()
     assert not at.exception
 
     # Sidebar should show the offline cached warning
@@ -566,14 +587,14 @@ def test_analysis_duckdb_error_shows_st_error(
     )
 
     # Monkey-patch AnalysisEngine.run_queries to raise duckdb.Error
-    def broken_run(self: engine_mod.AnalysisEngine, connection: duckdb.DuckDBPyConnection, **kwargs: object) -> object:  # type: ignore[no-untyped-def]
+    def broken_run(self: engine.AnalysisEngine, connection: duckdb.DuckDBPyConnection, **kwargs: object) -> object:  # type: ignore[no-untyped-def]
         raise duckdb.Error("simulated query failure")
 
-    monkeypatch.setattr(engine_mod.AnalysisEngine, "run_queries", broken_run)
+    monkeypatch.setattr(engine.AnalysisEngine, "run_queries", broken_run)
 
     at = AppTest.from_file(str(APP_PATH)).run()
-    at.sidebar.text_input[2].set_value(str(db)).run()
-    at.sidebar.selectbox[0].set_value("events_like").run()
+    text_input_by_label(at, "Database path").set_value(str(db)).run()
+    selectbox_by_label(at, "Select a table").set_value("events_like").run()
     assert not at.exception
 
     # Should show st.error, not st.info
@@ -596,7 +617,7 @@ def test_threat_list_sidebar_renders_alongside_other_inputs(
     # Verify all expected sidebar elements exist
     assert len(at.sidebar.checkbox) == 2
     assert len(at.sidebar.button) == 1
-    assert len(at.sidebar.text_input) == 3
+    assert len(at.sidebar.text_input) == 5
     assert len(at.sidebar.selectbox) >= 0  # may be 0 if no db file
 
     # Verify order: checkboxes are firehol_level1, firehol_abusers_30d

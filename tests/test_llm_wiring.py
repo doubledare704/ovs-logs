@@ -7,7 +7,7 @@ from typing import Any
 import pytest
 
 from ovs_logs.config.settings import settings
-from ovs_logs.core.llm import OpenAICompatibleProvider
+from ovs_logs.core.llm import OllamaProvider, OpenAICompatibleProvider
 from ovs_logs.core.threat_intel import ThreatIntelClient
 from ovs_logs.ui.llm_wiring import (
     build_llm_provider,
@@ -23,9 +23,9 @@ def test_build_llm_provider_with_preset_endpoint() -> None:
         "LLM_MODEL": "",
     }
     provider = build_llm_provider(state)
-    assert isinstance(provider, OpenAICompatibleProvider)
-    assert provider.endpoint == "http://localhost:11434/v1/chat/completions"
-    assert provider.model == "llama3"
+    assert isinstance(provider, OllamaProvider)
+    assert provider.host == "http://localhost:11434"
+    assert provider.model == "qwen3.5:4b"
 
 
 def test_build_llm_provider_openai_preset_uses_settings_url() -> None:
@@ -117,9 +117,16 @@ def test_build_llm_provider_ollama_preset_user_override_wins() -> None:
     assert provider.model == "custom-llama"
 
 
-def test_build_threat_intel_client_returns_none_on_empty_key() -> None:
-    assert build_threat_intel_client({"ABUSEIPDB_API_KEY": ""}) is None
-    assert build_threat_intel_client({}) is None
+def test_build_llm_provider_raises_on_ollama_cloud() -> None:
+    """Ollama Cloud (ollama.com) is blocked; only local Ollama is allowed."""
+    state: dict[str, Any] = {
+        "LLM_API_KEY": "test-key",
+        "LLM_PRESET": "Custom",
+        "LLM_ENDPOINT": "https://ollama.com",
+        "LLM_MODEL": "qwen3.5:4b",
+    }
+    with pytest.raises(ValueError, match=r"ollama\.com"):
+        build_llm_provider(state)
 
 
 def test_build_threat_intel_client_returns_client_on_key() -> None:

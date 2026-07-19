@@ -136,7 +136,7 @@ The OVS-Log sidebar excludes `information_schema`, `pg_catalog`, and any
 `sqlite_*` / `pg_*` prefixed names. Assert that explicitly:
 
 ```python
-db = _make_db(
+db = make_db(
     tmp_path,
     [
         ("events_2026", "SELECT 1 AS id"),
@@ -145,8 +145,8 @@ db = _make_db(
     ],
 )
 at = AppTest.from_file(str(APP_PATH)).run()
-at.sidebar.text_input[2].set_value(str(db)).run()
-sb = at.sidebar.selectbox[0]
+text_input_by_label(at, "Database path").set_value(str(db)).run()
+sb = selectbox_by_label(at, "Select a table")
 assert "events_2026" in sb.options
 assert "sqlite_should_hide" not in sb.options
 ```
@@ -154,10 +154,10 @@ assert "sqlite_should_hide" not in sb.options
 ### 3.3 Verify the table list refreshes when the DB path changes
 
 ```python
-at.sidebar.text_input[2].set_value(str(db_a)).run()
-assert at.sidebar.selectbox[0].options == ["alpha"]
-at.sidebar.text_input[2].set_value(str(db_b)).run()
-assert at.sidebar.selectbox[0].options == ["beta"]
+text_input_by_label(at, "Database path").set_value(str(db_a)).run()
+assert selectbox_by_label(at, "Select a table").options == ["alpha"]
+text_input_by_label(at, "Database path").set_value(str(db_b)).run()
+assert selectbox_by_label(at, "Select a table").options == ["beta"]
 assert at.session_state["selected_table"] == "beta"
 ```
 
@@ -187,7 +187,92 @@ assert at.session_state["selected_table"] == "beta"
    (avoids stale handles when the path changes) and works fine under
    AppTest.
 
-## 5. Running the tests
+## 5. Label-based helpers (`tests/conftest.py`)
+
+Avoid hard-coded widget indices like ``at.sidebar.text_input[2]`` or
+``at.sidebar.selectbox[0]`` — they break silently when the sidebar layout
+changes (e.g. adding a new text input shifts all subsequent indices).
+
+The project provides **label-based helpers** that resolve widgets by their
+visible label text instead of position. Import them from
+``tests.conftest``:
+
+```python
+from .conftest import (
+    button_by_label,
+    checkbox_by_label,
+    selectbox_by_label,
+    sidebar_button_by_label,
+    text_input_by_label,
+)
+```
+
+All helpers follow the same pattern — accept ``(at: AppTest, label: str)``,
+iterate the matching widget list, and raise a clear ``AssertionError`` if no
+match is found.
+
+### 5.1 ``text_input_by_label``
+
+Resolve a sidebar text input by its label text:
+
+```python
+text_input_by_label(at, "Database path").set_value(str(db)).run()
+assert text_input_by_label(at, "LLM API Key").value == "sk-..."
+```
+
+This is the most commonly needed helper because the sidebar has several
+text inputs (API keys, LLM endpoint, LLM model, database path).
+
+### 5.2 ``selectbox_by_label``
+
+Resolve a sidebar selectbox by its label text:
+
+```python
+selectbox_by_label(at, "Select a table").set_value("events_2026").run()
+assert selectbox_by_label(at, "Provider preset").options == ["OpenAI", "Ollama-local", "Azure", "Custom"]
+```
+
+### 5.3 ``checkbox_by_label``
+
+Resolve a sidebar checkbox by its label text:
+
+```python
+checkbox_by_label(at, "firehol_level1").uncheck().run()
+checkbox_by_label(at, "firehol_abusers_30d").check().run()
+```
+
+### 5.4 ``sidebar_button_by_label``
+
+Resolve a **sidebar** button (e.g., "Update threat lists") by its label:
+
+```python
+sidebar_button_by_label(at, "Update threat lists").click().run()
+```
+
+### 5.5 ``button_by_label``
+
+Resolve a **main-page** button by its label:
+
+```python
+# Click the "Process & Analyze" button to ingest an uploaded file
+button_by_label(at, "Process & Analyze").click().run()
+```
+
+### 5.6 When to keep index-based access
+
+Label-based helpers are for **finding widgets to interact with** (set values,
+click, check/uncheck, read values). Some assertions intentionally verify
+**ordering and layout** — for example:
+
+```python
+assert at.sidebar.text_input[0].label == "AbuseIPDB API Key"
+assert at.sidebar.text_input[1].label == "LLM API Key"
+```
+
+These should stay as index-based assertions because they document and
+test the expected widget order.
+
+## 6. Running the tests
 
 ```bash
 uv run pytest tests/test_ui_app.py -v   # one file

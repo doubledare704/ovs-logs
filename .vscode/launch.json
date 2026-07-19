@@ -1,0 +1,31 @@
+{
+  // See https://code.visualstudio.com/docs/python/debugging
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Debug: Streamlit UI (app.py)",
+      "type": "debugpy",
+      "request": "launch",
+      "python": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
+      "module": "streamlit",
+      "args": [
+        "run",
+        "${workspaceFolder}/src/ovs_logs/ui/app.py",
+        "--server.address",
+        "localhost",
+        "--server.port",
+        "8501",
+        "--server.headless",
+        "true",
+        "--server.runOnSave",
+        "true"
+      ],
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}/src"
+      },
+      "console": "integratedTerminal",
+      "justMyCode": false
+    }
+  ]
+}

@@ -12,15 +12,17 @@ import logging
 import re
 
 import duckdb
+import httpx
 import requests
 import streamlit as st
 
 from ovs_logs.core.analysis.indicators import SuspiciousIndicator
-from ovs_logs.core.llm import LLMSynthesizer, OpenAICompatibleProvider
+from ovs_logs.core.llm import LLMSynthesizer
 from ovs_logs.core.persistence import ReportStore
 from ovs_logs.core.report import IncidentReport, MitreMapping
 from ovs_logs.core.threat_intel import ThreatIntelClient, ThreatIntelError
 from ovs_logs.ui.analysis_view import compute_indicators, render_analysis_results
+from ovs_logs.ui.llm_wiring import build_llm_provider
 from ovs_logs.ui.report_display import report_date_label, severity_label
 
 logger = logging.getLogger(__name__)
@@ -63,7 +65,7 @@ def _generate_and_save_report(
     enrich_intel: bool,
 ) -> None:
     """Synthesize an incident report from ``indicators`` and persist it."""
-    if not st.session_state.get("LLM_API_KEY"):
+    if not st.session_state.get("LLM_API_KEY") and not st.session_state.get("LLM_OLLAMA_LOCAL"):
         st.error("Report generation requires an LLM API key. Set it in the sidebar.")
         return
 
@@ -77,16 +79,12 @@ def _generate_and_save_report(
             st.warning("AbuseIPDB enrichment failed; continuing without it.")
             threat_intel = None
 
-    provider = OpenAICompatibleProvider(
-        api_key=st.session_state["LLM_API_KEY"],
-        endpoint=st.session_state.get("LLM_ENDPOINT") or None,
-        model=st.session_state.get("LLM_MODEL") or None,
-    )
+    provider = build_llm_provider(dict(st.session_state))
 
     try:
         synthesizer = LLMSynthesizer(provider)
         report = synthesizer.synthesize(indicators, threat_intel=threat_intel)
-    except (ValueError, requests.exceptions.RequestException):
+    except (ValueError, requests.exceptions.RequestException, httpx.RequestError):
         logger.exception("LLM synthesis failed for table %s", table_name)
         st.error("LLM synthesis failed. The response was incomplete.")
         return
@@ -120,7 +118,7 @@ def render_intelligence_tab(connection: duckdb.DuckDBPyConnection, table_name: s
             generate_clicked = st.form_submit_button(
                 "Generate Report",
                 type="primary",
-                disabled=not st.session_state.get("LLM_API_KEY"),
+                disabled=not (st.session_state.get("LLM_API_KEY") or st.session_state.get("LLM_OLLAMA_LOCAL")),
             )
 
     if generate_clicked:
