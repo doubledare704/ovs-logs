@@ -84,7 +84,7 @@ def _generate_and_save_report(
     try:
         synthesizer = LLMSynthesizer(provider)
         report = synthesizer.synthesize(indicators, threat_intel=threat_intel)
-    except (ValueError, requests.exceptions.RequestException, httpx.TimeoutException):
+    except (ValueError, requests.exceptions.RequestException, httpx.RequestError):
         logger.exception("LLM synthesis failed for table %s", table_name)
         st.error("LLM synthesis failed. The response was incomplete.")
         return

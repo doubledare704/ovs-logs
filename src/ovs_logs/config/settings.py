@@ -32,7 +32,7 @@ class LLMSettings:
 
     api_url: str = "https://api.openai.com/v1/chat/completions"
     model: str = "gpt-4o-mini"
-    timeout: int = 60
+    timeout: int = 60 * 5
 
 
 @dataclass(frozen=True)
