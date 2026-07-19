@@ -264,7 +264,7 @@ def _process_ready_files(db_path: str) -> None:
         st.error("Set a valid database path in the sidebar before ingesting files.")
         return
 
-    ready_files = [file_state for file_state in st.session_state["uploaded_files"] if file_state["status"] == "ready"]
+    ready_files = [file_state for file_state in st.session_state[SK.uploaded_files] if file_state["status"] == "ready"]
     if not ready_files:
         st.warning("No validated uploads are ready for ingestion.")
         return
@@ -304,7 +304,7 @@ def _process_ready_files(db_path: str) -> None:
 
 
 def _render_uploaded_files_overview() -> None:
-    uploaded_files = st.session_state["uploaded_files"]
+    uploaded_files = st.session_state[SK.uploaded_files]
     if not uploaded_files:
         st.info("Upload one or more log files to begin ingestion and preview.")
         return
@@ -338,7 +338,7 @@ def _render_uploaded_files_overview() -> None:
 
 
 def _render_upload_status_summary() -> None:
-    uploaded_files = st.session_state["uploaded_files"]
+    uploaded_files = st.session_state[SK.uploaded_files]
     if not uploaded_files:
         return
 
@@ -385,7 +385,7 @@ def _render_selected_table(connection: duckdb.DuckDBPyConnection, table_name: st
 
 def _render_ingested_table_preview() -> None:
     ingested_files = [
-        file_state for file_state in st.session_state["uploaded_files"] if file_state["status"] == "ingested"
+        file_state for file_state in st.session_state[SK.uploaded_files] if file_state["status"] == "ingested"
     ]
     if not ingested_files:
         return
@@ -394,7 +394,7 @@ def _render_ingested_table_preview() -> None:
 
     normalized_tables = sorted({f["normalized_table"] for f in ingested_files if f.get("normalized_table")})
     if normalized_tables:
-        db_path = st.session_state.get("db_path", settings.database.path)
+        db_path = st.session_state.get(SK.db_path, settings.database.path)
         if db_path:
             st.subheader("Potential signals")
             try:
@@ -412,7 +412,7 @@ def _render_ingested_table_preview() -> None:
             st.write(
                 f"Normalized events table: {file_state['normalized_table']} ({file_state['normalized_row_count']} rows)"
             )
-            db_path = st.session_state.get("db_path", settings.database.path)
+            db_path = st.session_state.get(SK.db_path, settings.database.path)
             if db_path and file_state["ingest_table"]:
                 try:
                     with Database(db_path) as connection:
@@ -454,7 +454,7 @@ def _render_sidebar_threat_lists() -> None:  # noqa: PLR0912
         checked = st.sidebar.checkbox(
             list_name,
             value=True,
-            key=f"threat_list_{list_name}",
+            key=f"{SK.widget_threat_list_prefix}{list_name}",
             help=f"Enable matching against {list_name}",
         )
         if checked:
@@ -479,7 +479,7 @@ def _render_sidebar_threat_lists() -> None:  # noqa: PLR0912
         logger.warning("Unable to check threat-list freshness: %s", exc)
         st.sidebar.caption("Threat list cache unavailable")
 
-    if not st.sidebar.button("Update threat lists", key="update_threat_lists"):
+    if not st.sidebar.button("Update threat lists", key=SK.widget_update_threat_lists):
         return
     if not enabled:
         st.sidebar.warning("Enable at least one threat list first.")
@@ -515,7 +515,7 @@ def render_sidebar() -> None:
         "AbuseIPDB API Key",
         value=os.getenv("ABUSEIPDB_API_KEY", ""),
         type="password",
-        key="abuseipdb_api_key",
+        key=SK.widget_abuseipdb_key,
         help="Used by the threat intelligence enrichment step.",
     )
     st.session_state[SK.abuseipdb_api_key] = abuseipdb_key
@@ -524,7 +524,7 @@ def render_sidebar() -> None:
         "LLM API Key",
         value=os.getenv("LLM_API_KEY", ""),
         type="password",
-        key="llm_api_key",
+        key=SK.widget_llm_key,
         help="Used by the LLM provider to synthesize incident context.",
     )
     st.session_state[SK.llm_api_key] = llm_key
@@ -536,7 +536,7 @@ def render_sidebar() -> None:
         "Provider preset",
         options=preset_names,
         index=preset_names.index("OpenAI"),
-        key="llm_preset",
+        key=SK.widget_llm_preset,
         on_change=_on_llm_preset_change,
     )
     preset_cfg = LLM_PRESETS[preset]
@@ -566,8 +566,8 @@ def render_sidebar() -> None:
 
     db_path = st.sidebar.text_input(
         "Database path",
-        value=st.session_state.get("db_path", settings.database.path),
-        key="db_path",
+        value=st.session_state.get(SK.db_path, settings.database.path),
+        key=SK.widget_db_path,
         help="Path to the local DuckDB file used for ingestion and analysis.",
     )
 
@@ -618,7 +618,7 @@ def main() -> None:  # noqa: PLR0912, PLR0915
     _initialize_session_state()
     render_sidebar()
 
-    db_path = st.session_state.get("db_path", settings.database.path)
+    db_path = st.session_state.get(SK.db_path, settings.database.path)
     selected_table = st.session_state.get(SK.selected_table)
 
     tab_ingest, tab_timeline, tab_intel, tab_mit = st.tabs(
@@ -631,7 +631,7 @@ def main() -> None:  # noqa: PLR0912, PLR0915
             "Upload log files",
             type=list(_ALLOWED_UPLOAD_TYPES),
             accept_multiple_files=True,
-            key="log_file_uploader",
+            key=SK.widget_log_file_uploader,
         )
 
         if uploaded_files:
@@ -642,22 +642,22 @@ def main() -> None:  # noqa: PLR0912, PLR0915
                 elif created and uploaded_file.size > _LARGE_FILE_BYTES:
                     st.warning(f"This is a large upload ({_format_size(uploaded_file.size)}). Preview is limited.")
 
-        for file_state in st.session_state["uploaded_files"]:
+        for file_state in st.session_state[SK.uploaded_files]:
             if file_state["status"] == "pending":
                 _validate_uploaded_file(file_state)
 
         _render_upload_status_summary()
         _render_uploaded_files_overview()
 
-        if st.button("Process & Analyze", key="process_ingest"):
-            _process_ready_files(st.session_state.get("db_path", settings.database.path))
+        if st.button("Process & Analyze", key=SK.widget_process_ingest):
+            _process_ready_files(st.session_state.get(SK.db_path, settings.database.path))
 
         _render_ingested_table_preview()
 
         ingested_normalized = sorted(
             {
                 file_state["normalized_table"]
-                for file_state in st.session_state.get("uploaded_files", [])
+                for file_state in st.session_state.get(SK.uploaded_files, [])
                 if file_state.get("status") == "ingested" and file_state.get("normalized_table")
             }
         )
