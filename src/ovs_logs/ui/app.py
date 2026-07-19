@@ -25,6 +25,7 @@ from ovs_logs.config.settings import DEFAULT_ENDPOINT_SENTINEL, LLM_PRESETS, set
 from ovs_logs.core.constants import KB, MB
 from ovs_logs.core.database import Database
 from ovs_logs.core.ingestion.adapters import iter_evtx_record_summaries
+from ovs_logs.core.llm import is_ollama_endpoint
 from ovs_logs.core.normalization import NormalizationEngine
 from ovs_logs.core.sql_utils import quote_identifier
 from ovs_logs.core.text_parsing import ADAPTERS
@@ -183,6 +184,20 @@ def _find_uploaded_file(uploaded_files: list[dict[str, Any]], content_hash: str)
 
 
 def _register_uploaded_file(uploaded_file: UploadedFile) -> tuple[bool, str | None]:
+    """Register a newly uploaded file for the ingest pipeline.
+
+    Saves the file to a temporary location, computes a content hash for
+    deduplication, and appends a metadata dict to ``uploaded_files`` in
+    session state.  Returns a ``(created, message)`` pair: ``created`` is
+    ``True`` when the file was newly registered, ``False`` when it is a
+    duplicate or has already been consumed.  *message* contains a warning
+    string for duplicates and is ``None`` on success.
+
+    The ``consumed_uploads`` set tracks which ``(name, size)`` pairs have
+    already been processed in *this* re-run (Streamlit fires the uploader
+    callback multiple times), while ``uploaded_files`` persists
+    cross-run metadata so the main pipeline knows which files to ingest.
+    """
     upload_id = f"{uploaded_file.name}:{uploaded_file.size}"
     if upload_id in st.session_state.get(SK.consumed_uploads, set()):
         return False, None
@@ -430,14 +445,60 @@ def _render_ingested_table_preview() -> None:
                     st.error(f"Unable to preview ingested table: {exc}")
 
 
-def _render_sidebar_threat_lists() -> None:  # noqa: PLR0912
+def _threat_list_freshness_caption(enabled: list[str], cache_dir: str) -> None:
+    """Show a sidebar caption with the freshness status of threat lists."""
+    try:
+        if enabled and tl_is_loaded(enabled, cache_dir):
+            stale = tl_stale_lists(
+                enabled,
+                cache_dir,
+                max_age_hours=settings.threat_lists.max_age_hours,
+            )
+            if stale:
+                st.sidebar.caption(f"Stale lists: {', '.join(stale)}")
+            else:
+                st.sidebar.caption("Threat lists up to date")
+        else:
+            st.sidebar.caption("Threat lists not yet downloaded")
+    except OSError as exc:
+        logger.warning("Unable to check threat-list freshness: %s", exc)
+        st.sidebar.caption("Threat list cache unavailable")
+
+
+def _threat_list_download(enabled: list[str], cache_dir: str) -> None:
+    """Download or refresh the enabled threat lists, rendering results."""
+    if not enabled:
+        st.sidebar.warning("Enable at least one threat list first.")
+        return
+    with st.spinner("Downloading threat lists..."):
+        try:
+            tl_ensure_cache_dir(cache_dir)
+            results = tl_update_lists(
+                enabled,
+                cache_dir,
+                timeout=settings.threat_lists.timeout,
+                base_url=settings.threat_lists.base_url,
+            )
+            cached = [k for k, v in results.items() if v == "cached"]
+            errors = [f"{k}: {v}" for k, v in results.items() if v.startswith("error")]
+            succeeded = [f"{k}: {v}" for k, v in results.items() if v in ("updated", "unchanged")]
+            if cached:
+                st.sidebar.warning(f"Offline — using cached data for: {', '.join(cached)}")
+            if errors:
+                st.sidebar.error("; ".join(errors))
+            if succeeded:
+                st.sidebar.success("; ".join(succeeded))
+        except OSError as exc:
+            logger.exception("Failed to update threat lists")
+            st.sidebar.error(f"Failed to update threat lists: {exc}")
+
+
+def _render_sidebar_threat_lists() -> None:
     """Render the Threat Lists sidebar section with checkboxes, freshness
     caption, and an update button.
 
-    This section is extracted into its own function to reduce the complexity
-    of :func:`render_sidebar`. All state is persisted via ``st.session_state``.
-    Errors in threat-list operations are caught gracefully and shown as
-    sidebar warnings, never breaking the rest of the UI.
+    Delegates freshness-checking and downloading to dedicated helpers so
+    the main function stays readable.
     """
     st.sidebar.subheader("Threat Lists")
 
@@ -461,50 +522,11 @@ def _render_sidebar_threat_lists() -> None:  # noqa: PLR0912
             enabled.append(list_name)
     st.session_state[SK.threat_lists_enabled] = enabled
 
-    # Freshness caption (best-effort, never breaks sidebar)
-    try:
-        if enabled and tl_is_loaded(enabled, threat_cache_dir):
-            stale = tl_stale_lists(
-                enabled,
-                threat_cache_dir,
-                max_age_hours=settings.threat_lists.max_age_hours,
-            )
-            if stale:
-                st.sidebar.caption(f"Stale lists: {', '.join(stale)}")
-            else:
-                st.sidebar.caption("Threat lists up to date")
-        else:
-            st.sidebar.caption("Threat lists not yet downloaded")
-    except OSError as exc:
-        logger.warning("Unable to check threat-list freshness: %s", exc)
-        st.sidebar.caption("Threat list cache unavailable")
+    _threat_list_freshness_caption(enabled, threat_cache_dir)
 
     if not st.sidebar.button("Update threat lists", key=SK.widget_update_threat_lists):
         return
-    if not enabled:
-        st.sidebar.warning("Enable at least one threat list first.")
-        return
-    with st.spinner("Downloading threat lists..."):
-        try:
-            tl_ensure_cache_dir(threat_cache_dir)
-            results = tl_update_lists(
-                enabled,
-                threat_cache_dir,
-                timeout=settings.threat_lists.timeout,
-                base_url=settings.threat_lists.base_url,
-            )
-            cached = [k for k, v in results.items() if v == "cached"]
-            errors = [f"{k}: {v}" for k, v in results.items() if v.startswith("error")]
-            succeeded = [f"{k}: {v}" for k, v in results.items() if v in ("updated", "unchanged")]
-            if cached:
-                st.sidebar.warning(f"Offline — using cached data for: {', '.join(cached)}")
-            if errors:
-                st.sidebar.error("; ".join(errors))
-            if succeeded:
-                st.sidebar.success("; ".join(succeeded))
-        except OSError as exc:
-            logger.exception("Failed to update threat lists")
-            st.sidebar.error(f"Failed to update threat lists: {exc}")
+    _threat_list_download(enabled, threat_cache_dir)
 
 
 def render_sidebar() -> None:
@@ -555,7 +577,7 @@ def render_sidebar() -> None:
     )
 
     endpoint_value = st.session_state[SK.widget_llm_endpoint]
-    _is_ollama = ":11434" in endpoint_value
+    _is_ollama = is_ollama_endpoint(endpoint_value)
     st.session_state[SK.llm_ollama_local] = _is_ollama
 
     st.session_state[SK.llm_preset] = preset

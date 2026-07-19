@@ -7,6 +7,7 @@ import logging
 import re
 from abc import ABC, abstractmethod
 from typing import Any, ClassVar
+from urllib.parse import urlparse
 
 import requests
 from ollama import Client, ResponseError
@@ -132,6 +133,30 @@ _ERR_CLOUD_BLOCKED = (
 )
 
 
+_OLLAMA_PORT = 11434
+
+
+def is_ollama_endpoint(url: str) -> bool:
+    """Return True when *url* points to a local Ollama server.
+
+    Parses the URL and checks for ``hostname == "localhost"`` (or
+    ``127.0.0.1``) **and** ``port == 11434``.  Uses proper URL parsing
+    instead of fragile substring matching so that an endpoint like
+    ``http://10.0.0.1:11434`` or ``https://example.com:11434`` is not
+    accidentally classified as local Ollama.
+
+    Handles schemeless URLs (e.g. ``localhost:11434``) by prepending
+    ``//`` so that ``urlparse`` does not mistake the hostname for the
+    scheme component.
+    """
+    if "://" not in url:
+        url = "//" + url
+    parsed = urlparse(url)
+    hostname = parsed.hostname or ""
+    port = parsed.port
+    return port == _OLLAMA_PORT and hostname in ("localhost", "127.0.0.1")
+
+
 def create_llm_provider(
     api_key: str,
     endpoint: str | None = None,
@@ -158,7 +183,7 @@ def create_llm_provider(
     endpoint_key = endpoint or settings.llm.api_url
     if "ollama.com" in endpoint_key:
         raise ValueError(_ERR_CLOUD_BLOCKED)
-    if ":11434" in endpoint_key:
+    if is_ollama_endpoint(endpoint_key):
         return OllamaProvider(api_key=api_key, endpoint=endpoint, model=model, timeout=timeout)
     if not api_key:
         raise ValueError(_ERR_API_KEY_REQUIRED)
