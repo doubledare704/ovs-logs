@@ -7,9 +7,28 @@ import uuid
 
 from ovs_logs.core.validation import LogFile
 
+_IDENTIFIER_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
+"""Pattern for a valid, unquoted SQL identifier."""
+
+_INVALID_IDENTIFIER_MSG = "Invalid SQL identifier: {!r}"
+
 
 def quote_identifier(identifier: str) -> str:
-    """Quote an identifier safely for DuckDB SQL."""
+    """Quote and validate an identifier safely for DuckDB SQL.
+
+    Validates that the identifier is non-empty and matches the pattern
+    ``[a-zA-Z_][a-zA-Z0-9_]*`` before wrapping it in double quotes with
+    standard escaping.  Raises ``ValueError`` for empty or unambiguously
+    invalid identifiers (e.g. those containing null bytes).
+
+    Note: DuckDB quoted identifiers can technically hold any string, but this
+    function intentionally restricts to the common bare-identifier character
+    set to catch programmer mistakes early.  For column names sourced from
+    ``DESCRIBE`` introspection (which always returns valid identifiers) this
+    is safe.
+    """
+    if not _IDENTIFIER_RE.match(identifier):
+        raise ValueError(_INVALID_IDENTIFIER_MSG.format(identifier))
     return '"' + identifier.replace('"', '""') + '"'
 
 

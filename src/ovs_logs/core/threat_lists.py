@@ -220,11 +220,13 @@ def parse_netset(path: Path) -> list[str]:
 
 
 @functools.lru_cache(maxsize=32)
-def _load_networks_cached(path_str: str, mtime: float) -> tuple[tuple[str, str, Any], ...]:
+def _load_networks_cached(path_str: str, mtime_ns: int) -> tuple[tuple[str, str, Any], ...]:
     """Memoized helper that parses a netset file into ``(name, cidr_str, ip_network)`` tuples.
 
-    The cache key includes the file path and modification time so that reruns
-    (e.g. Streamlit) avoid re-parsing thousands of CIDRs.
+    The cache key includes the file path and modification time (nanosecond
+    precision) so that reruns (e.g. Streamlit) avoid re-parsing thousands of
+    CIDRs.  Using ``st_mtime_ns`` instead of ``st_mtime`` prevents stale cache
+    hits when the file is updated twice within the same clock second.
     """
     path = Path(path_str)
     name = path.stem  # e.g. "firehol_level1"
@@ -242,7 +244,7 @@ def load_networks(names: list[str], cache_dir: str) -> list[tuple[str, str, Any]
     """Parse cached netsets into ``(name, cidr_str, ip_network)`` tuples.
 
     Each network is tagged with its list name. Parsing is memoized by
-    ``(path, mtime)``.
+    ``(path, mtime_ns)`` (nanosecond precision).
     """
     networks: list[tuple[str, str, Any]] = []
     for name in names:
@@ -250,8 +252,8 @@ def load_networks(names: list[str], cache_dir: str) -> list[tuple[str, str, Any]
         if not path.is_file():
             continue
         try:
-            mtime = path.stat().st_mtime
-            networks.extend(_load_networks_cached(str(path), mtime))
+            mtime_ns = path.stat().st_mtime_ns
+            networks.extend(_load_networks_cached(str(path), mtime_ns))
         except OSError:
             logger.warning("Unable to stat %s, skipping", path)
     return networks

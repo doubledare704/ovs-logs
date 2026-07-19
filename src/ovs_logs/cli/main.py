@@ -20,7 +20,7 @@ from ovs_logs.core.analysis.indicators import extract_unique_ips
 from ovs_logs.core.database import Database
 from ovs_logs.core.errors import classify_error, error_category
 from ovs_logs.core.ingestion.adapters import LoadResult
-from ovs_logs.core.llm import LLMSynthesizer, OpenAICompatibleProvider
+from ovs_logs.core.llm import LLMSynthesizer, create_llm_provider
 from ovs_logs.core.normalization import NormalizationEngine
 from ovs_logs.core.persistence import ReportStore
 from ovs_logs.core.report import IncidentReport
@@ -101,7 +101,7 @@ def _perform_analysis(  # noqa: PLR0913
                 api_key = llm_api_key or os.getenv("LLM_API_KEY")
                 if api_key is None:
                     raise ValueError("--llm requires an LLM API key (set --llm-api-key or LLM_API_KEY)")
-                provider = OpenAICompatibleProvider(api_key=api_key)
+                provider = create_llm_provider(api_key=api_key)
                 report = LLMSynthesizer(provider).synthesize(indicators, threat_intel=threat_intel)
             report_id = ReportStore().save_report(connection, report, source_table=table)
             console.print(f"[bold]Report saved:[/bold] {report_id}")

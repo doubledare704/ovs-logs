@@ -7,6 +7,7 @@ from typing import Any
 
 import duckdb
 
+from ..constants import NORMALIZED_COLUMNS
 from ..ingestion.adapters import _timestamp_cast_expression
 from ..normalization import FIELD_ALIASES
 from ..sql_utils import quote_identifier as _quote_identifier
@@ -98,8 +99,7 @@ def build_aliased_query(sql: str, table_name: str, connection: duckdb.DuckDBPyCo
     orig_columns = {row[0].lower(): row[0] for row in columns}
     lower_columns = set(column_types)
     expressions = [
-        _build_expression_for_target(target, lower_columns, column_types, orig_columns)
-        for target in ("event_timestamp", "source_ip", "event_type", "status_code", "raw_message")
+        _build_expression_for_target(target, lower_columns, column_types, orig_columns) for target in NORMALIZED_COLUMNS
     ]
 
     return sql.replace(

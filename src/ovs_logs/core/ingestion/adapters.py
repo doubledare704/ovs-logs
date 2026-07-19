@@ -14,6 +14,7 @@ from typing import Any
 import duckdb
 from evtx import PyEvtxParser
 
+from ovs_logs.core.constants import EVTX_CSV_FIELDNAMES, SINGLE_COLUMN_DELIMITER
 from ovs_logs.core.sql_utils import quote_identifier, resolve_table_name
 from ovs_logs.core.validation import LogFile
 
@@ -119,7 +120,7 @@ def load_text_log(
     connection.execute(
         f"CREATE OR REPLACE TABLE {quoted_name} AS "
         "SELECT CAST(col1 AS VARCHAR) AS line FROM read_csv(?, header=false, "
-        "all_varchar=true, columns={'col1': 'VARCHAR'}, delim='\x01', quote='', escape='')",
+        f"all_varchar=true, columns={{'col1': 'VARCHAR'}}, delim='{SINGLE_COLUMN_DELIMITER}', quote='', escape='')",
         [str(log_file.path.resolve())],
     )
     return build_result(connection, name)
@@ -317,19 +318,7 @@ def load_evtx(
             tmp_path = tmp.name
             writer = csv.DictWriter(
                 tmp,
-                fieldnames=[
-                    "timestamp",
-                    "event",
-                    "message",
-                    "record_id",
-                    "source_ip",
-                    "status_code",
-                    "provider",
-                    "channel",
-                    "computer",
-                    "level",
-                    "task",
-                ],
+                fieldnames=list(EVTX_CSV_FIELDNAMES),
                 extrasaction="ignore",
             )
             writer.writeheader()

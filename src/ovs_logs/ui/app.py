@@ -22,6 +22,7 @@ if TYPE_CHECKING:
     from streamlit.runtime.uploaded_file_manager import UploadedFile
 
 from ovs_logs.config.settings import DEFAULT_ENDPOINT_SENTINEL, LLM_PRESETS, settings
+from ovs_logs.core.constants import KB, MB
 from ovs_logs.core.database import Database
 from ovs_logs.core.ingestion.adapters import iter_evtx_record_summaries
 from ovs_logs.core.normalization import NormalizationEngine
@@ -73,11 +74,9 @@ def _on_llm_preset_change() -> None:
         st.session_state["llm_model"] = preset_cfg.model or ""
 
 
-_KB = 1024
-_MB = 1024 * 1024
-_LARGE_FILE_BYTES = 100 * _MB
+_LARGE_FILE_BYTES = 100 * MB
 _MAX_PREVIEW_LINES = 200
-_MAX_PREVIEW_BYTES = 64 * _KB
+_MAX_PREVIEW_BYTES = 64 * KB
 
 
 def _read_user_tables(db_path: str) -> list[str]:
@@ -107,10 +106,10 @@ def _initialize_session_state() -> None:
 
 
 def _format_size(size: int) -> str:
-    if size >= _MB:
-        return f"{size / _MB:.1f} MB"
-    if size >= _KB:
-        return f"{size / _KB:.1f} KB"
+    if size >= MB:
+        return f"{size / MB:.1f} MB"
+    if size >= KB:
+        return f"{size / KB:.1f} KB"
     return f"{size} B"
 
 
