@@ -549,8 +549,8 @@ def render_sidebar() -> None:
     )
 
     endpoint_value = st.session_state["llm_endpoint"]
-    _is_ollama = "localhost:11434" in endpoint_value
-    st.session_state["LLM_OLLAMA_LOCAL"] = "localhost:11434" in endpoint_value
+    _is_ollama = ":11434" in endpoint_value
+    st.session_state["LLM_OLLAMA_LOCAL"] = _is_ollama
 
     st.session_state["LLM_PRESET"] = preset
     st.session_state["LLM_ENDPOINT"] = llm_endpoint

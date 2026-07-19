@@ -6,6 +6,7 @@
       "name": "Debug: Streamlit UI (app.py)",
       "type": "debugpy",
       "request": "launch",
+      "python": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
       "module": "streamlit",
       "args": [
         "run",
@@ -19,7 +20,6 @@
         "--server.runOnSave",
         "true"
       ],
-      "python": "${workspaceFolder}/.venv/Scripts/python.exe",
       "cwd": "${workspaceFolder}",
       "env": {
         "PYTHONPATH": "${workspaceFolder}/src"

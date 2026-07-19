@@ -9,7 +9,7 @@ from abc import ABC, abstractmethod
 from typing import Any, ClassVar
 
 import requests
-from ollama import Client
+from ollama import Client, ResponseError
 
 from ovs_logs.config.settings import LLMSettings, settings
 from ovs_logs.core.analysis.indicators import SuspiciousIndicator
@@ -37,6 +37,8 @@ class OllamaProvider(LLMProvider):
     returned in a single response.
     """
 
+    _DEFAULT_TIMEOUT = 300
+
     def __init__(
         self,
         api_key: str,
@@ -50,7 +52,7 @@ class OllamaProvider(LLMProvider):
         cfg = llm_settings or settings.llm
         self.api_key = api_key
         self.model = model if model is not None else cfg.model
-        self.timeout = timeout if timeout is not None else cfg.timeout
+        self.timeout = timeout if timeout is not None else self._DEFAULT_TIMEOUT
         host = endpoint if endpoint is not None else cfg.api_url
         self.host = host
         self._client = Client(host=host, timeout=self.timeout)
@@ -71,7 +73,7 @@ class OllamaProvider(LLMProvider):
                 format=REPORT_JSON_SCHEMA,
                 options={"temperature": 0},
             )
-        except Exception:
+        except ResponseError:
             logger.debug("Ollama structured output unavailable; retrying without format", exc_info=True)
             response = self._client.chat(
                 model=self.model,
@@ -116,10 +118,13 @@ class OpenAICompatibleProvider(LLMProvider):
         data = response.json()
         return data["choices"][0]["message"]["content"]
 
+
 _ERR_API_KEY_REQUIRED = "LLM API key is required"
 _ERR_ENDPOINT_REQUIRED = "LLM endpoint is required"
 _ERR_MODEL_REQUIRED = "LLM model is required"
-_ERR_CLOUD_BLOCKED = "Ollama Cloud (ollama.com) is not supported; use a local Ollama endpoint such as http://localhost:11434"
+_ERR_CLOUD_BLOCKED = (
+    "Ollama Cloud (ollama.com) is not supported; use a local Ollama endpoint such as http://localhost:11434"
+)
 
 
 def create_llm_provider(
@@ -148,7 +153,7 @@ def create_llm_provider(
     endpoint_key = endpoint or settings.llm.api_url
     if "ollama.com" in endpoint_key:
         raise ValueError(_ERR_CLOUD_BLOCKED)
-    if "localhost:11434" in endpoint_key:
+    if ":11434" in endpoint_key:
         return OllamaProvider(api_key=api_key, endpoint=endpoint, model=model, timeout=timeout)
     if not api_key:
         raise ValueError(_ERR_API_KEY_REQUIRED)

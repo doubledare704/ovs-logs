@@ -73,11 +73,13 @@ class IncidentReport:
         """
         timeline = []
         for raw_item in data.get("timeline", []):
-            item = raw_item
-            if isinstance(item, dict):
-                item = dict(item)
-                if "time" in item and "timestamp" not in item:
-                    item["timestamp"] = item.pop("time")
+            if not isinstance(raw_item, dict):
+                continue
+            item = dict(raw_item)
+            if "time" in item and "timestamp" not in item:
+                item["timestamp"] = item.pop("time")
+            item.setdefault("timestamp", "")
+            item.setdefault("description", "")
             timeline.append(TimelineEvent(**item))
         mitre_mappings = []
         for raw_item in data.get("mitre_mappings", []):

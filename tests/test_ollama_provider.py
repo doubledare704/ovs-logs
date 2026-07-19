@@ -5,6 +5,7 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 import pytest
+from ollama import ResponseError
 
 from ovs_logs.core.llm import OllamaProvider
 from ovs_logs.core.report_schema import REPORT_JSON_SCHEMA
@@ -32,7 +33,7 @@ def test_generate_sends_schema_and_temperature(mock_client: MagicMock) -> None:
 
 def test_generate_falls_back_without_format_on_error(mock_client: MagicMock) -> None:
     mock_client.chat.side_effect = [
-        RuntimeError("structured output unsupported"),
+        ResponseError("structured output unsupported"),
         {"message": {"content": '{"title": "t"}'}},
     ]
 
