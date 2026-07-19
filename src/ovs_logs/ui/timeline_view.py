@@ -14,7 +14,7 @@ import duckdb
 import plotly.graph_objects as go
 import streamlit as st
 
-from ovs_logs.core.timeline import TimelineRow, build_timeline
+from ovs_logs.core.timeline import TimelineMetrics, TimelineRow, build_timeline, list_timeline_filter_options
 from ovs_logs.ui.analysis_view import has_analyzable_columns
 
 logger = logging.getLogger(__name__)
@@ -83,15 +83,15 @@ def _build_scatter_chart(rows: list[TimelineRow]) -> go.Figure:
                 x=[timestamps[i] for i in indices],
                 y=[ips[i] for i in indices],
                 mode="markers",
-                marker=dict(color=color_hex, size=9, opacity=0.85),
+                marker={"color": color_hex, "size": 9, "opacity": 0.85},
                 name=_LEGEND_LABELS[color_label],
-                customdata=[(event_types[i], statuses[i], messages[i]) for i in indices],
+                customdata=[(i, event_types[i], statuses[i], messages[i]) for i in indices],
                 hovertemplate=(
                     "<b>%{y}</b><br>"
                     "Time: %{x}<br>"
-                    "Type: %{customdata[0]}<br>"
-                    "Status: %{customdata[1]}<br>"
-                    "%{customdata[2]}"
+                    "Type: %{customdata[1]}<br>"
+                    "Status: %{customdata[2]}<br>"
+                    "%{customdata[3]}"
                     "<extra></extra>"
                 ),
                 legendgroup=color_label,
@@ -104,8 +104,8 @@ def _build_scatter_chart(rows: list[TimelineRow]) -> go.Figure:
         xaxis_title="Time",
         yaxis_title="Source IP",
         height=max(300, min(600, unique_ip_count * 30 + 100)),
-        margin=dict(l=0, r=0, t=30, b=0),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        margin={"l": 0, "r": 0, "t": 30, "b": 0},
+        legend={"orientation": "h", "yanchor": "bottom", "y": 1.02, "xanchor": "right", "x": 1},
         hovermode="closest",
         template="plotly_dark",
     )
@@ -138,15 +138,19 @@ def _render_detail_cards(selected_rows: list[TimelineRow]) -> None:
 
 
 def _render_filters(
-    full_rows: list[TimelineRow],
+    ip_counts: list[tuple[str, int]],
+    event_types: list[str],
 ) -> tuple[list[str], int | None, list[str]]:
-    """Render filter widgets and return selected values."""
-    all_ips = sorted(
-        {r.source_ip for r in full_rows if r.source_ip},
-        key=lambda ip: -sum(1 for r in full_rows if r.source_ip == ip),
-    )
-    all_event_types = sorted({r.event_type for r in full_rows if r.event_type})
+    """Render filter widgets and return selected values.
 
+    Args:
+        ip_counts: ``[(source_ip, frequency)]`` ordered by frequency descending.
+        event_types: Sorted list of distinct event types.
+
+    Returns:
+        ``(selected_ips, min_status, selected_event_types)``.
+    """
+    all_ips = [ip for ip, _ in ip_counts]
     col1, col2, col3 = st.columns(3)
     with col1:
         selected_ips: list[str] = st.multiselect(
@@ -167,28 +171,12 @@ def _render_filters(
     with col3:
         selected_event_types: list[str] = st.multiselect(
             "Event type",
-            options=all_event_types,
+            options=event_types,
             default=[],
             key="tl_filter_event_type",
         )
 
     return selected_ips, min_status, selected_event_types
-
-
-def _apply_client_side_filters(
-    rows: list[TimelineRow],
-    selected_ips: list[str],
-    selected_event_types: list[str],
-) -> list[TimelineRow]:
-    """Apply multi-select filters that cannot be pushed to SQL."""
-    result = rows
-    if len(selected_ips) > 1:
-        ip_set = set(selected_ips)
-        result = [r for r in result if r.source_ip in ip_set]
-    if len(selected_event_types) > 1:
-        et_set = set(selected_event_types)
-        result = [r for r in result if r.event_type in et_set]
-    return result
 
 
 def _render_chart_and_cards(
@@ -207,20 +195,58 @@ def _render_chart_and_cards(
     selected_indices: list[int] = []
     if selection and isinstance(selection, dict):
         point_data = selection.get("selection", {}).get("points", [])
-        selected_indices = [p.get("point_index", -1) for p in point_data if "point_index" in p]
+        for p in point_data:
+            customdata = p.get("customdata")
+            if customdata and len(customdata) > 0:
+                idx = customdata[0]
+                if isinstance(idx, int) and 0 <= idx < len(rows):
+                    selected_indices.append(idx)
 
     if selected_indices:
-        selected_rows = [rows[i] for i in selected_indices if 0 <= i < len(rows)]
+        # Deduplicate and preserve selection order
+        seen: set[int] = set()
+        unique_indices: list[int] = []
+        for idx in selected_indices:
+            if idx not in seen:
+                seen.add(idx)
+                unique_indices.append(idx)
+        selected_rows = [rows[i] for i in unique_indices]
         st.subheader(f"Selected events ({len(selected_rows)})")
         _render_detail_cards(selected_rows)
     else:
-        show_rows = rows[:10]
+        show_rows = rows[-10:][::-1]
         if show_rows:
             st.subheader("Recent events")
             _render_detail_cards(show_rows)
 
     if metrics_total > len(rows):
         st.caption(f"Showing {len(rows)} of {metrics_total} events. Use filters to narrow results.")
+
+
+def _get_timeline_data(
+    connection: duckdb.DuckDBPyConnection,
+    table_name: str,
+    source_ip: list[str] | str | None = None,
+    min_status: int | None = None,
+    event_type: list[str] | str | None = None,
+) -> tuple[TimelineMetrics, list[TimelineRow]] | None:
+    """Call :func:`build_timeline` with error handling.
+
+    Returns ``None`` (and renders ``st.error``) on failure so the caller can
+    short-circuit gracefully.
+    """
+    try:
+        return build_timeline(
+            connection,
+            table_name,
+            source_ip=source_ip,
+            min_status=min_status,
+            event_type=event_type,
+        )
+    except duckdb.Error:
+        logger.exception("Failed to build timeline for table %s", table_name)
+        st.error("Timeline failed while querying this table.")
+        return None
 
 
 def render_timeline_card(
@@ -236,36 +262,28 @@ def render_timeline_card(
         return
 
     try:
-        _full_metrics, full_rows = build_timeline(connection, table_name)
+        ip_counts, event_types = list_timeline_filter_options(connection, table_name)
     except duckdb.Error:
-        logger.exception("Failed to build timeline for table %s", table_name)
+        logger.exception("Failed to load filter options for table %s", table_name)
         st.error("Timeline failed while querying this table.")
         return
 
-    if _full_metrics.total_events == 0:
+    if not ip_counts and not event_types:
         st.info("No events found in this table.")
         return
 
-    selected_ips, min_status, selected_event_types = _render_filters(full_rows)
+    selected_ips, min_status, selected_event_types = _render_filters(ip_counts, event_types)
 
-    # Server-side filter for single-value selections
-    filter_ip = selected_ips[0] if len(selected_ips) == 1 else None
-    filter_event_type = selected_event_types[0] if len(selected_event_types) == 1 else None
-
-    try:
-        metrics, rows = build_timeline(
-            connection,
-            table_name,
-            source_ip=filter_ip,
-            min_status=min_status,
-            event_type=filter_event_type,
-        )
-    except duckdb.Error:
-        logger.exception("Failed to build timeline for table %s", table_name)
-        st.error("Timeline failed while querying this table.")
+    result = _get_timeline_data(
+        connection,
+        table_name,
+        source_ip=selected_ips or None,
+        min_status=min_status,
+        event_type=selected_event_types or None,
+    )
+    if result is None:
         return
-
-    rows = _apply_client_side_filters(rows, selected_ips, selected_event_types)
+    metrics, rows = result
 
     cols = st.columns(4)
     cols[0].metric("Total events", metrics.total_events)

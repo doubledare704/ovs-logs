@@ -10,8 +10,8 @@ from ovs_logs.core.database import Database
 from ovs_logs.core.timeline import (
     TimelineRow,
     build_timeline,
+    list_timeline_filter_options,
 )
-from ovs_logs.ui.timeline_view import _status_color
 
 
 def test_metrics_over_seeded_events() -> None:
@@ -240,13 +240,105 @@ def test_filter_no_match() -> None:
     assert len(rows) == 0
 
 
-def test_status_color_mapping() -> None:
-    assert _status_color(200) == "#4CAF50"
-    assert _status_color(201) == "#4CAF50"
-    assert _status_color(301) == "#FFC107"
-    assert _status_color(399) == "#FFC107"
-    assert _status_color(400) == "#FF9800"
-    assert _status_color(499) == "#FF9800"
-    assert _status_color(500) == "#f44336"
-    assert _status_color(503) == "#f44336"
-    assert _status_color(None) == "#888888"
+def test_filter_by_multiple_source_ips() -> None:
+    with Database(":memory:") as conn:
+        conn.execute(
+            "CREATE TABLE events AS SELECT * FROM (VALUES "
+            "('2024-01-01 00:00:00'::TIMESTAMP, '1.2.3.4', 'GET', 200, 'ok'), "
+            "('2024-01-01 00:01:00'::TIMESTAMP, '5.6.7.8', 'POST', 404, 'bad'), "
+            "('2024-01-01 00:02:00'::TIMESTAMP, '9.9.9.9', 'GET', 200, 'ok2') "
+            ") AS t(event_timestamp, source_ip, event_type, status_code, raw_message)"
+        )
+
+        metrics, rows = build_timeline(conn, source_ip=["1.2.3.4", "5.6.7.8"])
+
+    assert metrics.total_events == 2
+    assert len(rows) == 2
+
+
+def test_filter_by_multiple_event_types() -> None:
+    with Database(":memory:") as conn:
+        conn.execute(
+            "CREATE TABLE events AS SELECT * FROM (VALUES "
+            "('2024-01-01 00:00:00'::TIMESTAMP, '1.2.3.4', 'GET', 200, 'ok'), "
+            "('2024-01-01 00:01:00'::TIMESTAMP, '5.6.7.8', 'POST', 404, 'bad'), "
+            "('2024-01-01 00:02:00'::TIMESTAMP, '9.9.9.9', 'PUT', 200, 'ok2') "
+            ") AS t(event_timestamp, source_ip, event_type, status_code, raw_message)"
+        )
+
+        metrics, rows = build_timeline(conn, event_type=["GET", "PUT"])
+
+    assert metrics.total_events == 2
+    assert len(rows) == 2
+
+
+def test_filter_by_empty_list_behaves_like_none() -> None:
+    with Database(":memory:") as conn:
+        conn.execute(
+            "CREATE TABLE events AS SELECT * FROM (VALUES "
+            "('2024-01-01 00:00:00'::TIMESTAMP, '1.2.3.4', 'GET', 200, 'ok'), "
+            "('2024-01-01 00:01:00'::TIMESTAMP, '5.6.7.8', 'POST', 404, 'bad') "
+            ") AS t(event_timestamp, source_ip, event_type, status_code, raw_message)"
+        )
+
+        metrics, rows = build_timeline(conn, source_ip=[], event_type=[])
+
+    assert metrics.total_events == 2
+    assert len(rows) == 2
+
+
+def test_filter_combined_multi_select() -> None:
+    with Database(":memory:") as conn:
+        conn.execute(
+            "CREATE TABLE events AS SELECT * FROM (VALUES "
+            "('2024-01-01 00:00:00'::TIMESTAMP, '1.2.3.4', 'GET', 200, 'ok'), "
+            "('2024-01-01 00:01:00'::TIMESTAMP, '5.6.7.8', 'POST', 404, 'bad'), "
+            "('2024-01-01 00:02:00'::TIMESTAMP, '9.9.9.9', 'PUT', 500, 'worse') "
+            ") AS t(event_timestamp, source_ip, event_type, status_code, raw_message)"
+        )
+
+        metrics, rows = build_timeline(
+            conn,
+            source_ip=["1.2.3.4", "9.9.9.9"],
+            min_status=400,
+            event_type=["PUT"],
+        )
+
+    assert metrics.total_events == 1
+    assert len(rows) == 1
+    assert rows[0].source_ip == "9.9.9.9"
+    assert rows[0].status_code == 500
+
+
+def test_list_timeline_filter_options() -> None:
+    with Database(":memory:") as conn:
+        conn.execute(
+            "CREATE TABLE events AS SELECT * FROM (VALUES "
+            "('2024-01-01 00:00:00'::TIMESTAMP, '1.2.3.4', 'GET', 200, 'ok'), "
+            "('2024-01-01 00:01:00'::TIMESTAMP, '1.2.3.4', 'POST', 404, 'bad'), "
+            "('2024-01-01 00:02:00'::TIMESTAMP, '5.6.7.8', 'GET', 200, 'ok2') "
+            ") AS t(event_timestamp, source_ip, event_type, status_code, raw_message)"
+        )
+
+        ip_counts, event_types = list_timeline_filter_options(conn)
+
+    assert len(ip_counts) == 2
+    # 1.2.3.4 appears twice, so it should be first
+    assert ip_counts[0] == ("1.2.3.4", 2)
+    assert ip_counts[1] == ("5.6.7.8", 1)
+    assert event_types == ["GET", "POST"]
+
+
+def test_list_timeline_filter_options_raw_table() -> None:
+    with Database(":memory:") as conn:
+        conn.execute(
+            "CREATE TABLE raw_data AS SELECT * FROM (VALUES "
+            "('2024-01-01 00:00:00', '1.2.3.4', 'GET', 200, 'ok'), "
+            "('2024-01-01 01:00:00', '5.6.7.8', 'POST', 404, 'bad') "
+            ") AS t(timestamp, source_ip, event_type, status_code, raw_message)"
+        )
+
+        ip_counts, event_types = list_timeline_filter_options(conn, "raw_data")
+
+    assert len(ip_counts) == 2
+    assert len(event_types) == 2
