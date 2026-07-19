@@ -15,6 +15,8 @@ dependencies = [
     "evtx==0.12.1",
     "ollama>=0.6.2",
     "pydantic>=2.0",
+    "plotly>=5.24.0",
+    "httpx",
 ]
 
 [project.optional-dependencies]
@@ -24,6 +26,7 @@ dev = [
     "pyrefly>=1.1.1",
     "pre-commit>=4.6.0",
     "watchdog==6.0.0",
+    "pytz",
 ]
 
 [project.scripts]

@@ -52,7 +52,12 @@ class OllamaProvider(LLMProvider):
         cfg = llm_settings or settings.llm
         self.api_key = api_key
         self.model = model if model is not None else cfg.model
-        self.timeout = timeout if timeout is not None else (cfg.timeout if cfg.timeout is not None else self._DEFAULT_TIMEOUT)
+        if timeout is not None:
+            self.timeout = timeout
+        elif cfg.timeout is not None:
+            self.timeout = cfg.timeout
+        else:
+            self.timeout = self._DEFAULT_TIMEOUT
         host = endpoint if endpoint is not None else cfg.api_url
         self.host = host
         self._client = Client(host=host, timeout=self.timeout)

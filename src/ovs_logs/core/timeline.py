@@ -67,6 +67,69 @@ def _format_duration(span: timedelta) -> str:
     return " ".join(parts)
 
 
+def _build_where_clauses(
+    *,
+    source_ip: str | list[str] | None = None,
+    min_status: int | None = None,
+    event_type: str | list[str] | None = None,
+) -> tuple[list[str], list[object]]:
+    """Build SQL WHERE fragment and parameter list from optional filters.
+
+    Single values produce ``= ?`` clauses; lists (non-empty) produce
+    ``IN (?, ?, ...)`` clauses. Returns ``([], [])`` when no filters are set.
+    """
+    clauses: list[str] = []
+    params: list[object] = []
+
+    if source_ip is not None:
+        if isinstance(source_ip, list):
+            if source_ip:
+                placeholders = ", ".join("?" for _ in source_ip)
+                clauses.append(f'"source_ip" IN ({placeholders})')
+                params.extend(source_ip)
+        else:
+            clauses.append('"source_ip" = ?')
+            params.append(source_ip)
+
+    if min_status is not None:
+        clauses.append('"status_code" >= ?')
+        params.append(min_status)
+
+    if event_type is not None:
+        if isinstance(event_type, list):
+            if event_type:
+                placeholders = ", ".join("?" for _ in event_type)
+                clauses.append(f'"event_type" IN ({placeholders})')
+                params.extend(event_type)
+        else:
+            clauses.append('"event_type" = ?')
+            params.append(event_type)
+
+    return clauses, params
+
+
+def _wrap_with_filters(
+    base_sql: str,
+    *,
+    source_ip: str | list[str] | None = None,
+    min_status: int | None = None,
+    event_type: str | list[str] | None = None,
+) -> tuple[str, list[object]]:
+    """Wrap ``base_sql`` with optional WHERE filters using parameterized queries.
+
+    Returns ``(wrapped_sql, params)``.
+    """
+    clauses, params = _build_where_clauses(
+        source_ip=source_ip,
+        min_status=min_status,
+        event_type=event_type,
+    )
+    if not clauses:
+        return base_sql, params
+    where = " AND ".join(clauses)
+    return f"SELECT * FROM ({base_sql}) AS _filtered WHERE {where}", params
+
+
 def _build_metrics_query(sql: str) -> str:
     return (
         "SELECT COUNT(*) AS total_events, "
@@ -87,11 +150,14 @@ def _build_rows_query(sql: str, limit: int) -> str:
     )
 
 
-def build_timeline(
+def build_timeline(  # noqa: PLR0913
     connection: duckdb.DuckDBPyConnection,
     table_name: str = "events",
     *,
     limit: int = DEFAULT_TIMELINE_LIMIT,
+    source_ip: str | list[str] | None = None,
+    min_status: int | None = None,
+    event_type: str | list[str] | None = None,
 ) -> tuple[TimelineMetrics, list[TimelineRow]]:
     """Compute timeline metrics and event rows for ``table_name``.
 
@@ -104,6 +170,11 @@ def build_timeline(
         table_name: DuckDB table to query (defaults to ``events``).
         limit: Maximum number of event rows returned. Metrics are always computed
             over the full table.
+        source_ip: If set, only include events from this IP. Accepts a single
+            string or a list of strings for multi-select.
+        min_status: If set, only include events with ``status_code >= min_status``.
+        event_type: If set, only include events with this ``event_type``. Accepts
+            a single string or a list of strings for multi-select.
 
     Returns:
         A ``(TimelineMetrics, list[TimelineRow])`` tuple. ``duckdb.Error`` is
@@ -114,7 +185,14 @@ def build_timeline(
     else:
         wrapped = build_aliased_query("SELECT * FROM events", table_name, connection)
 
-    metrics_row = connection.execute(_build_metrics_query(wrapped)).fetchone()
+    wrapped, params = _wrap_with_filters(
+        wrapped,
+        source_ip=source_ip,
+        min_status=min_status,
+        event_type=event_type,
+    )
+
+    metrics_row = connection.execute(_build_metrics_query(wrapped), params).fetchone()
     if metrics_row is None:
         raise RuntimeError("timeline metrics query returned no row")
     total_events, first_event, last_event, unique_source_ips, error_count = metrics_row
@@ -136,16 +214,51 @@ def build_timeline(
         error_rate_pct=error_rate_pct,
     )
 
-    cursor = connection.execute(_build_rows_query(wrapped, limit))
+    cursor = connection.execute(_build_rows_query(wrapped, limit), params)
     rows = [
         TimelineRow(
             timestamp=timestamp,
-            source_ip=source_ip,
-            event_type=event_type,
+            source_ip=source_ip_val,
+            event_type=event_type_val,
             status_code=status_code,
             raw_message=raw_message,
         )
-        for timestamp, source_ip, event_type, status_code, raw_message in cursor.fetchall()
+        for timestamp, source_ip_val, event_type_val, status_code, raw_message in cursor.fetchall()
     ]
 
     return metrics, rows
+
+
+def list_timeline_filter_options(
+    connection: duckdb.DuckDBPyConnection,
+    table_name: str = "events",
+) -> tuple[list[tuple[str, int]], list[str]]:
+    """Return IP-frequency pairs and distinct event types for filter widgets.
+
+    Both queries use the same alias-wrapping strategy as :func:`build_timeline`
+    so raw sidebar tables resolve correctly.
+
+    Returns:
+        A ``(ip_counts, event_types)`` tuple where ``ip_counts`` is
+        ``[(ip, count), ...]`` ordered by count descending and ``event_types``
+        is a sorted list of distinct event types.
+    """
+    if table_name == "events":
+        base = "SELECT * FROM events"
+    else:
+        base = build_aliased_query("SELECT * FROM events", table_name, connection)
+
+    ip_rows = connection.execute(
+        f'SELECT "source_ip", COUNT(*) AS cnt FROM ({base}) AS _opts '
+        'WHERE "source_ip" IS NOT NULL '
+        'GROUP BY "source_ip" '
+        "ORDER BY cnt DESC",
+    ).fetchall()
+    ip_counts = [(str(row[0]), int(row[1])) for row in ip_rows]
+
+    event_rows = connection.execute(
+        f'SELECT DISTINCT "event_type" FROM ({base}) AS _opts WHERE "event_type" IS NOT NULL ORDER BY "event_type" ASC',
+    ).fetchall()
+    event_types = [str(row[0]) for row in event_rows]
+
+    return ip_counts, event_types
