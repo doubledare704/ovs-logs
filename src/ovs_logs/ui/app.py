@@ -38,7 +38,10 @@ from ovs_logs.core.validation import SUPPORTED_FORMATS, validate_log_file
 from ovs_logs.ui.analysis_view import render_analysis_results
 from ovs_logs.ui.intel_view import render_intelligence_tab
 from ovs_logs.ui.mitigation_view import render_mitigation_tab
+from ovs_logs.ui.state import SessionKeys
 from ovs_logs.ui.timeline_view import render_timeline_card
+
+SK = SessionKeys()
 
 logger = logging.getLogger(__name__)
 
@@ -63,15 +66,19 @@ def _on_llm_preset_change() -> None:
     state even when ``value=`` changes, so the session_state keys must be
     overwritten explicitly to avoid a stale URL (e.g. a bare ``.../api`` host)
     lingering and producing malformed requests.
+
+    Writes to the widget keys (lowercase) so the ``text_input`` widgets pick up
+    the preset value.  The application-state keys (uppercase) are populated
+    later in ``render_sidebar`` from the widget value.
     """
-    preset = st.session_state.get("llm_preset")
+    preset = st.session_state.get(SK.widget_llm_preset)
     preset_cfg = LLM_PRESETS.get(preset) if preset else None
     if preset_cfg:
         endpoint_default = (
             settings.llm.api_url if preset_cfg.endpoint == DEFAULT_ENDPOINT_SENTINEL else preset_cfg.endpoint
         )
-        st.session_state["llm_endpoint"] = endpoint_default
-        st.session_state["llm_model"] = preset_cfg.model or ""
+        st.session_state[SK.widget_llm_endpoint] = endpoint_default
+        st.session_state[SK.widget_llm_model] = preset_cfg.model or ""
 
 
 _LARGE_FILE_BYTES = 100 * MB
@@ -101,8 +108,8 @@ def _read_user_tables(db_path: str) -> list[str]:
 
 
 def _initialize_session_state() -> None:
-    st.session_state.setdefault("uploaded_files", [])
-    st.session_state.setdefault("consumed_uploads", set())
+    st.session_state.setdefault(SK.uploaded_files, [])
+    st.session_state.setdefault(SK.consumed_uploads, set())
 
 
 def _format_size(size: int) -> str:
@@ -177,10 +184,10 @@ def _find_uploaded_file(uploaded_files: list[dict[str, Any]], content_hash: str)
 
 def _register_uploaded_file(uploaded_file: UploadedFile) -> tuple[bool, str | None]:
     upload_id = f"{uploaded_file.name}:{uploaded_file.size}"
-    if upload_id in st.session_state.get("consumed_uploads", set()):
+    if upload_id in st.session_state.get(SK.consumed_uploads, set()):
         return False, None
 
-    uploaded_files = st.session_state["uploaded_files"]
+    uploaded_files = st.session_state[SK.uploaded_files]
     if any(f["name"] == uploaded_file.name and f["size"] == uploaded_file.size for f in uploaded_files):
         return False, None
 
@@ -211,7 +218,7 @@ def _register_uploaded_file(uploaded_file: UploadedFile) -> tuple[bool, str | No
             "normalized_row_count": None,
         }
     )
-    st.session_state.setdefault("consumed_uploads", set()).add(upload_id)
+    st.session_state.setdefault(SK.consumed_uploads, set()).add(upload_id)
     return True, None
 
 
@@ -452,7 +459,7 @@ def _render_sidebar_threat_lists() -> None:  # noqa: PLR0912
         )
         if checked:
             enabled.append(list_name)
-    st.session_state["threat_lists_enabled"] = enabled
+    st.session_state[SK.threat_lists_enabled] = enabled
 
     # Freshness caption (best-effort, never breaks sidebar)
     try:
@@ -511,7 +518,7 @@ def render_sidebar() -> None:
         key="abuseipdb_api_key",
         help="Used by the threat intelligence enrichment step.",
     )
-    st.session_state["ABUSEIPDB_API_KEY"] = abuseipdb_key
+    st.session_state[SK.abuseipdb_api_key] = abuseipdb_key
 
     llm_key = st.sidebar.text_input(
         "LLM API Key",
@@ -520,7 +527,7 @@ def render_sidebar() -> None:
         key="llm_api_key",
         help="Used by the LLM provider to synthesize incident context.",
     )
-    st.session_state["LLM_API_KEY"] = llm_key
+    st.session_state[SK.llm_api_key] = llm_key
 
     st.sidebar.subheader("LLM Configuration")
 
@@ -534,26 +541,26 @@ def render_sidebar() -> None:
     )
     preset_cfg = LLM_PRESETS[preset]
     endpoint_default = settings.llm.api_url if preset_cfg.endpoint == DEFAULT_ENDPOINT_SENTINEL else preset_cfg.endpoint
-    if "llm_endpoint" not in st.session_state:
-        st.session_state["llm_endpoint"] = endpoint_default
-    if "llm_model" not in st.session_state:
-        st.session_state["llm_model"] = preset_cfg.model or ""
+    if SK.widget_llm_endpoint not in st.session_state:
+        st.session_state[SK.widget_llm_endpoint] = endpoint_default
+    if SK.widget_llm_model not in st.session_state:
+        st.session_state[SK.widget_llm_model] = preset_cfg.model or ""
     llm_endpoint = st.sidebar.text_input(
         "LLM endpoint",
-        key="llm_endpoint",
+        key=SK.widget_llm_endpoint,
     )
     llm_model = st.sidebar.text_input(
         "LLM model",
-        key="llm_model",
+        key=SK.widget_llm_model,
     )
 
-    endpoint_value = st.session_state["llm_endpoint"]
+    endpoint_value = st.session_state[SK.widget_llm_endpoint]
     _is_ollama = ":11434" in endpoint_value
-    st.session_state["LLM_OLLAMA_LOCAL"] = _is_ollama
+    st.session_state[SK.llm_ollama_local] = _is_ollama
 
-    st.session_state["LLM_PRESET"] = preset
-    st.session_state["LLM_ENDPOINT"] = llm_endpoint
-    st.session_state["LLM_MODEL"] = llm_model
+    st.session_state[SK.llm_preset] = preset
+    st.session_state[SK.llm_endpoint] = llm_endpoint
+    st.session_state[SK.llm_model] = llm_model
 
     st.sidebar.subheader("Database")
 
@@ -571,35 +578,35 @@ def render_sidebar() -> None:
 
     if not db_path:
         st.sidebar.warning("Provide a database path to list tables.")
-        st.session_state.pop("selected_table", None)
+        st.session_state.pop(SK.selected_table, None)
         return
 
     db_file = Path(db_path)
     if not db_file.exists():
         st.sidebar.error(f"Database file not found: {db_path}")
-        st.session_state.pop("selected_table", None)
+        st.session_state.pop(SK.selected_table, None)
         return
 
     try:
         tables = _read_user_tables(db_path)
     except duckdb.Error as exc:
         st.sidebar.error(f"Unable to open database: {exc}")
-        st.session_state.pop("selected_table", None)
+        st.session_state.pop(SK.selected_table, None)
         return
     except OSError as exc:
         st.sidebar.error(f"Unable to access database: {exc}")
-        st.session_state.pop("selected_table", None)
+        st.session_state.pop(SK.selected_table, None)
         return
 
     if not tables:
         st.sidebar.info("No application tables found in this database.")
-        st.session_state.pop("selected_table", None)
+        st.session_state.pop(SK.selected_table, None)
         return
 
     st.sidebar.selectbox(
         "Select a table",
         options=tables,
-        key="selected_table",
+        key=SK.widget_selected_table,
     )
 
 
@@ -612,7 +619,7 @@ def main() -> None:  # noqa: PLR0912, PLR0915
     render_sidebar()
 
     db_path = st.session_state.get("db_path", settings.database.path)
-    selected_table = st.session_state.get("selected_table")
+    selected_table = st.session_state.get(SK.selected_table)
 
     tab_ingest, tab_timeline, tab_intel, tab_mit = st.tabs(
         ["Ingest & Signals", "Attack Timeline", "Intelligence", "Mitigation"]

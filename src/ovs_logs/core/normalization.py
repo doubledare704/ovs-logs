@@ -164,11 +164,28 @@ class NormalizationEngine:
         events_exists = "events" in existing
 
         connection.execute(f"CREATE TABLE IF NOT EXISTS {_TRACKING_TABLE_QUOTED} (raw_table VARCHAR PRIMARY KEY)")
+
+        # Read already-merged sources (best-effort filtering; the atomic
+        # INSERT OR IGNORE below handles any concurrent races).
         already_merged = {
             row[0] for row in connection.execute(f"SELECT raw_table FROM {_TRACKING_TABLE_QUOTED}").fetchall()
         }
 
-        new_tables = [(raw_table, columns) for raw_table, columns in candidates if raw_table not in already_merged]
+        candidates_not_merged = [(rt, cols) for rt, cols in candidates if rt not in already_merged]
+        if not candidates_not_merged:
+            return self._events_row_count(connection) if events_exists else 0
+
+        # Atomically register all new candidates; duplicates are silently
+        # ignored so concurrent calls cannot race on the SELECT+INSERT gap.
+        connection.executemany(
+            f"INSERT OR IGNORE INTO {_TRACKING_TABLE_QUOTED} VALUES (?)",
+            [(raw_table,) for raw_table, _ in candidates_not_merged],
+        )
+
+        # Determine which tables were actually newly inserted (may be a
+        # subset if a concurrent call already inserted some of ours).
+        inserted = {row[0] for row in connection.execute(f"SELECT raw_table FROM {_TRACKING_TABLE_QUOTED}").fetchall()}
+        new_tables = [(rt, cols) for rt, cols in candidates_not_merged if rt in inserted]
         if not new_tables:
             return self._events_row_count(connection) if events_exists else 0
 
@@ -179,11 +196,6 @@ class NormalizationEngine:
             connection.execute(f"INSERT INTO events {union_query}")
         else:
             connection.execute(f"CREATE TABLE events AS {union_query}")
-
-        connection.executemany(
-            f"INSERT INTO {_TRACKING_TABLE_QUOTED} VALUES (?)",
-            [(raw_table,) for raw_table, _ in new_tables],
-        )
 
         return self._events_row_count(connection)
 
