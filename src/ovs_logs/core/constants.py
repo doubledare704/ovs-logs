@@ -68,3 +68,7 @@ KB: int = 1024
 
 MB: int = 1024 * 1024
 """One megabyte in bytes."""
+
+LARGE_FILE_BYTES: int = 100 * MB
+"""Threshold above which a log file is considered "large" and triggers a
+preview-size warning in the UI."""

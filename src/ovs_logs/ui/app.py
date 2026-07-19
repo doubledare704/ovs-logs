@@ -22,7 +22,7 @@ if TYPE_CHECKING:
     from streamlit.runtime.uploaded_file_manager import UploadedFile
 
 from ovs_logs.config.settings import DEFAULT_ENDPOINT_SENTINEL, LLM_PRESETS, settings
-from ovs_logs.core.constants import KB, MB
+from ovs_logs.core.constants import KB, LARGE_FILE_BYTES, MB
 from ovs_logs.core.database import Database
 from ovs_logs.core.ingestion.adapters import iter_evtx_record_summaries
 from ovs_logs.core.llm import is_ollama_endpoint
@@ -82,11 +82,11 @@ def _on_llm_preset_change() -> None:
         st.session_state[SK.widget_llm_model] = preset_cfg.model or ""
 
 
-_LARGE_FILE_BYTES = 100 * MB
 _MAX_PREVIEW_LINES = 200
 _MAX_PREVIEW_BYTES = 64 * KB
 
 
+@st.cache_data(ttl=5)
 def _read_user_tables(db_path: str) -> list[str]:
     """Return user table names from ``information_schema.tables``.
 
@@ -342,7 +342,7 @@ def _render_uploaded_files_overview() -> None:
         with st.expander(f"Raw preview: {file_state['name']}", expanded=False):
             st.write(f"**Status:** {file_state['status']}")
             st.write(f"**Format:** {file_state['format'] or 'unknown'}")
-            if file_state["size"] > _LARGE_FILE_BYTES:
+            if file_state["size"] > LARGE_FILE_BYTES:
                 st.warning("This is a large upload. Preview is limited to the first 200 lines.")
             if file_state["preview"]:
                 st.code(file_state["preview"], language="text")
@@ -431,8 +431,8 @@ def _render_ingested_table_preview() -> None:
             if db_path and file_state["ingest_table"]:
                 try:
                     with Database(db_path) as connection:
-                        table_name = file_state["ingest_table"].replace('"', '""')
-                        sql = f'SELECT * FROM "{table_name}" LIMIT 100'
+                        quoted = quote_identifier(file_state["ingest_table"])
+                        sql = f"SELECT * FROM {quoted} LIMIT 100"
                         cursor = connection.execute(sql)
                         rows = cursor.fetchall()
                         columns = [desc[0] for desc in cursor.description]
@@ -661,7 +661,7 @@ def main() -> None:  # noqa: PLR0912, PLR0915
                 created, message = _register_uploaded_file(uploaded_file)
                 if not created and message:
                     st.warning(message)
-                elif created and uploaded_file.size > _LARGE_FILE_BYTES:
+                elif created and uploaded_file.size > LARGE_FILE_BYTES:
                     st.warning(f"This is a large upload ({_format_size(uploaded_file.size)}). Preview is limited.")
 
         for file_state in st.session_state[SK.uploaded_files]:
