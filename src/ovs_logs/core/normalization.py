@@ -104,7 +104,17 @@ class NormalizationEngine:
         self.aliases = aliases or FIELD_ALIASES
 
     def _find_matches(self, columns: Sequence[str], target: str) -> list[str]:
-        """Return raw column names that match any alias for the target field."""
+        """Return raw column names that match any alias for *target*.
+
+        Matching is case-insensitive because DuckDB column names are not
+        case-preserving by default — a source file may use ``Timestamp``,
+        ``TIMESTAMP``, or ``timestamp`` and all should map to the
+        ``event_timestamp`` target.  Both the incoming column names and the
+        predefined aliases (which are stored in lowercase) are lowered for
+        comparison; the original casing of the column is preserved in the
+        result so that subsequent SQL expressions reference the true column
+        identifier.
+        """
         lower_map = {c.lower(): c for c in columns}
         candidates = self.aliases.get(target, [])
         return [lower_map[alias] for alias in candidates if alias in lower_map]
