@@ -153,7 +153,7 @@ def _build_structured_select_clause(fmt: str) -> str:
     select_parts = []
     for field, pattern in patterns.items():
         if field == "timestamp":
-            select_parts.append(f"regexp_extract(line, '{pattern}', 1) AS timestamp")
+            select_parts.append(f"regexp_extract(line, '{pattern}', 1) AS event_timestamp")
         elif field == "source_ip":
             select_parts.append(f"regexp_extract(line, '{pattern}', 1) AS source_ip")
         elif field == "status_code":
@@ -162,7 +162,7 @@ def _build_structured_select_clause(fmt: str) -> str:
             select_parts.append(f"regexp_extract(line, '{pattern}', 1) AS event_type")
 
     if "timestamp" not in patterns:
-        select_parts.append("NULL AS timestamp")
+        select_parts.append("NULL AS event_timestamp")
     if "source_ip" not in patterns:
         select_parts.append("NULL AS source_ip")
     if "status_code" not in patterns:
@@ -191,7 +191,7 @@ def _build_jsonline_select_clause() -> str:
     event_expr = f"regexp_extract({event_raw}, '(\\w+)', 1)"
 
     return (
-        f"{ts_expr} AS timestamp, "
+        f"{ts_expr} AS event_timestamp, "
         f"{ip_expr} AS source_ip, "
         f"{status_expr} AS status_code, "
         f"{event_expr} AS event_type, "
@@ -210,7 +210,7 @@ def parse_text_log(
 
     When ``config.structured`` is true, the function detects the log format
     from the file content and runs a hybrid regex pass to populate
-    ``timestamp``, ``source_ip``, ``status_code``, and ``event_type``. When
+    ``event_timestamp``, ``source_ip``, ``status_code``, and ``event_type``. When
     false, the raw table is returned immediately.
     """
     if config is None:
@@ -241,7 +241,7 @@ def parse_text_log(
     connection.execute(f"CREATE OR REPLACE TABLE {quoted} AS SELECT {select_clause} FROM {quoted}")
 
     row = connection.execute(
-        f"SELECT COUNT(*) FROM {quoted} WHERE timestamp <> '' OR source_ip <> '' OR event_type <> ''"
+        f"SELECT COUNT(*) FROM {quoted} WHERE event_timestamp <> '' OR source_ip <> '' OR event_type <> ''"
     ).fetchone()
     hit_count = int(row[0]) if row else 0
 

@@ -112,7 +112,7 @@ def test_normalize_web_apache_timestamp_to_utc(db, tmp_path: Path) -> None:
     load_result = parse_text_log(log, db, table_name="raw_web")
     result = NormalizationEngine().normalize_table(db, load_result)
 
-    assert result.mapping["event_timestamp"] == "timestamp"
+    assert result.mapping["event_timestamp"] == "event_timestamp"
 
     rows = db.execute("SELECT event_timestamp, source_ip FROM events").fetchall()
     # Both timestamps normalize to the same UTC instant (12:00:00 +0000 and 14:00:00 +0200)
@@ -120,7 +120,7 @@ def test_normalize_web_apache_timestamp_to_utc(db, tmp_path: Path) -> None:
     assert {row[1] for row in rows} == {"10.0.0.1", "10.0.0.2"}
 
     # Raw timestamp column is preserved (non-destructive)
-    raw = db.execute('SELECT "timestamp" FROM "raw_web" ORDER BY "timestamp"').fetchall()
+    raw = db.execute('SELECT "event_timestamp" FROM "raw_web" ORDER BY "event_timestamp"').fetchall()
     assert raw[0][0] == "14/Nov/2023:12:00:00 +0000"
     assert raw[1][0] == "14/Nov/2023:14:00:00 +0200"
 

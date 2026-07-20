@@ -158,6 +158,7 @@ def _preview_evtx(path: Path, max_records: int = 50) -> str:
     return "\n".join(lines) if lines else "(no records found)"
 
 
+@st.cache_data(ttl=5)
 def _read_preview_lines(path: Path, max_lines: int = _MAX_PREVIEW_LINES) -> str:
     if path.suffix.lower() == ".evtx":
         return _preview_evtx(path)

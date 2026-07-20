@@ -38,9 +38,9 @@ def test_parse_web_access_log(db, tmp_path: Path) -> None:
     log = validate_log_file(path)
     result = parse_text_log(log, db, table_name="web_events")
     assert result.row_count == EXPECTED_ROW_COUNT
-    assert "timestamp" in schema_columns(result.schema)
+    assert "event_timestamp" in schema_columns(result.schema)
     assert "source_ip" in schema_columns(result.schema)
-    rows = db.execute('SELECT timestamp, source_ip, status_code, event_type FROM "web_events"').fetchall()
+    rows = db.execute('SELECT event_timestamp, source_ip, status_code, event_type FROM "web_events"').fetchall()
     assert rows[0][0] == "14/Nov/2023:12:00:00 +0000"
     assert rows[0][1] == "10.0.0.1"
     assert rows[0][2] == "200"
@@ -59,7 +59,7 @@ def test_parse_syslog(db, tmp_path: Path) -> None:
     log = validate_log_file(path)
     result = parse_text_log(log, db, table_name="syslog_events")
     assert result.row_count == EXPECTED_ROW_COUNT
-    rows = db.execute('SELECT timestamp, source_ip, event_type FROM "syslog_events"').fetchall()
+    rows = db.execute('SELECT event_timestamp, source_ip, event_type FROM "syslog_events"').fetchall()
     assert rows[0][0] == "Jan 15 08:00:00"
     assert rows[0][1] == "10.0.0.5"
     assert rows[0][2] == "sshd"
@@ -76,7 +76,7 @@ def test_parse_jsonline(db, tmp_path: Path) -> None:
     log = validate_log_file(path)
     result = parse_text_log(log, db, table_name="json_events")
     assert result.row_count == EXPECTED_ROW_COUNT
-    rows = db.execute('SELECT timestamp, source_ip, status_code, event_type FROM "json_events"').fetchall()
+    rows = db.execute('SELECT event_timestamp, source_ip, status_code, event_type FROM "json_events"').fetchall()
     assert rows[0][0] == "2024-01-01T00:00:00Z"
     assert rows[0][1] == "1.2.3.4"
     assert rows[0][2] == "200"
@@ -97,7 +97,7 @@ def test_parse_nginx_json_access_log(db, tmp_path: Path) -> None:
     log = validate_log_file(path)
     result = parse_text_log(log, db, table_name="nginx_events")
     assert result.row_count == EXPECTED_ROW_COUNT
-    rows = db.execute('SELECT timestamp, source_ip, status_code, event_type FROM "nginx_events"').fetchall()
+    rows = db.execute('SELECT event_timestamp, source_ip, status_code, event_type FROM "nginx_events"').fetchall()
     assert rows[0][0] == "17/May/2015:08:05:32 +0000"
     assert rows[0][1] == "192.168.1.1"
     assert rows[0][2] == "200"
@@ -116,9 +116,9 @@ def test_parse_nginx_plus_metrics_best_effort(db, tmp_path: Path) -> None:
     result = parse_text_log(log, db, table_name="nginxplus_events")
     assert result.row_count == COMPAT_COUNT
     columns = schema_columns(result.schema)
-    assert "timestamp" in columns
+    assert "event_timestamp" in columns
     assert "raw_message" in columns
-    rows = db.execute('SELECT timestamp, raw_message FROM "nginxplus_events"').fetchall()
+    rows = db.execute('SELECT event_timestamp, raw_message FROM "nginxplus_events"').fetchall()
     assert rows[0][0] == "1431433200"
     assert "server_zones" in rows[0][1]
 
@@ -240,7 +240,7 @@ def test_structured_extraction_matches_canonical_regex(db, tmp_path: Path) -> No
         "web": (
             '10.0.0.1 - - [08/Jul/2026:10:00:00 +0300] "GET /index.html HTTP/1.1" 200 1024',
             {
-                "timestamp": r"\[(\d{2}/\w{3}/\d{4}:\d{2}:\d{2}:\d{2}\s+[+\-]\d{4})\]",
+                "event_timestamp": r"\[(\d{2}/\w{3}/\d{4}:\d{2}:\d{2}:\d{2}\s+[+\-]\d{4})\]",
                 "source_ip": r"^([0-9]{1,3}(?:\.[0-9]{1,3}){3})",
                 "status_code": r'"\s+(\d{3})\s+',
                 "event_type": r'"(\w+)\s+\S+\s+HTTP',
@@ -249,7 +249,7 @@ def test_structured_extraction_matches_canonical_regex(db, tmp_path: Path) -> No
         "syslog": (
             "Jan 15 08:00:00 srv-01 sshd[1234]: Failed password for alice from 10.0.0.5 port 22",
             {
-                "timestamp": r"^([A-Z][a-z]{2}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2})",
+                "event_timestamp": r"^([A-Z][a-z]{2}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2})",
                 "source_ip": r"(?:from\s+)([0-9]{1,3}(?:\.[0-9]{1,3}){3})",
                 "event_type": r"^[A-Z][a-z]{2}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}\s+\S+\s+([A-Za-z0-9_.-]+)(?:\[\d+\])?:",
             },
@@ -257,7 +257,7 @@ def test_structured_extraction_matches_canonical_regex(db, tmp_path: Path) -> No
         "jsonline": (
             '{"ts":"2024-01-01T00:00:00Z","component":"api","src_ip":"1.2.3.4","status":200}',
             {
-                "timestamp": r'"(?:ts|timestamp)"\s*:\s*"([^"]+)"',
+                "event_timestamp": r'"(?:ts|timestamp)"\s*:\s*"([^"]+)"',
                 "source_ip": r'"(?:src_ip|source_ip|ip)"\s*:\s*"([^"]+)"',
                 "status_code": r'"(?:status|status_code)"\s*:\s*(\d+)',
                 "event_type": r'"(?:component|event_type|event|method)"\s*:\s*"([^"]+)"',
