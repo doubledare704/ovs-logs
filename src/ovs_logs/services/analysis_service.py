@@ -21,6 +21,7 @@ from typing import Any
 
 import duckdb
 
+from ovs_logs.config.settings import Settings, settings as _default_settings
 from ovs_logs.core.analysis import AnalysisEngine, IndicatorProcessor
 from ovs_logs.core.analysis.indicators import SuspiciousIndicator, extract_unique_ips
 from ovs_logs.core.database import Database
@@ -54,6 +55,11 @@ class AnalysisConfig:
 class AnalysisService:
     """Orchestrates the full analysis pipeline.
 
+    Accepts an optional ``settings`` object for dependency injection.  When
+    omitted the global ``ovs_logs.config.settings.settings`` singleton is used.
+    Tests may pass a custom ``Settings`` instance to avoid monkeypatching the
+    global singleton.
+
     Usage::
 
         config = AnalysisConfig(db_path=db, table="events", llm=True)
@@ -63,8 +69,14 @@ class AnalysisService:
             print(report.title)
     """
 
-    def __init__(self, config: AnalysisConfig) -> None:
+    def __init__(
+        self,
+        config: AnalysisConfig,
+        *,
+        settings: Settings | None = None,
+    ) -> None:
         self.config = config
+        self._settings = settings or _default_settings
         self._report_store = ReportStore()
 
     # ------------------------------------------------------------------
@@ -146,7 +158,9 @@ class AnalysisService:
     ) -> list[SuspiciousIndicator] | None:
         """Run SQL templates and shape raw results into indicators."""
         raw_results = AnalysisEngine().run_queries(connection, table_name=self.config.table)
-        indicators = IndicatorProcessor().process(raw_results)
+        indicators = IndicatorProcessor(
+            thresholds_settings=self._settings.thresholds,
+        ).process(raw_results)
         return indicators
 
     def _enrich_intel(
@@ -165,7 +179,10 @@ class AnalysisService:
         if not ips:
             return None
         try:
-            client = ThreatIntelClient(api_key=api_key)
+            client = ThreatIntelClient(
+                api_key=api_key,
+                abuseipdb_settings=self._settings.abuseipdb,
+            )
             return client.lookup_many(ips)
         except ThreatIntelError:
             logger.warning("AbuseIPDB enrichment failed; continuing without intel.")
@@ -191,6 +208,7 @@ class AnalysisService:
             api_key=api_key,
             endpoint=self.config.llm_endpoint,
             model=self.config.llm_model,
+            llm_settings=self._settings.llm,
         )
         report = LLMSynthesizer(provider).synthesize(indicators, threat_intel=threat_intel)
         report_id = self._report_store.save_report(connection, report, source_table=self.config.table)

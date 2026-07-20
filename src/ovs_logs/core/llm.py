@@ -172,6 +172,8 @@ def create_llm_provider(
     endpoint: str | None = None,
     model: str | None = None,
     timeout: int | None = None,
+    *,
+    llm_settings: LLMSettings | None = None,
 ) -> LLMProvider:
     """Create an LLM provider from explicit parameters.
 
@@ -182,22 +184,36 @@ def create_llm_provider(
 
     Raises ``ValueError`` if *endpoint* or *model* are explicitly set to an
     empty string, or if *endpoint* targets ``ollama.com``.  ``None`` values are
-    passed through to the provider, which falls back to ``settings.llm``
-    defaults.  An *api_key* is required by the OpenAI-compatible path;
-    Ollama-local may pass an empty placeholder.
+    passed through to the provider, which falls back to *llm_settings* (or
+    ``settings.llm`` if *llm_settings* is ``None``) defaults.  An *api_key* is
+    required by the OpenAI-compatible path; Ollama-local may pass an empty
+    placeholder.
     """
     if endpoint == "":
         raise ValueError(_ERR_ENDPOINT_REQUIRED)
     if model == "":
         raise ValueError(_ERR_MODEL_REQUIRED)
-    endpoint_key = endpoint or settings.llm.api_url
+    cfg = llm_settings or settings.llm
+    endpoint_key = endpoint or cfg.api_url
     if "ollama.com" in endpoint_key:
         raise ValueError(_ERR_CLOUD_BLOCKED)
     if is_ollama_endpoint(endpoint_key):
-        return OllamaProvider(api_key=api_key, endpoint=endpoint, model=model, timeout=timeout)
+        return OllamaProvider(
+            api_key=api_key,
+            endpoint=endpoint,
+            model=model,
+            timeout=timeout,
+            llm_settings=llm_settings,
+        )
     if not api_key:
         raise ValueError(_ERR_API_KEY_REQUIRED)
-    return OpenAICompatibleProvider(api_key=api_key, endpoint=endpoint, model=model, timeout=timeout)
+    return OpenAICompatibleProvider(
+        api_key=api_key,
+        endpoint=endpoint,
+        model=model,
+        timeout=timeout,
+        llm_settings=llm_settings,
+    )
 
 
 class PromptBuilder:
