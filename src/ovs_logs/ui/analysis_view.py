@@ -1,25 +1,26 @@
 """Live analysis rendering for the OVS-Log Streamlit dashboard.
 
-Reuses the core ``AnalysisEngine`` and ``IndicatorProcessor`` so the UI shows
-the same suspicious indicators the CLI produces, without duplicating analysis
-logic. Analysis is best-effort: tables without analyzable fields or that raise
-a query error degrade to an informational message instead of failing.
+Delegates analysis to :class:`AnalysisService` so the UI shares the same
+pipeline as the CLI. Analysis is best-effort: tables without analyzable
+fields or that raise a query error degrade to an informational message
+instead of failing.
 """
 
 from __future__ import annotations
 
 import dataclasses
 import logging
+from pathlib import Path
 
 import duckdb
 import streamlit as st
 
 from ovs_logs.config.settings import settings
-from ovs_logs.core.analysis import AnalysisEngine, IndicatorProcessor
 from ovs_logs.core.analysis.indicators import SuspiciousIndicator, extract_unique_ips
 from ovs_logs.core.normalization import get_all_aliases
 from ovs_logs.core.sql_utils import quote_identifier
 from ovs_logs.core.threat_lists import is_loaded as tl_is_loaded, match_ips as tl_match_ips
+from ovs_logs.services import AnalysisConfig, AnalysisService
 
 logger = logging.getLogger(__name__)
 
@@ -49,8 +50,9 @@ def compute_indicators(
     if not has_analyzable_columns(connection, table_name):
         return None
 
-    raw_results = AnalysisEngine().run_queries(connection, table_name=table_name)
-    indicators = IndicatorProcessor().process(raw_results)
+    config = AnalysisConfig(db_path=Path(settings.database.path), table=table_name)
+    service = AnalysisService(config)
+    indicators = service.run_analysis(connection)
 
     if not indicators:
         return []

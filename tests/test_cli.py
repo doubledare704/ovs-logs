@@ -313,6 +313,7 @@ def test_analyze_with_llm_and_output(tmp_path: Path) -> None:
 
 
 def test_analyze_invalid_abuseipdb_key(tmp_path: Path) -> None:
+    """A bad AbuseIPDB key should not crash — enrichment gracefully degrades."""
     csv = tmp_path / "events.csv"
     _write_events_csv(csv, rows=5)
     db = tmp_path / "test.db"
@@ -337,8 +338,9 @@ def test_analyze_invalid_abuseipdb_key(tmp_path: Path) -> None:
             ],
         )
 
-    assert result.exit_code != 0
-    assert "AbuseIPDB lookup failed" in str(result.exception) or "Unexpected error" in result.output
+    # Enrichment degrades gracefully — analysis still succeeds
+    assert result.exit_code == 0, result.output
+    assert "Suspicious Indicators" in result.output
 
 
 def test_process_csv_success(tmp_path: Path) -> None:

@@ -1,32 +1,29 @@
 """Intelligence tab rendering for the OVS-Log Streamlit dashboard.
 
-Renders locally-computed suspicious indicators (via ``render_analysis_results``)
-and saved ``IncidentReport`` records, surfacing their MITRE ATT&CK mappings.
-The tab can also synthesize and persist a new ``IncidentReport`` from the
-indicators using the LLM provider configured in the sidebar.
+Delegates report synthesis to :class:`AnalysisService` so the UI shares the
+same pipeline as the CLI. Saved reports are still read directly from
+:class:`ReportStore` for display.
 """
 
 from __future__ import annotations
 
 import logging
-import re
+from pathlib import Path
 
 import duckdb
 import requests
 import streamlit as st
 
+from ovs_logs.config.settings import settings
 from ovs_logs.core.analysis.indicators import SuspiciousIndicator
-from ovs_logs.core.llm import LLMSynthesizer
 from ovs_logs.core.persistence import ReportStore
 from ovs_logs.core.report import IncidentReport, MitreMapping
-from ovs_logs.core.threat_intel import ThreatIntelClient, ThreatIntelError
+from ovs_logs.services import AnalysisConfig, AnalysisService
 from ovs_logs.ui.analysis_view import compute_indicators, render_analysis_results
-from ovs_logs.ui.llm_wiring import build_llm_provider
+from ovs_logs.ui.llm_wiring import LLMConfig
 from ovs_logs.ui.report_display import report_date_label, severity_label
 
 logger = logging.getLogger(__name__)
-
-_IPV4_PATTERN = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
 
 
 def _render_mitre_table(mappings: list[MitreMapping]) -> None:
@@ -46,16 +43,6 @@ def _render_mitre_table(mappings: list[MitreMapping]) -> None:
     )
 
 
-def _extract_ips(indicators: list[SuspiciousIndicator]) -> list[str]:
-    """Return sorted unique IP addresses referenced by indicator evidence."""
-    ips: set[str] = set()
-    for indicator in indicators:
-        evidence = indicator.evidence
-        if evidence:
-            ips.update(_IPV4_PATTERN.findall(str(evidence)))
-    return sorted(ips)
-
-
 def _generate_and_save_report(
     connection: duckdb.DuckDBPyConnection,
     table_name: str,
@@ -68,27 +55,25 @@ def _generate_and_save_report(
         st.error("Report generation requires an LLM API key. Set it in the sidebar.")
         return
 
-    threat_intel = None
-    if enrich_intel:
-        ips = _extract_ips(indicators)
-        client = ThreatIntelClient(api_key=st.session_state.get("ABUSEIPDB_API_KEY"))
-        try:
-            threat_intel = client.lookup_many(ips)
-        except ThreatIntelError:
-            st.warning("AbuseIPDB enrichment failed; continuing without it.")
-            threat_intel = None
-
-    provider = build_llm_provider(dict(st.session_state))
+    llm_cfg = LLMConfig(dict(st.session_state))
+    config = AnalysisConfig(
+        db_path=Path(settings.database.path),
+        table=table_name,
+        llm=True,
+        abuseipdb_api_key=st.session_state.get("ABUSEIPDB_API_KEY"),
+        llm_api_key=llm_cfg.api_key,
+        llm_endpoint=llm_cfg.resolve_endpoint(),
+        llm_model=llm_cfg.resolve_model(),
+    )
+    service = AnalysisService(config)
 
     try:
-        synthesizer = LLMSynthesizer(provider)
-        report = synthesizer.synthesize(indicators, threat_intel=threat_intel)
+        report_id = service.synthesize_report(connection, indicators, enrich_intel=enrich_intel)
     except (ValueError, requests.exceptions.RequestException):
         logger.exception("LLM synthesis failed for table %s", table_name)
         st.error("LLM synthesis failed. The response was incomplete.")
         return
 
-    report_id = ReportStore().save_report(connection, report, source_table=table_name)
     st.success(f"Report saved ({report_id})")
 
 

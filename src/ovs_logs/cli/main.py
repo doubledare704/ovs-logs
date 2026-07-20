@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 import subprocess
 import sys
 from pathlib import Path
@@ -15,18 +14,15 @@ from rich.table import Table
 
 from ovs_logs import __version__
 from ovs_logs.config.settings import settings
-from ovs_logs.core.analysis import AnalysisEngine, IndicatorProcessor
-from ovs_logs.core.analysis.indicators import extract_unique_ips
 from ovs_logs.core.database import Database
 from ovs_logs.core.errors import classify_error, error_category
 from ovs_logs.core.ingestion.adapters import LoadResult
-from ovs_logs.core.llm import LLMSynthesizer, create_llm_provider
 from ovs_logs.core.normalization import NormalizationEngine
 from ovs_logs.core.persistence import ReportStore
 from ovs_logs.core.report import IncidentReport
 from ovs_logs.core.text_parsing import INGESTION_ADAPTERS
-from ovs_logs.core.threat_intel import ThreatIntelClient
 from ovs_logs.core.validation import SUPPORTED_FORMATS, LogFile, validate_log_file
+from ovs_logs.services import AnalysisConfig, AnalysisService
 
 app = typer.Typer(help="OVS-Log: local AI-powered log tracer and DFIR assistant")
 console = Console()
@@ -67,20 +63,12 @@ def _perform_ingest(
     return load_result, not load_result.is_unstructured
 
 
-def _perform_analysis(  # noqa: PLR0913
-    db: Path,
-    table: str,
-    *,
-    intel: bool,
-    llm: bool,
-    abuseipdb_api_key: str | None,
-    llm_api_key: str | None,
-    output: Path | None,
-) -> None:
-    with Database(db) as connection:
+def _perform_analysis(config: AnalysisConfig) -> None:
+    service = AnalysisService(config)
+
+    with Database(config.db_path) as connection:
         with console.status("[bold green]Analyzing table..."):
-            raw_results = AnalysisEngine().run_queries(connection, table_name=table)
-            indicators = IndicatorProcessor().process(raw_results)
+            indicators, report = service.run(connection=connection)
 
         if not indicators:
             console.print("[yellow]No suspicious indicators found.[/yellow]")
@@ -88,31 +76,16 @@ def _perform_analysis(  # noqa: PLR0913
 
         _render_indicators(indicators)
 
-        threat_intel: dict[str, Any] | None = None
-        if intel:
-            with console.status("[bold green]Enriching with threat intelligence..."):
-                ips = extract_unique_ips(indicators)
-                client = ThreatIntelClient(api_key=abuseipdb_api_key or os.getenv("ABUSEIPDB_API_KEY"))
-                threat_intel = client.lookup_many(ips) if ips else {}
-
-        report: IncidentReport | None = None
-        if llm:
-            with console.status("[bold green]Synthesizing incident report..."):
-                api_key = llm_api_key or os.getenv("LLM_API_KEY")
-                if api_key is None:
-                    raise ValueError("--llm requires an LLM API key (set --llm-api-key or LLM_API_KEY)")
-                provider = create_llm_provider(api_key=api_key)
-                report = LLMSynthesizer(provider).synthesize(indicators, threat_intel=threat_intel)
-            report_id = ReportStore().save_report(connection, report, source_table=table)
-            console.print(f"[bold]Report saved:[/bold] {report_id}")
+        if report:
+            console.print("[bold]Report saved.[/bold]")
             _render_report(report)
 
-        if output:
+        if config.output:
             if report is None:
                 raise ValueError("--output requires --llm so a synthesized report is available")
-            output.parent.mkdir(parents=True, exist_ok=True)
-            output.write_text(json.dumps(report.to_dict(), indent=2), encoding="utf-8")
-            console.print(f"[bold]Report written to:[/bold] {output}")
+            config.output.parent.mkdir(parents=True, exist_ok=True)
+            config.output.write_text(json.dumps(report.to_dict(), indent=2), encoding="utf-8")
+            console.print(f"[bold]Report written to:[/bold] {config.output}")
 
 
 @app.command()
@@ -161,13 +134,15 @@ def process(  # noqa: PLR0913
             return
 
         _perform_analysis(
-            db,
-            "events",
-            intel=intel,
-            llm=llm,
-            abuseipdb_api_key=abuseipdb_api_key,
-            llm_api_key=llm_api_key,
-            output=output,
+            AnalysisConfig(
+                db_path=db,
+                table="events",
+                intel=intel,
+                llm=llm,
+                abuseipdb_api_key=abuseipdb_api_key,
+                llm_api_key=llm_api_key,
+                output=output,
+            )
         )
     except Exception as exc:
         _print_error(exc)
@@ -187,13 +162,15 @@ def analyze(  # noqa: PLR0913
     """Analyze a DuckDB table to extract indicators and optionally synthesize a report."""
     try:
         _perform_analysis(
-            db,
-            table,
-            intel=intel,
-            llm=llm,
-            abuseipdb_api_key=abuseipdb_api_key,
-            llm_api_key=llm_api_key,
-            output=output,
+            AnalysisConfig(
+                db_path=db,
+                table=table,
+                intel=intel,
+                llm=llm,
+                abuseipdb_api_key=abuseipdb_api_key,
+                llm_api_key=llm_api_key,
+                output=output,
+            )
         )
     except Exception as exc:
         _print_error(exc)
