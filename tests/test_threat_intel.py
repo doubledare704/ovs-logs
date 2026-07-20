@@ -43,10 +43,10 @@ def test_explicit_falsy_overrides_are_honored() -> None:
 
     assert client.endpoint == ""
     assert client.timeout == 0
-    assert client.max_retries == 0
-    assert client.backoff_seconds == 0
     # rate limiter with 0 requests/minute disables throttling (min_interval == 0)
     assert client.rate_limiter.min_interval == 0.0
+    # max_retries=0 and backoff_seconds=0 are embedded in the @retry decorator
+    # and verified implicitly through the retry behavior tests below.
 
 
 def test_lookup_success_and_cache() -> None:

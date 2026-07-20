@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import logging
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -11,10 +12,17 @@ from typing import Any
 import requests
 
 from ovs_logs.config.settings import AbuseIPDBSettings, settings
+from ovs_logs.core.retry import retry
+
+logger = logging.getLogger(__name__)
 
 
 class ThreatIntelError(Exception):
     """Raised when a threat-intel lookup fails."""
+
+
+class ThreatIntelTransientError(ThreatIntelError):
+    """Raised for transient HTTP errors (5xx, 429) that may succeed on retry."""
 
 
 _TRANSIENT_STATUS_MIN = 500
@@ -37,7 +45,11 @@ class ReputationResult:
 
 
 class RateLimiter:
-    """Enforces a minimum interval between consecutive API requests."""
+    """Enforces a minimum interval between consecutive API requests.
+
+    This class is **not** thread-safe.  Use a separate instance per thread
+    or wrap ``wait()`` with an external lock when sharing across threads.
+    """
 
     def __init__(
         self,
@@ -77,10 +89,15 @@ class ThreatIntelClient:
         self.api_key = api_key
         self.endpoint = endpoint if endpoint is not None else cfg.api_url
         self.timeout = timeout if timeout is not None else cfg.timeout
-        self.max_retries = max_retries if max_retries is not None else cfg.max_retries
-        self.backoff_seconds = backoff_seconds if backoff_seconds is not None else cfg.backoff_seconds
+        retries = max_retries if max_retries is not None else cfg.max_retries
+        backoff = backoff_seconds if backoff_seconds is not None else cfg.backoff_seconds
         rate_limit = max_requests_per_minute if max_requests_per_minute is not None else cfg.max_requests_per_minute
         self.rate_limiter = RateLimiter(max_requests_per_minute=rate_limit)
+        self._make_request = retry(
+            max_retries=retries,
+            backoff_seconds=backoff,
+            exceptions=(requests.Timeout, ThreatIntelTransientError),
+        )(self._make_request_impl)
         self._cache: dict[str, ReputationResult] = {}
 
     @staticmethod
@@ -111,10 +128,15 @@ class ThreatIntelClient:
     def _is_transient(self, status_code: int) -> bool:
         return status_code >= _TRANSIENT_STATUS_MIN or status_code == _RATE_LIMIT_STATUS
 
-    def _execute(self, ip: str) -> requests.Response:
-        """Make a single rate-limited HTTP request."""
+    def _make_request_impl(self, ip: str) -> requests.Response:
+        """Make a single rate-limited HTTP request.
+
+        Raises :class:`ThreatIntelTransientError` for status codes that may
+        succeed on retry (5xx, 429).  The :meth:`_make_request` wrapper
+        (decorated with ``@retry``) handles the backoff and retry logic.
+        """
         self.rate_limiter.wait()
-        return requests.get(
+        response = requests.get(
             self.endpoint,
             params={"ipAddress": ip, "verbose": "true"},
             headers={
@@ -123,6 +145,9 @@ class ThreatIntelClient:
             },
             timeout=self.timeout,
         )
+        if self._is_transient(response.status_code):
+            raise ThreatIntelTransientError(f"AbuseIPDB lookup for {ip} returned HTTP {response.status_code}")
+        return response
 
     def lookup(self, ip: str) -> ReputationResult:
         """Return reputation data for a single IP, using cache if available."""
@@ -132,37 +157,22 @@ class ThreatIntelClient:
         if ip in self._cache:
             return dataclasses.replace(self._cache[ip], cached=True)
 
-        last_error: Exception | None = None
-        for attempt in range(self.max_retries + 1):
-            try:
-                response = self._execute(ip)
-            except requests.Timeout as exc:
-                last_error = exc
-                if attempt < self.max_retries:
-                    time.sleep(self.backoff_seconds * (2**attempt))
-                    continue
-                raise ThreatIntelError(
-                    f"AbuseIPDB lookup for {ip} timed out after {self.max_retries + 1} attempts"
-                ) from exc
-            except requests.RequestException as exc:
-                raise ThreatIntelError(f"AbuseIPDB lookup for {ip} failed: {exc}") from exc
+        try:
+            response = self._make_request(ip)
+        except ThreatIntelTransientError as exc:
+            raise ThreatIntelError(f"AbuseIPDB lookup failed for {ip} after retries: {exc}") from exc
+        except requests.Timeout as exc:
+            raise ThreatIntelError(f"AbuseIPDB lookup for {ip} timed out after retries") from exc
+        except requests.RequestException as exc:
+            raise ThreatIntelError(f"AbuseIPDB lookup for {ip} failed: {exc}") from exc
 
-            if response.status_code == _SUCCESS_STATUS:
-                data = response.json().get("data", {})
-                result = self._build_result(ip, data)
-                self._cache[ip] = result
-                return result
+        if response.status_code == _SUCCESS_STATUS:
+            data = response.json().get("data", {})
+            result = self._build_result(ip, data)
+            self._cache[ip] = result
+            return result
 
-            if self._is_transient(response.status_code):
-                last_error = ThreatIntelError(f"AbuseIPDB lookup for {ip} returned HTTP {response.status_code}")
-                if attempt < self.max_retries:
-                    time.sleep(self.backoff_seconds * (2**attempt))
-                    continue
-
-            raise ThreatIntelError(f"AbuseIPDB lookup failed for {ip}: HTTP {response.status_code} - {response.text}")
-
-        # Exhausted retries on transient errors.
-        raise last_error or ThreatIntelError(f"AbuseIPDB lookup failed for {ip} after retries")
+        raise ThreatIntelError(f"AbuseIPDB lookup failed for {ip}: HTTP {response.status_code} - {response.text}")
 
     def lookup_many(self, ips: list[str]) -> dict[str, ReputationResult]:
         """Return reputation data for a list of unique IPs."""

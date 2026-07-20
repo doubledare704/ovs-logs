@@ -302,8 +302,8 @@ def load_evtx(
                 if "Unable to parse EVTX record" in str(exc):
                     raise
                 raise RuntimeError(f"Unable to parse EVTX file {log_file.path}") from exc
-            except Exception as exc:  # pragma: no cover - exercised through parser errors
-                raise RuntimeError(f"Unable to parse EVTX file {log_file.path}") from exc
+            except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
+                raise RuntimeError(f"Unable to parse EVTX record data: {exc}") from exc
 
         connection.execute(
             f'CREATE OR REPLACE TABLE "{name}" AS SELECT * FROM read_csv_auto(?)',

@@ -79,8 +79,12 @@ class OllamaProvider(LLMProvider):
                 format=REPORT_JSON_SCHEMA,
                 options={"temperature": 0},
             )
-        except ResponseError:
-            logger.debug("Ollama structured output unavailable; retrying without format", exc_info=True)
+        except ResponseError as exc:
+            logger.warning(
+                "Ollama structured output unavailable for model %s; retrying without format: %s",
+                self.model,
+                exc,
+            )
             response = self._client.chat(
                 model=self.model,
                 messages=messages,
