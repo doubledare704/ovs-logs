@@ -6,7 +6,8 @@ from pathlib import Path
 
 import duckdb
 
-from ovs_logs.config.settings import Settings, settings
+from ovs_logs.config import settings as _cfg
+from ovs_logs.config.settings import Settings
 
 
 class Database:
@@ -27,14 +28,18 @@ class Database:
 
     def __init__(self, path: str | Path | None = None, *, db_settings: Settings | None = None) -> None:
         if path is None:
-            cfg = db_settings or settings
+            cfg = db_settings or _cfg.settings
             path = Path(cfg.database.path)
         self._path = path
         self._connection: duckdb.DuckDBPyConnection | None = None
         self._managed_by_enter: bool = False
 
     def __enter__(self) -> duckdb.DuckDBPyConnection:
-        self._managed_by_enter = True
+        # Only mark as managed if no external connection exists — a manual
+        # connect() call before entering the context means the caller owns
+        # the lifecycle and __exit__ must not close it.
+        if self._connection is None:
+            self._managed_by_enter = True
         return self.connect()
 
     def __exit__(self, exc_type, exc_val, exc_tb) -> None:  # type: ignore[no-untyped-def]

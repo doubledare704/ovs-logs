@@ -124,6 +124,30 @@ def test_load_networks_skips_invalid_cidrs(tmp_path: Path) -> None:
     assert "not-a-cidr" not in cidrs
 
 
+def test_load_networks_cache_invalidated_on_file_change(tmp_path: Path) -> None:
+    """Changing the .netset file content and mtime must invalidate the LRU
+    cache so the next call returns the new networks."""
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    ns = cache / "test.netset"
+
+    # Initial content — sleep to ensure a distinct mtime from the second write
+    ns.write_text("10.0.0.0/8\n", encoding="utf-8")
+    networks_a = load_networks(["test"], str(cache))
+    cidrs_a = {c for _, c, _ in networks_a}
+    assert "10.0.0.0/8" in cidrs_a
+
+    # Modify content — sleep guarantees mtime_ns changes on all platforms
+    time.sleep(0.015)
+    ns.write_text("192.168.0.0/16\n", encoding="utf-8")
+
+    # Should return new content (cache miss due to different mtime_ns)
+    networks_b = load_networks(["test"], str(cache))
+    cidrs_b = {c for _, c, _ in networks_b}
+    assert "192.168.0.0/16" in cidrs_b, "Cache was not invalidated on file change"
+    assert "10.0.0.0/8" not in cidrs_b
+
+
 # ---------------------------------------------------------------------------
 # download_list
 # ---------------------------------------------------------------------------
