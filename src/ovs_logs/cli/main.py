@@ -24,7 +24,7 @@ from ovs_logs.core.llm import LLMSynthesizer, create_llm_provider
 from ovs_logs.core.normalization import NormalizationEngine
 from ovs_logs.core.persistence import ReportStore
 from ovs_logs.core.report import IncidentReport
-from ovs_logs.core.text_parsing import ADAPTERS
+from ovs_logs.core.text_parsing import INGESTION_ADAPTERS
 from ovs_logs.core.threat_intel import ThreatIntelClient
 from ovs_logs.core.validation import SUPPORTED_FORMATS, LogFile, validate_log_file
 
@@ -55,7 +55,7 @@ def _perform_ingest(
     table: str | None,
 ) -> tuple[LoadResult, bool]:
     log_file = _resolve_log_file(file, file_type)
-    adapter = ADAPTERS.get(log_file.format)
+    adapter = INGESTION_ADAPTERS.get(log_file.format)
     if adapter is None:
         raise ValueError(f"No ingestion adapter for format '{log_file.format}'")
 

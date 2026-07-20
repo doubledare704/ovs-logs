@@ -272,7 +272,7 @@ def ingest_text_log_structured(
         return load_text_log(log_file, connection, table_name=name)
 
 
-ADAPTERS: dict[str, Callable[..., LoadResult]] = {
+INGESTION_ADAPTERS: dict[str, Callable[..., LoadResult]] = {
     "csv": load_csv,
     "json": load_json,
     "evtx": load_evtx,

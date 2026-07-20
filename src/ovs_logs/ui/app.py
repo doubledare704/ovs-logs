@@ -28,7 +28,7 @@ from ovs_logs.core.ingestion.adapters import iter_evtx_record_summaries
 from ovs_logs.core.llm import is_ollama_endpoint
 from ovs_logs.core.normalization import NormalizationEngine
 from ovs_logs.core.sql_utils import quote_identifier
-from ovs_logs.core.text_parsing import ADAPTERS
+from ovs_logs.core.text_parsing import INGESTION_ADAPTERS
 from ovs_logs.core.threat_lists import (
     ensure_cache_dir as tl_ensure_cache_dir,
     is_loaded as tl_is_loaded,
@@ -290,7 +290,7 @@ def _process_ready_files(db_path: str) -> None:
         for file_state in ready_files:
             try:
                 log_file = validate_log_file(file_state["temp_path"])
-                adapter = ADAPTERS.get(log_file.format)
+                adapter = INGESTION_ADAPTERS.get(log_file.format)
                 if adapter is None:
                     raise ValueError(f"No ingestion adapter for format '{log_file.format}'")  # noqa: TRY301
 
