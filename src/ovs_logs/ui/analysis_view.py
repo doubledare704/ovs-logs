@@ -17,7 +17,7 @@ import streamlit as st
 from ovs_logs.config.settings import settings
 from ovs_logs.core.analysis import AnalysisEngine, IndicatorProcessor
 from ovs_logs.core.analysis.indicators import SuspiciousIndicator, extract_unique_ips
-from ovs_logs.core.normalization import FIELD_ALIASES
+from ovs_logs.core.normalization import get_all_aliases
 from ovs_logs.core.sql_utils import quote_identifier
 from ovs_logs.core.threat_lists import is_loaded as tl_is_loaded, match_ips as tl_match_ips
 
@@ -31,11 +31,7 @@ def has_analyzable_columns(connection: duckdb.DuckDBPyConnection, table_name: st
     except duckdb.Error:
         return False
 
-    # Check if any column matches a target field or any of its aliases
-    all_analyzable = {k.lower() for k in FIELD_ALIASES}
-    for aliases in FIELD_ALIASES.values():
-        all_analyzable.update(a.lower() for a in aliases)
-
+    all_analyzable = get_all_aliases()
     return any(col in all_analyzable for col in columns)
 
 

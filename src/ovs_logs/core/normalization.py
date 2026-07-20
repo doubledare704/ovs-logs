@@ -8,8 +8,8 @@ from dataclasses import dataclass
 
 import duckdb
 
-from ovs_logs.core.ingestion.adapters import LoadResult, _timestamp_cast_expression
-from ovs_logs.core.sql_utils import quote_identifier
+from ovs_logs.core.ingestion.adapters import LoadResult
+from ovs_logs.core.sql_utils import quote_identifier, timestamp_cast_expression
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +63,21 @@ FIELD_ALIASES: dict[str, list[str]] = {
     ],
 }
 
+
+def get_all_aliases() -> set[str]:
+    """Return the flattened set of all known field names and their aliases.
+
+    Includes both target field names (``event_timestamp``, ``source_ip``, etc.)
+    and all their alias variants in lowercase, so consumers can efficiently test
+    whether a column name matches any known analyzable field.
+    """
+    result: set[str] = set()
+    for target, aliases in FIELD_ALIASES.items():
+        result.add(target.lower())
+        result.update(a.lower() for a in aliases)
+    return result
+
+
 TARGET_TYPES: dict[str, str] = {
     "event_timestamp": "TIMESTAMP",
     "source_ip": "VARCHAR",
@@ -101,7 +116,7 @@ class NormalizationEngine:
 
         source_column = matches[0]
         if target == "event_timestamp":
-            return f'{_timestamp_cast_expression(source_column)} AS "{target}"', source_column
+            return f'{timestamp_cast_expression(source_column)} AS "{target}"', source_column
         if target == "status_code":
             casts = ", ".join(f"try_cast({quote_identifier(col)} AS {dtype})" for col in matches)
         else:

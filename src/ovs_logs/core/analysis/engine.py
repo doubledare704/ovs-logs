@@ -8,9 +8,8 @@ from typing import Any
 import duckdb
 
 from ..constants import NORMALIZED_COLUMNS
-from ..ingestion.adapters import _timestamp_cast_expression
 from ..normalization import FIELD_ALIASES
-from ..sql_utils import quote_identifier as _quote_identifier
+from ..sql_utils import quote_identifier as _quote_identifier, timestamp_cast_expression
 from .templates import TEMPLATES, SQLTemplate
 
 logger = logging.getLogger(__name__)
@@ -51,7 +50,7 @@ def _build_expression_for_matched_alias(
     """
     orig_name = orig_columns[matched_alias]
     if target == "event_timestamp":
-        return f'{_timestamp_cast_expression(orig_name)} AS "event_timestamp"'
+        return f'{timestamp_cast_expression(orig_name)} AS "event_timestamp"'
     if target == "status_code":
         return f'{_status_code_expression(orig_name, column_types)} AS "status_code"'
     return f'{_quote_identifier(orig_name)}::{_column_dtype(target)} AS "{target}"'
