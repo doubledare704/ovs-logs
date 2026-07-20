@@ -4,6 +4,9 @@ from collections.abc import Sequence
 from datetime import datetime
 from pathlib import Path
 
+import duckdb
+
+from ovs_logs.core.database import Database
 from ovs_logs.core.ingestion.adapters import load_csv, load_json, load_text_log
 from ovs_logs.core.normalization import NormalizationEngine
 from ovs_logs.core.text_parsing import parse_text_log
@@ -162,6 +165,42 @@ def test_normalize_batch_appends_without_data_loss(db, tmp_path: Path) -> None:
 
 def test_normalize_batch_empty_returns_zero(db) -> None:
     assert NormalizationEngine().normalize_batch(db, []) == 0
+
+
+def test_normalize_batch_concurrent_insert_does_not_duplicate(tmp_path: Path) -> None:
+    """Two separate connections normalizing the same raw table must not duplicate.
+
+    Reproduces the review-flagged multi-session race: the post-INSERT read-back of
+    the whole tracking table previously treated every candidate as ``newly
+    inserted`` so a second session could append the same rows again. The atomic
+    ``INSERT OR IGNORE ... RETURNING`` fix restricts ``new_tables`` to rows this
+    call actually wrote.
+
+    Uses a shared on-disk database with two independent connections so the
+    tracking table is genuinely shared between sessions.
+    """
+    file = tmp_path / "same.csv"
+    file.write_text("timestamp,client_ip,status,method\n2024-01-01T00:00:00,1.2.3.4,200,GET\n")
+    db_path = tmp_path / "race.db"
+
+    # Seed the raw table once through a fresh connection.
+    with Database(str(db_path)) as seed:
+        load_csv(validate_log_file(file), seed, table_name="raw_same")
+    with duckdb.connect(str(db_path)) as probe:
+        columns = [name for name, _ in load_csv(validate_log_file(file), probe, table_name="raw_same").schema]
+    tables = [("raw_same", columns)]
+
+    # Two independent sessions each normalize the already-loaded source table.
+    with (
+        Database(str(db_path)) as conn_a,
+        Database(str(db_path)) as conn_b,
+    ):
+        NormalizationEngine().normalize_batch(conn_a, tables)
+        NormalizationEngine().normalize_batch(conn_b, tables)
+
+    with Database(str(db_path)) as conn:
+        row = conn.execute("SELECT COUNT(*) FROM events").fetchone()
+        assert row is not None and row[0] == 1
 
 
 def test_normalize_batch_is_idempotent_per_source(db, tmp_path: Path) -> None:

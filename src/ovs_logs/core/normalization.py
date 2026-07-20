@@ -200,16 +200,16 @@ class NormalizationEngine:
         if not candidates_not_merged:
             return self._events_row_count(connection) if events_exists else 0
 
-        # Atomically register all new candidates; duplicates are silently
-        # ignored so concurrent calls cannot race on the SELECT+INSERT gap.
-        connection.executemany(
-            f"INSERT OR IGNORE INTO {_TRACKING_TABLE_QUOTED} VALUES (?)",
-            [(raw_table,) for raw_table, _ in candidates_not_merged],
-        )
-
-        # Determine which tables were actually newly inserted (may be a
-        # subset if a concurrent call already inserted some of ours).
-        inserted = {row[0] for row in connection.execute(f"SELECT raw_table FROM {_TRACKING_TABLE_QUOTED}").fetchall()}
+        # Atomically register all new candidates and capture only the rows
+        # this call actually wrote. RETURNING makes the claim race-free: a
+        # concurrent call that inserted the same table in the gap is excluded
+        # from ``inserted``, so neither caller double-appends its rows.
+        placeholders = ", ".join(["(?)"] * len(candidates_not_merged))
+        inserted_rows = connection.execute(
+            f"INSERT OR IGNORE INTO {_TRACKING_TABLE_QUOTED} VALUES {placeholders} RETURNING raw_table",
+            [raw_table for raw_table, _ in candidates_not_merged],
+        ).fetchall()
+        inserted = {row[0] for row in inserted_rows}
         new_tables = [(rt, cols) for rt, cols in candidates_not_merged if rt in inserted]
         if not new_tables:
             return self._events_row_count(connection) if events_exists else 0

@@ -53,10 +53,12 @@ class RateLimiter:
 
     def __init__(
         self,
-        max_requests_per_minute: int = settings.abuseipdb.max_requests_per_minute,
+        max_requests_per_minute: int | None = None,
         time_source: Callable[[], float] | None = None,
         sleep_func: Callable[[float], None] | None = None,
     ) -> None:
+        if max_requests_per_minute is None:
+            max_requests_per_minute = settings.abuseipdb.max_requests_per_minute
         self.min_interval = 60.0 / max_requests_per_minute if max_requests_per_minute > 0 else 0.0
         self.time_source = time_source or time.monotonic
         self.sleep_func = sleep_func or time.sleep

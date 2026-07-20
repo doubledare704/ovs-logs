@@ -58,7 +58,8 @@ def _perform_ingest(
     with Database(db) as connection:
         load_result = adapter(log_file, connection, table_name=table)
         if not load_result.is_unstructured:
-            NormalizationEngine().normalize_table(connection, load_result)
+            tables = [(load_result.table_name, [name for name, _ in load_result.schema])]
+            NormalizationEngine().normalize_batch(connection, tables)
 
     return load_result, not load_result.is_unstructured
 

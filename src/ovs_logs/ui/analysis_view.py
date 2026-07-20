@@ -21,8 +21,11 @@ from ovs_logs.core.normalization import get_all_aliases
 from ovs_logs.core.sql_utils import quote_identifier
 from ovs_logs.core.threat_lists import is_loaded as tl_is_loaded, match_ips as tl_match_ips
 from ovs_logs.services import AnalysisConfig, AnalysisService
+from ovs_logs.ui.state import SessionKeys
 
 logger = logging.getLogger(__name__)
+
+SK = SessionKeys()
 
 
 def has_analyzable_columns(connection: duckdb.DuckDBPyConnection, table_name: str) -> bool:
@@ -60,7 +63,7 @@ def compute_indicators(
     # Enrich with threat-list matches (best-effort, never breaks analysis)
     try:
         enabled = st.session_state.get(
-            "threat_lists_enabled",
+            SK.threat_lists_enabled,
             list(settings.threat_lists.default_lists),
         )
         cache_dir = settings.threat_lists.cache_dir
