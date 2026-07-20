@@ -16,6 +16,7 @@ from ovs_logs.config.settings import LLMSettings, settings
 from ovs_logs.core.analysis.indicators import SuspiciousIndicator
 from ovs_logs.core.report import IncidentReport
 from ovs_logs.core.report_schema import REPORT_JSON_SCHEMA
+from ovs_logs.core.retry import retry
 from ovs_logs.core.threat_intel import ReputationResult
 
 logger = logging.getLogger(__name__)
@@ -111,6 +112,11 @@ class OpenAICompatibleProvider(LLMProvider):
         self.model = model if model is not None else cfg.model
         self.timeout = timeout if timeout is not None else cfg.timeout
 
+    @retry(
+        max_retries=2,
+        backoff_seconds=1.0,
+        exceptions=(requests.Timeout, requests.ConnectionError),
+    )
     def generate(self, prompt: str) -> str:
         headers = {
             "Authorization": f"Bearer {self.api_key}",
