@@ -1,42 +1,27 @@
 """Single-page Streamlit dashboard for OVS-Log.
 
-Provides a sidebar with API key inputs, database path configuration, and a
-"Recent Tables" navigator that lists user tables from the connected DuckDB
-instance. Values entered in the sidebar are persisted in ``st.session_state``
-so they remain available to other panels across reruns.
+The sidebar, upload pipeline, and ingestion logic have been extracted into
+:mod:`ui.components` so each concern can be understood and tested
+independently.  This module orchestrates them and renders the four main
+tabs (Ingest & Signals, Attack Timeline, Intelligence, Mitigation).
 """
 
 from __future__ import annotations
 
-import hashlib
 import logging
-import os
-import tempfile
-from pathlib import Path
-from typing import TYPE_CHECKING, Any
 
 import duckdb
 import streamlit as st
 
-if TYPE_CHECKING:
-    from streamlit.runtime.uploaded_file_manager import UploadedFile
-
-from ovs_logs.config.settings import DEFAULT_ENDPOINT_SENTINEL, LLM_PRESETS, settings
-from ovs_logs.core.constants import KB, LARGE_FILE_BYTES, MB
+from ovs_logs.config.settings import settings
+from ovs_logs.core.constants import LARGE_FILE_BYTES
 from ovs_logs.core.database import Database
-from ovs_logs.core.ingestion.adapters import iter_evtx_record_summaries
-from ovs_logs.core.llm import is_ollama_endpoint
-from ovs_logs.core.normalization import NormalizationEngine
 from ovs_logs.core.sql_utils import quote_identifier
-from ovs_logs.core.text_parsing import INGESTION_ADAPTERS
-from ovs_logs.core.threat_lists import (
-    ensure_cache_dir as tl_ensure_cache_dir,
-    is_loaded as tl_is_loaded,
-    stale_lists as tl_stale_lists,
-    update_lists as tl_update_lists,
-)
-from ovs_logs.core.validation import SUPPORTED_FORMATS, validate_log_file
+from ovs_logs.core.validation import SUPPORTED_FORMATS
 from ovs_logs.ui.analysis_view import render_analysis_results
+from ovs_logs.ui.components.ingest import process_ready_files
+from ovs_logs.ui.components.sidebar import render_sidebar
+from ovs_logs.ui.components.upload import _format_size, register_uploaded_file, validate_uploaded_file
 from ovs_logs.ui.intel_view import render_intelligence_tab
 from ovs_logs.ui.mitigation_view import render_mitigation_tab
 from ovs_logs.ui.state import SessionKeys
@@ -46,277 +31,12 @@ SK = SessionKeys()
 
 logger = logging.getLogger(__name__)
 
-_SYSTEM_TABLE_PREFIXES: tuple[str, ...] = (
-    "sqlite_",
-    "pg_",
-    "_ovs_",
-)
-
-_SYSTEM_SCHEMAS: tuple[str, ...] = (
-    "information_schema",
-    "pg_catalog",
-)
-
 _ALLOWED_UPLOAD_TYPES: tuple[str, ...] = tuple(sorted(SUPPORTED_FORMATS))
-
-
-def _on_llm_preset_change() -> None:
-    """Reset endpoint/model to the newly selected preset's defaults.
-
-    Streamlit's ``text_input`` restores its previous widget value from widget
-    state even when ``value=`` changes, so the session_state keys must be
-    overwritten explicitly to avoid a stale URL (e.g. a bare ``.../api`` host)
-    lingering and producing malformed requests.
-
-    Writes to the widget keys (lowercase) so the ``text_input`` widgets pick up
-    the preset value.  The application-state keys (uppercase) are populated
-    later in ``render_sidebar`` from the widget value.
-    """
-    preset = st.session_state.get(SK.widget_llm_preset)
-    preset_cfg = LLM_PRESETS.get(preset) if preset else None
-    if preset_cfg:
-        endpoint_default = (
-            settings.llm.api_url if preset_cfg.endpoint == DEFAULT_ENDPOINT_SENTINEL else preset_cfg.endpoint
-        )
-        st.session_state[SK.widget_llm_endpoint] = endpoint_default
-        st.session_state[SK.widget_llm_model] = preset_cfg.model or ""
-
-
-_MAX_PREVIEW_LINES = 200
-_MAX_PREVIEW_BYTES = 64 * KB
-
-
-@st.cache_data(ttl=5)
-def _read_user_tables(db_path: str) -> list[str]:
-    """Return user table names from ``information_schema.tables``.
-
-    System tables (e.g. ``sqlite_*``, anything inside ``information_schema`` or
-    ``pg_catalog``) are excluded so the navigator only surfaces application
-    tables created by OVS-Log ingestion.
-    """
-    query = "SELECT table_schema, table_name FROM information_schema.tables WHERE table_type = 'BASE TABLE'"
-    with duckdb.connect(database=db_path, read_only=True) as conn:
-        rows = conn.execute(query).fetchall()
-
-    table_names: list[str] = []
-    for schema, name in rows:
-        if schema in _SYSTEM_SCHEMAS:
-            continue
-        if any(name.startswith(prefix) for prefix in _SYSTEM_TABLE_PREFIXES):
-            continue
-        table_names.append(name)
-    return sorted(table_names)
 
 
 def _initialize_session_state() -> None:
     st.session_state.setdefault(SK.uploaded_files, [])
     st.session_state.setdefault(SK.consumed_uploads, set())
-
-
-def _format_size(size: int) -> str:
-    if size >= MB:
-        return f"{size / MB:.1f} MB"
-    if size >= KB:
-        return f"{size / KB:.1f} KB"
-    return f"{size} B"
-
-
-def _save_uploaded_file(uploaded_file: UploadedFile) -> tuple[Path, str]:
-    uploaded_file.seek(0)
-    suffix = Path(uploaded_file.name).suffix
-    temp_path: Path | None = None
-    try:
-        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix or ".tmp") as tmp:
-            temp_path = Path(tmp.name)
-            hasher = hashlib.sha256()
-            while chunk := uploaded_file.read(8192):
-                tmp.write(chunk)
-                hasher.update(chunk)
-    except OSError:
-        if temp_path is not None:
-            temp_path.unlink(missing_ok=True)
-        raise
-    if temp_path is None:
-        raise RuntimeError("Failed to create temporary file")
-    uploaded_file.seek(0)
-    return temp_path, hasher.hexdigest()
-
-
-def _preview_evtx(path: Path, max_records: int = 50) -> str:
-    """Render a short readable summary of EVTX records via the core adapter."""
-    try:
-        summaries = iter_evtx_record_summaries(path, max_records=max_records)
-    except Exception as exc:  # pragma: no cover - exercised through parser errors
-        logger.warning("Unable to preview EVTX file %s: %s", path, exc)
-        return f"Unable to preview EVTX file: {exc}"
-
-    lines = [
-        f"#{summary['record_id']} | {summary['timestamp']} | EventID={summary['event_id']} | "
-        f"{summary['provider']} | {summary['channel']}"
-        for summary in summaries
-    ]
-    return "\n".join(lines) if lines else "(no records found)"
-
-
-@st.cache_data(ttl=5)
-def _read_preview_lines(path: Path, max_lines: int = _MAX_PREVIEW_LINES) -> str:
-    if path.suffix.lower() == ".evtx":
-        return _preview_evtx(path)
-
-    lines: list[bytes] = []
-    bytes_read = 0
-    with path.open("rb") as fh:
-        for _ in range(max_lines):
-            remaining = _MAX_PREVIEW_BYTES - bytes_read
-            if remaining <= 0:
-                break
-            line = fh.readline(remaining + 1)
-            if not line:
-                break
-            lines.append(line[:remaining].rstrip(b"\n"))
-            bytes_read += min(len(line), remaining)
-            if len(line) > remaining:
-                break
-    return b"\n".join(lines).decode("utf-8", errors="replace")
-
-
-def _find_uploaded_file(uploaded_files: list[dict[str, Any]], content_hash: str) -> bool:
-    return any(file["content_hash"] == content_hash for file in uploaded_files)
-
-
-def _register_uploaded_file(uploaded_file: UploadedFile) -> tuple[bool, str | None]:
-    """Register a newly uploaded file for the ingest pipeline.
-
-    Saves the file to a temporary location, computes a content hash for
-    deduplication, and appends a metadata dict to ``uploaded_files`` in
-    session state.  Returns a ``(created, message)`` pair: ``created`` is
-    ``True`` when the file was newly registered, ``False`` when it is a
-    duplicate or has already been consumed.  *message* contains a warning
-    string for duplicates and is ``None`` on success.
-
-    The ``consumed_uploads`` set tracks which ``(name, size)`` pairs have
-    already been processed in *this* re-run (Streamlit fires the uploader
-    callback multiple times), while ``uploaded_files`` persists
-    cross-run metadata so the main pipeline knows which files to ingest.
-    """
-    upload_id = f"{uploaded_file.name}:{uploaded_file.size}"
-    if upload_id in st.session_state.get(SK.consumed_uploads, set()):
-        return False, None
-
-    uploaded_files = st.session_state[SK.uploaded_files]
-    if any(f["name"] == uploaded_file.name and f["size"] == uploaded_file.size for f in uploaded_files):
-        return False, None
-
-    try:
-        temp_path, content_hash = _save_uploaded_file(uploaded_file)
-    except OSError as exc:
-        return False, f"Unable to save upload {uploaded_file.name}: {exc}"
-
-    if _find_uploaded_file(uploaded_files, content_hash):
-        temp_path.unlink(missing_ok=True)
-        return False, f"Duplicate file skipped: {uploaded_file.name}"
-
-    uploaded_files.append(
-        {
-            "name": uploaded_file.name,
-            "size": uploaded_file.size,
-            "content_hash": content_hash,
-            "temp_path": str(temp_path),
-            "format": None,
-            "validated": False,
-            "validation_error": None,
-            "status": "pending",
-            "preview": None,
-            "ingest_table": None,
-            "row_count": None,
-            "schema": None,
-            "normalized_table": None,
-            "normalized_row_count": None,
-        }
-    )
-    st.session_state.setdefault(SK.consumed_uploads, set()).add(upload_id)
-    return True, None
-
-
-def _validate_uploaded_file(file_state: dict[str, Any]) -> None:
-    try:
-        log_file = validate_log_file(file_state["temp_path"])
-        file_state["format"] = log_file.format
-        file_state["validated"] = True
-        file_state["validation_error"] = None
-        file_state["status"] = "ready"
-        file_state["preview"] = _read_preview_lines(Path(file_state["temp_path"]))
-    except (OSError, ValueError) as exc:
-        Path(file_state["temp_path"]).unlink(missing_ok=True)
-        file_state["validated"] = False
-        file_state["validation_error"] = str(exc)
-        file_state["status"] = "invalid"
-        file_state["preview"] = None
-
-
-def _run_batch_normalization(
-    connection: duckdb.DuckDBPyConnection,
-    ingested_files: list[dict[str, Any]],
-) -> None:
-    """Run normalization on all successfully ingested files into the unified ``events`` table.
-
-    Delegates the SQL orchestration to :meth:`NormalizationEngine.normalize_batch`
-    so the UI and CLI share a single, append-safe batching path.
-    """
-    tables = [
-        (ingested_file["ingest_table"], [name for name, _ in ingested_file["schema"]])
-        for ingested_file in ingested_files
-        if ingested_file.get("ingest_table") and ingested_file.get("schema")
-    ]
-    row_count = NormalizationEngine().normalize_batch(connection, tables)
-    if row_count:
-        for ingested_file in ingested_files:
-            ingested_file["normalized_table"] = "events"
-            ingested_file["normalized_row_count"] = row_count
-
-
-def _process_ready_files(db_path: str) -> None:
-    if not db_path:
-        st.error("Set a valid database path in the sidebar before ingesting files.")
-        return
-
-    ready_files = [file_state for file_state in st.session_state[SK.uploaded_files] if file_state["status"] == "ready"]
-    if not ready_files:
-        st.warning("No validated uploads are ready for ingestion.")
-        return
-
-    errors: list[str] = []
-    with st.spinner("Ingesting files into DuckDB and normalizing..."), Database(db_path) as connection:
-        for file_state in ready_files:
-            try:
-                log_file = validate_log_file(file_state["temp_path"])
-                adapter = INGESTION_ADAPTERS.get(log_file.format)
-                if adapter is None:
-                    raise ValueError(f"No ingestion adapter for format '{log_file.format}'")  # noqa: TRY301
-
-                load_result = adapter(log_file, connection)
-
-                file_state["status"] = "ingested"
-                file_state["ingest_table"] = load_result.table_name
-                file_state["row_count"] = load_result.row_count
-                file_state["schema"] = load_result.schema
-                file_state["validation_error"] = None
-            except (OSError, duckdb.Error, RuntimeError, ValueError) as exc:
-                file_state["status"] = "error"
-                file_state["validation_error"] = str(exc)
-                errors.append(f"{file_state['name']}: {exc}")
-            finally:
-                Path(file_state["temp_path"]).unlink(missing_ok=True)
-
-        ingested_files = [f for f in ready_files if f["status"] == "ingested"]
-        if ingested_files:
-            _run_batch_normalization(connection, ingested_files)
-
-    if errors:
-        for error in errors:
-            st.error(error)
-    else:
-        st.success("Ingestion and normalization finished successfully.")
 
 
 def _render_uploaded_files_overview() -> None:
@@ -446,193 +166,6 @@ def _render_ingested_table_preview() -> None:
                     st.error(f"Unable to preview ingested table: {exc}")
 
 
-def _threat_list_freshness_caption(enabled: list[str], cache_dir: str) -> None:
-    """Show a sidebar caption with the freshness status of threat lists."""
-    try:
-        if enabled and tl_is_loaded(enabled, cache_dir):
-            stale = tl_stale_lists(
-                enabled,
-                cache_dir,
-                max_age_hours=settings.threat_lists.max_age_hours,
-            )
-            if stale:
-                st.sidebar.caption(f"Stale lists: {', '.join(stale)}")
-            else:
-                st.sidebar.caption("Threat lists up to date")
-        else:
-            st.sidebar.caption("Threat lists not yet downloaded")
-    except OSError as exc:
-        logger.warning("Unable to check threat-list freshness: %s", exc)
-        st.sidebar.caption("Threat list cache unavailable")
-
-
-def _threat_list_download(enabled: list[str], cache_dir: str) -> None:
-    """Download or refresh the enabled threat lists, rendering results."""
-    if not enabled:
-        st.sidebar.warning("Enable at least one threat list first.")
-        return
-    with st.spinner("Downloading threat lists..."):
-        try:
-            tl_ensure_cache_dir(cache_dir)
-            results = tl_update_lists(
-                enabled,
-                cache_dir,
-                timeout=settings.threat_lists.timeout,
-                base_url=settings.threat_lists.base_url,
-            )
-            cached = [k for k, v in results.items() if v == "cached"]
-            errors = [f"{k}: {v}" for k, v in results.items() if v.startswith("error")]
-            succeeded = [f"{k}: {v}" for k, v in results.items() if v in ("updated", "unchanged")]
-            if cached:
-                st.sidebar.warning(f"Offline — using cached data for: {', '.join(cached)}")
-            if errors:
-                st.sidebar.error("; ".join(errors))
-            if succeeded:
-                st.sidebar.success("; ".join(succeeded))
-        except OSError as exc:
-            logger.exception("Failed to update threat lists")
-            st.sidebar.error(f"Failed to update threat lists: {exc}")
-
-
-def _render_sidebar_threat_lists() -> None:
-    """Render the Threat Lists sidebar section with checkboxes, freshness
-    caption, and an update button.
-
-    Delegates freshness-checking and downloading to dedicated helpers so
-    the main function stays readable.
-    """
-    st.sidebar.subheader("Threat Lists")
-
-    threat_cache_dir = settings.threat_lists.cache_dir
-    try:
-        tl_ensure_cache_dir(threat_cache_dir)
-    except OSError:
-        logger.exception("Failed to create threat-list cache dir")
-        st.sidebar.warning("Threat list cache directory unavailable")
-        return
-    default_lists = list(settings.threat_lists.default_lists)
-    enabled: list[str] = []
-    for list_name in default_lists:
-        checked = st.sidebar.checkbox(
-            list_name,
-            value=True,
-            key=f"{SK.widget_threat_list_prefix}{list_name}",
-            help=f"Enable matching against {list_name}",
-        )
-        if checked:
-            enabled.append(list_name)
-    st.session_state[SK.threat_lists_enabled] = enabled
-
-    _threat_list_freshness_caption(enabled, threat_cache_dir)
-
-    if not st.sidebar.button("Update threat lists", key=SK.widget_update_threat_lists):
-        return
-    _threat_list_download(enabled, threat_cache_dir)
-
-
-def render_sidebar() -> None:
-    """Render the configuration sidebar and persist state in session_state."""
-    st.sidebar.title("OVS-Log Configuration")
-
-    abuseipdb_key = st.sidebar.text_input(
-        "AbuseIPDB API Key",
-        value=os.getenv("ABUSEIPDB_API_KEY", ""),
-        type="password",
-        key=SK.widget_abuseipdb_key,
-        help="Used by the threat intelligence enrichment step.",
-    )
-    st.session_state[SK.abuseipdb_api_key] = abuseipdb_key
-
-    llm_key = st.sidebar.text_input(
-        "LLM API Key",
-        value=os.getenv("LLM_API_KEY", ""),
-        type="password",
-        key=SK.widget_llm_key,
-        help="Used by the LLM provider to synthesize incident context.",
-    )
-    st.session_state[SK.llm_api_key] = llm_key
-
-    st.sidebar.subheader("LLM Configuration")
-
-    preset_names = list(LLM_PRESETS.keys())
-    preset = st.sidebar.selectbox(
-        "Provider preset",
-        options=preset_names,
-        index=preset_names.index("OpenAI"),
-        key=SK.widget_llm_preset,
-        on_change=_on_llm_preset_change,
-    )
-    preset_cfg = LLM_PRESETS[preset]
-    endpoint_default = settings.llm.api_url if preset_cfg.endpoint == DEFAULT_ENDPOINT_SENTINEL else preset_cfg.endpoint
-    if SK.widget_llm_endpoint not in st.session_state:
-        st.session_state[SK.widget_llm_endpoint] = endpoint_default
-    if SK.widget_llm_model not in st.session_state:
-        st.session_state[SK.widget_llm_model] = preset_cfg.model or ""
-    llm_endpoint = st.sidebar.text_input(
-        "LLM endpoint",
-        key=SK.widget_llm_endpoint,
-    )
-    llm_model = st.sidebar.text_input(
-        "LLM model",
-        key=SK.widget_llm_model,
-    )
-
-    endpoint_value = st.session_state[SK.widget_llm_endpoint]
-    _is_ollama = is_ollama_endpoint(endpoint_value)
-    st.session_state[SK.llm_ollama_local] = _is_ollama
-
-    st.session_state[SK.llm_preset] = preset
-    st.session_state[SK.llm_endpoint] = llm_endpoint
-    st.session_state[SK.llm_model] = llm_model
-
-    st.sidebar.subheader("Database")
-
-    db_path = st.sidebar.text_input(
-        "Database path",
-        value=st.session_state.get(SK.db_path, settings.database.path),
-        key=SK.widget_db_path,
-        help="Path to the local DuckDB file used for ingestion and analysis.",
-    )
-
-    _render_sidebar_threat_lists()
-
-    # ------------------------------------------------------------------ #
-    st.sidebar.subheader("Recent Tables")
-
-    if not db_path:
-        st.sidebar.warning("Provide a database path to list tables.")
-        st.session_state.pop(SK.selected_table, None)
-        return
-
-    db_file = Path(db_path)
-    if not db_file.exists():
-        st.sidebar.error(f"Database file not found: {db_path}")
-        st.session_state.pop(SK.selected_table, None)
-        return
-
-    try:
-        tables = _read_user_tables(db_path)
-    except duckdb.Error as exc:
-        st.sidebar.error(f"Unable to open database: {exc}")
-        st.session_state.pop(SK.selected_table, None)
-        return
-    except OSError as exc:
-        st.sidebar.error(f"Unable to access database: {exc}")
-        st.session_state.pop(SK.selected_table, None)
-        return
-
-    if not tables:
-        st.sidebar.info("No application tables found in this database.")
-        st.session_state.pop(SK.selected_table, None)
-        return
-
-    st.sidebar.selectbox(
-        "Select a table",
-        options=tables,
-        key=SK.widget_selected_table,
-    )
-
-
 def main() -> None:  # noqa: PLR0912, PLR0915
     """Streamlit entry point for the OVS-Log dashboard."""
     st.set_page_config(page_title="OVS-Log", layout="wide")
@@ -659,7 +192,7 @@ def main() -> None:  # noqa: PLR0912, PLR0915
 
         if uploaded_files:
             for uploaded_file in uploaded_files:
-                created, message = _register_uploaded_file(uploaded_file)
+                created, message = register_uploaded_file(uploaded_file)
                 if not created and message:
                     st.warning(message)
                 elif created and uploaded_file.size > LARGE_FILE_BYTES:
@@ -667,13 +200,13 @@ def main() -> None:  # noqa: PLR0912, PLR0915
 
         for file_state in st.session_state[SK.uploaded_files]:
             if file_state["status"] == "pending":
-                _validate_uploaded_file(file_state)
+                validate_uploaded_file(file_state)
 
         _render_upload_status_summary()
         _render_uploaded_files_overview()
 
         if st.button("Process & Analyze", key=SK.widget_process_ingest):
-            _process_ready_files(st.session_state.get(SK.db_path, settings.database.path))
+            process_ready_files(st.session_state.get(SK.db_path, settings.database.path))
 
         _render_ingested_table_preview()
 
