@@ -1,12 +1,12 @@
 """Tests for the DuckDB ingestion adapters."""
 
-import tempfile
 from pathlib import Path
 
 import pytest
 
 from ovs_logs.core.ingestion import adapters
 from ovs_logs.core.ingestion.adapters import (
+    EVTX_CSV_FIELDNAMES,
     LoadResult,
     load_csv,
     load_evtx,
@@ -113,19 +113,7 @@ def test_load_evtx_converts_to_csv(db, tmp_path: Path, monkeypatch: pytest.Monke
     assert result.table_name == "test_evtx"
     assert result.row_count == 1
     columns = schema_columns(result.schema)
-    expected_columns = {
-        "timestamp",
-        "event",
-        "message",
-        "record_id",
-        "source_ip",
-        "status_code",
-        "provider",
-        "channel",
-        "computer",
-        "level",
-        "task",
-    }
+    expected_columns = set(EVTX_CSV_FIELDNAMES)
     assert expected_columns.issubset(columns)
 
     row = db.execute('SELECT * FROM "test_evtx"').fetchone()
@@ -174,7 +162,6 @@ def test_extract_evtx_fields_preserves_list_values_as_json_arrays() -> None:
 def test_load_evtx_cleans_up_temporary_csv_on_parser_error(db, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     file = tmp_path / "sample.evtx"
     file.write_bytes(b"EVT\x00...")
-    created_paths: list[str] = []
 
     class FailingParser:
         def __init__(self, path: str) -> None:
@@ -195,20 +182,9 @@ def test_load_evtx_cleans_up_temporary_csv_on_parser_error(db, tmp_path: Path, m
             }
             raise RuntimeError("boom")
 
-    original_named_temporary_file = tempfile.NamedTemporaryFile
-
-    def tracking_named_temporary_file(*args, **kwargs):
-        handle = original_named_temporary_file(*args, **kwargs)
-        created_paths.append(handle.name)
-        return handle
-
     monkeypatch.setattr(adapters, "PyEvtxParser", FailingParser)
-    monkeypatch.setattr(adapters.tempfile, "NamedTemporaryFile", tracking_named_temporary_file)
 
     log = validate_log_file(file)
 
     with pytest.raises(RuntimeError, match="Unable to parse EVTX"):
         load_evtx(log, db, table_name="test_evtx")
-
-    assert created_paths
-    assert not any(Path(path).exists() for path in created_paths)

@@ -8,8 +8,8 @@ from dataclasses import dataclass
 
 import duckdb
 
-from ovs_logs.core.ingestion.adapters import LoadResult, _timestamp_cast_expression
-from ovs_logs.core.sql_utils import quote_identifier
+from ovs_logs.core.ingestion.adapters import LoadResult
+from ovs_logs.core.sql_utils import quote_identifier, timestamp_cast_expression
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +63,21 @@ FIELD_ALIASES: dict[str, list[str]] = {
     ],
 }
 
+
+def get_all_aliases() -> set[str]:
+    """Return the flattened set of all known field names and their aliases.
+
+    Includes both target field names (``event_timestamp``, ``source_ip``, etc.)
+    and all their alias variants in lowercase, so consumers can efficiently test
+    whether a column name matches any known analyzable field.
+    """
+    result: set[str] = set()
+    for target, aliases in FIELD_ALIASES.items():
+        result.add(target.lower())
+        result.update(a.lower() for a in aliases)
+    return result
+
+
 TARGET_TYPES: dict[str, str] = {
     "event_timestamp": "TIMESTAMP",
     "source_ip": "VARCHAR",
@@ -89,7 +104,17 @@ class NormalizationEngine:
         self.aliases = aliases or FIELD_ALIASES
 
     def _find_matches(self, columns: Sequence[str], target: str) -> list[str]:
-        """Return raw column names that match any alias for the target field."""
+        """Return raw column names that match any alias for *target*.
+
+        Matching is case-insensitive because DuckDB column names are not
+        case-preserving by default — a source file may use ``Timestamp``,
+        ``TIMESTAMP``, or ``timestamp`` and all should map to the
+        ``event_timestamp`` target.  Both the incoming column names and the
+        predefined aliases (which are stored in lowercase) are lowered for
+        comparison; the original casing of the column is preserved in the
+        result so that subsequent SQL expressions reference the true column
+        identifier.
+        """
         lower_map = {c.lower(): c for c in columns}
         candidates = self.aliases.get(target, [])
         return [lower_map[alias] for alias in candidates if alias in lower_map]
@@ -101,7 +126,7 @@ class NormalizationEngine:
 
         source_column = matches[0]
         if target == "event_timestamp":
-            return f'{_timestamp_cast_expression(source_column)} AS "{target}"', source_column
+            return f'{timestamp_cast_expression(source_column)} AS "{target}"', source_column
         if target == "status_code":
             casts = ", ".join(f"try_cast({quote_identifier(col)} AS {dtype})" for col in matches)
         else:
@@ -164,11 +189,28 @@ class NormalizationEngine:
         events_exists = "events" in existing
 
         connection.execute(f"CREATE TABLE IF NOT EXISTS {_TRACKING_TABLE_QUOTED} (raw_table VARCHAR PRIMARY KEY)")
+
+        # Read already-merged sources (best-effort filtering; the atomic
+        # INSERT OR IGNORE below handles any concurrent races).
         already_merged = {
             row[0] for row in connection.execute(f"SELECT raw_table FROM {_TRACKING_TABLE_QUOTED}").fetchall()
         }
 
-        new_tables = [(raw_table, columns) for raw_table, columns in candidates if raw_table not in already_merged]
+        candidates_not_merged = [(rt, cols) for rt, cols in candidates if rt not in already_merged]
+        if not candidates_not_merged:
+            return self._events_row_count(connection) if events_exists else 0
+
+        # Atomically register all new candidates and capture only the rows
+        # this call actually wrote. RETURNING makes the claim race-free: a
+        # concurrent call that inserted the same table in the gap is excluded
+        # from ``inserted``, so neither caller double-appends its rows.
+        placeholders = ", ".join(["(?)"] * len(candidates_not_merged))
+        inserted_rows = connection.execute(
+            f"INSERT OR IGNORE INTO {_TRACKING_TABLE_QUOTED} VALUES {placeholders} RETURNING raw_table",
+            [raw_table for raw_table, _ in candidates_not_merged],
+        ).fetchall()
+        inserted = {row[0] for row in inserted_rows}
+        new_tables = [(rt, cols) for rt, cols in candidates_not_merged if rt in inserted]
         if not new_tables:
             return self._events_row_count(connection) if events_exists else 0
 
@@ -179,11 +221,6 @@ class NormalizationEngine:
             connection.execute(f"INSERT INTO events {union_query}")
         else:
             connection.execute(f"CREATE TABLE events AS {union_query}")
-
-        connection.executemany(
-            f"INSERT INTO {_TRACKING_TABLE_QUOTED} VALUES (?)",
-            [(raw_table,) for raw_table, _ in new_tables],
-        )
 
         return self._events_row_count(connection)
 

@@ -124,11 +124,13 @@ class ReportStore:
         query += " ORDER BY created_at DESC"
         rows = connection.execute(query, params).fetchall()
         results: list[dict[str, Any]] = []
+        corrupted_count = 0
         for row in rows:
             report_id, created_at, payload = row
             try:
                 report = IncidentReport.from_dict(json.loads(payload))
             except (ValueError, TypeError, KeyError) as exc:
+                corrupted_count += 1
                 logger.warning("Skipping corrupted report %s: %s", report_id, exc)
                 continue
             results.append(
@@ -138,4 +140,8 @@ class ReportStore:
                     "report": report,
                 }
             )
+
+        if corrupted_count:
+            logger.warning("Skipped %d corrupted report(s) during read", corrupted_count)
+
         return results

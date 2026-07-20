@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from ovs_logs.core.constants import TEMPORAL_BUCKET_INTERVAL
+
 
 @dataclass(frozen=True)
 class SQLTemplate:
@@ -60,7 +62,7 @@ TEMPLATES: dict[str, SQLTemplate] = {
     "temporal_anomaly": SQLTemplate(
         name="temporal_anomaly",
         sql=(
-            "SELECT time_bucket(INTERVAL '5 minutes', event_timestamp) as time_bucket, "
+            f"SELECT time_bucket(INTERVAL '{TEMPORAL_BUCKET_INTERVAL}', event_timestamp) as time_bucket, "
             "COUNT(*) as event_count "
             "FROM events "
             "WHERE event_timestamp IS NOT NULL "

@@ -14,6 +14,7 @@ from typing import Any
 import duckdb
 from evtx import PyEvtxParser
 
+from ovs_logs.core.constants import EVTX_CSV_FIELDNAMES, SINGLE_COLUMN_DELIMITER
 from ovs_logs.core.sql_utils import quote_identifier, resolve_table_name
 from ovs_logs.core.validation import LogFile
 
@@ -30,33 +31,6 @@ class LoadResult:
     def is_unstructured(self) -> bool:
         """Return True if the ingested table contains raw unstructured text."""
         return len(self.schema) == 1 and self.schema[0][0] == "line"
-
-
-def _timestamp_cast_expression(column: str) -> str:
-    """Build a best-effort DuckDB expression turning a raw timestamp into UTC TIMESTAMP.
-
-    Handles the common log timestamp shapes (Apache/nginx ``%d/%b/%Y:%H:%M:%S %z``,
-    ISO-8601 with offset, syslog ``%b %d %H:%M:%S``, plain ``YYYY-MM-DD HH:MM:SS``,
-    ISO, and numeric epoch). Offsets are normalized to UTC so the result is a naive
-    ``TIMESTAMP`` regardless of the connection's session time zone. Unparseable input
-    yields NULL.
-
-    Note: syslog ``%b %d %H:%M:%S`` carries no year, so DuckDB defaults the year to
-    1900. Such timestamps are only reliable for intra-year ordering, not absolute
-    dates; supply a year-bearing format upstream when accuracy matters.
-    """
-    col = quote_identifier(column)
-    text = f"CAST({col} AS VARCHAR)"
-    return (
-        "COALESCE("
-        f"try_strptime({text}, '%d/%b/%Y:%H:%M:%S %z') AT TIME ZONE 'UTC',"
-        f"try_strptime({text}, '%Y-%m-%dT%H:%M:%S%z') AT TIME ZONE 'UTC',"
-        f"try_strptime({text}, '%b %d %H:%M:%S'),"
-        f"try_strptime({text}, '%Y-%m-%d %H:%M:%S'),"
-        f"try_cast({col} AS TIMESTAMPTZ) AT TIME ZONE 'UTC',"
-        f"to_timestamp(try_cast({col} AS BIGINT))"
-        ")::TIMESTAMP"
-    )
 
 
 def build_result(connection: duckdb.DuckDBPyConnection, table_name: str) -> LoadResult:
@@ -119,7 +93,7 @@ def load_text_log(
     connection.execute(
         f"CREATE OR REPLACE TABLE {quoted_name} AS "
         "SELECT CAST(col1 AS VARCHAR) AS line FROM read_csv(?, header=false, "
-        "all_varchar=true, columns={'col1': 'VARCHAR'}, delim='\x01', quote='', escape='')",
+        f"all_varchar=true, columns={{'col1': 'VARCHAR'}}, delim='{SINGLE_COLUMN_DELIMITER}', quote='', escape='')",
         [str(log_file.path.resolve())],
     )
     return build_result(connection, name)
@@ -310,26 +284,13 @@ def load_evtx(
 ) -> LoadResult:
     """Convert an EVTX file into a temporary CSV and load it into DuckDB."""
     name = resolve_table_name(log_file, table_name)
-    tmp_path: str | None = None
 
-    try:
-        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", suffix=".csv", delete=False, newline="") as tmp:
-            tmp_path = tmp.name
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tmp_path = Path(tmp_dir) / f"{name}.csv"
+        with tmp_path.open("w", encoding="utf-8", newline="") as tmp:
             writer = csv.DictWriter(
                 tmp,
-                fieldnames=[
-                    "timestamp",
-                    "event",
-                    "message",
-                    "record_id",
-                    "source_ip",
-                    "status_code",
-                    "provider",
-                    "channel",
-                    "computer",
-                    "level",
-                    "task",
-                ],
+                fieldnames=list(EVTX_CSV_FIELDNAMES),
                 extrasaction="ignore",
             )
             writer.writeheader()
@@ -341,16 +302,13 @@ def load_evtx(
                 if "Unable to parse EVTX record" in str(exc):
                     raise
                 raise RuntimeError(f"Unable to parse EVTX file {log_file.path}") from exc
-            except Exception as exc:  # pragma: no cover - exercised through parser errors
-                raise RuntimeError(f"Unable to parse EVTX file {log_file.path}") from exc
+            except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
+                raise RuntimeError(f"Unable to parse EVTX record data: {exc}") from exc
 
         connection.execute(
             f'CREATE OR REPLACE TABLE "{name}" AS SELECT * FROM read_csv_auto(?)',
-            [tmp_path],
+            [str(tmp_path)],
         )
-    finally:
-        if tmp_path is not None and Path(tmp_path).exists():
-            Path(tmp_path).unlink()
 
     return build_result(connection, name)
 

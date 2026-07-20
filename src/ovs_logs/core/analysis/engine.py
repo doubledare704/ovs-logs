@@ -7,9 +7,9 @@ from typing import Any
 
 import duckdb
 
-from ..ingestion.adapters import _timestamp_cast_expression
+from ..constants import NORMALIZED_COLUMNS
 from ..normalization import FIELD_ALIASES
-from ..sql_utils import quote_identifier as _quote_identifier
+from ..sql_utils import quote_identifier as _quote_identifier, timestamp_cast_expression
 from .templates import TEMPLATES, SQLTemplate
 
 logger = logging.getLogger(__name__)
@@ -50,7 +50,7 @@ def _build_expression_for_matched_alias(
     """
     orig_name = orig_columns[matched_alias]
     if target == "event_timestamp":
-        return f'{_timestamp_cast_expression(orig_name)} AS "event_timestamp"'
+        return f'{timestamp_cast_expression(orig_name)} AS "event_timestamp"'
     if target == "status_code":
         return f'{_status_code_expression(orig_name, column_types)} AS "status_code"'
     return f'{_quote_identifier(orig_name)}::{_column_dtype(target)} AS "{target}"'
@@ -98,8 +98,7 @@ def build_aliased_query(sql: str, table_name: str, connection: duckdb.DuckDBPyCo
     orig_columns = {row[0].lower(): row[0] for row in columns}
     lower_columns = set(column_types)
     expressions = [
-        _build_expression_for_target(target, lower_columns, column_types, orig_columns)
-        for target in ("event_timestamp", "source_ip", "event_type", "status_code", "raw_message")
+        _build_expression_for_target(target, lower_columns, column_types, orig_columns) for target in NORMALIZED_COLUMNS
     ]
 
     return sql.replace(

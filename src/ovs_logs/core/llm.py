@@ -7,6 +7,7 @@ import logging
 import re
 from abc import ABC, abstractmethod
 from typing import Any, ClassVar
+from urllib.parse import urlparse
 
 import requests
 from ollama import Client, ResponseError
@@ -15,6 +16,7 @@ from ovs_logs.config.settings import LLMSettings, settings
 from ovs_logs.core.analysis.indicators import SuspiciousIndicator
 from ovs_logs.core.report import IncidentReport
 from ovs_logs.core.report_schema import REPORT_JSON_SCHEMA
+from ovs_logs.core.retry import retry
 from ovs_logs.core.threat_intel import ReputationResult
 
 logger = logging.getLogger(__name__)
@@ -78,8 +80,12 @@ class OllamaProvider(LLMProvider):
                 format=REPORT_JSON_SCHEMA,
                 options={"temperature": 0},
             )
-        except ResponseError:
-            logger.debug("Ollama structured output unavailable; retrying without format", exc_info=True)
+        except ResponseError as exc:
+            logger.warning(
+                "Ollama structured output unavailable for model %s; retrying without format: %s",
+                self.model,
+                exc,
+            )
             response = self._client.chat(
                 model=self.model,
                 messages=messages,
@@ -106,6 +112,11 @@ class OpenAICompatibleProvider(LLMProvider):
         self.model = model if model is not None else cfg.model
         self.timeout = timeout if timeout is not None else cfg.timeout
 
+    @retry(
+        max_retries=2,
+        backoff_seconds=1.0,
+        exceptions=(requests.Timeout, requests.ConnectionError),
+    )
     def generate(self, prompt: str) -> str:
         headers = {
             "Authorization": f"Bearer {self.api_key}",
@@ -132,11 +143,37 @@ _ERR_CLOUD_BLOCKED = (
 )
 
 
+_OLLAMA_PORT = 11434
+
+
+def is_ollama_endpoint(url: str) -> bool:
+    """Return True when *url* points to a local Ollama server.
+
+    Parses the URL and checks for ``hostname == "localhost"`` (or
+    ``127.0.0.1``) **and** ``port == 11434``.  Uses proper URL parsing
+    instead of fragile substring matching so that an endpoint like
+    ``http://10.0.0.1:11434`` or ``https://example.com:11434`` is not
+    accidentally classified as local Ollama.
+
+    Handles schemeless URLs (e.g. ``localhost:11434``) by prepending
+    ``//`` so that ``urlparse`` does not mistake the hostname for the
+    scheme component.
+    """
+    if "://" not in url:
+        url = "//" + url
+    parsed = urlparse(url)
+    hostname = parsed.hostname or ""
+    port = parsed.port
+    return port == _OLLAMA_PORT and hostname in ("localhost", "127.0.0.1")
+
+
 def create_llm_provider(
     api_key: str,
     endpoint: str | None = None,
     model: str | None = None,
     timeout: int | None = None,
+    *,
+    llm_settings: LLMSettings | None = None,
 ) -> LLMProvider:
     """Create an LLM provider from explicit parameters.
 
@@ -147,22 +184,36 @@ def create_llm_provider(
 
     Raises ``ValueError`` if *endpoint* or *model* are explicitly set to an
     empty string, or if *endpoint* targets ``ollama.com``.  ``None`` values are
-    passed through to the provider, which falls back to ``settings.llm``
-    defaults.  An *api_key* is required by the OpenAI-compatible path;
-    Ollama-local may pass an empty placeholder.
+    passed through to the provider, which falls back to *llm_settings* (or
+    ``settings.llm`` if *llm_settings* is ``None``) defaults.  An *api_key* is
+    required by the OpenAI-compatible path; Ollama-local may pass an empty
+    placeholder.
     """
     if endpoint == "":
         raise ValueError(_ERR_ENDPOINT_REQUIRED)
     if model == "":
         raise ValueError(_ERR_MODEL_REQUIRED)
-    endpoint_key = endpoint or settings.llm.api_url
+    cfg = llm_settings or settings.llm
+    endpoint_key = endpoint or cfg.api_url
     if "ollama.com" in endpoint_key:
         raise ValueError(_ERR_CLOUD_BLOCKED)
-    if ":11434" in endpoint_key:
-        return OllamaProvider(api_key=api_key, endpoint=endpoint, model=model, timeout=timeout)
+    if is_ollama_endpoint(endpoint_key):
+        return OllamaProvider(
+            api_key=api_key,
+            endpoint=endpoint,
+            model=model,
+            timeout=timeout,
+            llm_settings=llm_settings,
+        )
     if not api_key:
         raise ValueError(_ERR_API_KEY_REQUIRED)
-    return OpenAICompatibleProvider(api_key=api_key, endpoint=endpoint, model=model, timeout=timeout)
+    return OpenAICompatibleProvider(
+        api_key=api_key,
+        endpoint=endpoint,
+        model=model,
+        timeout=timeout,
+        llm_settings=llm_settings,
+    )
 
 
 class PromptBuilder:

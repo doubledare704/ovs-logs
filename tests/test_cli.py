@@ -313,6 +313,7 @@ def test_analyze_with_llm_and_output(tmp_path: Path) -> None:
 
 
 def test_analyze_invalid_abuseipdb_key(tmp_path: Path) -> None:
+    """A bad AbuseIPDB key should not crash — enrichment gracefully degrades."""
     csv = tmp_path / "events.csv"
     _write_events_csv(csv, rows=5)
     db = tmp_path / "test.db"
@@ -337,8 +338,9 @@ def test_analyze_invalid_abuseipdb_key(tmp_path: Path) -> None:
             ],
         )
 
-    assert result.exit_code != 0
-    assert "AbuseIPDB lookup failed" in str(result.exception) or "Unexpected error" in result.output
+    # Enrichment degrades gracefully — analysis still succeeds
+    assert result.exit_code == 0, result.output
+    assert "Suspicious Indicators" in result.output
 
 
 def test_process_csv_success(tmp_path: Path) -> None:
@@ -384,6 +386,48 @@ def test_process_no_indicators(tmp_path: Path) -> None:
     assert result.exit_code == EXIT_CODE_SUCCESS, result.output
     assert "Loaded 0 rows" in result.output
     assert "No suspicious indicators found" in result.output
+
+
+def test_process_with_intel_success(tmp_path: Path) -> None:
+    """process --intel ingests, analyzes, and enriches with AbuseIPDB."""
+    csv = tmp_path / "events.csv"
+    _write_events_csv(csv, rows=5)
+    db = tmp_path / "test.db"
+
+    response = Mock()
+    response.status_code = 200
+    response.json.return_value = {
+        "data": {
+            "ipAddress": "1.2.3.4",
+            "abuseConfidenceScore": 85,
+            "countryCode": "US",
+            "isp": "Example ISP",
+            "domain": "example.com",
+            "totalReports": 10,
+            "lastReportedAt": "2024-06-01T00:00:00Z",
+        }
+    }
+
+    with patch("ovs_logs.core.threat_intel.requests.get", return_value=response):
+        result = runner.invoke(
+            app,
+            [
+                "process",
+                "--file",
+                str(csv),
+                "--db",
+                str(db),
+                "--table",
+                "raw_events",
+                "--intel",
+                "--abuseipdb-api-key",
+                "test-key-123",
+            ],
+        )
+
+    assert result.exit_code == EXIT_CODE_SUCCESS, result.output
+    assert "Loaded 5 rows" in result.output
+    assert "Suspicious Indicators" in result.output
 
 
 def test_ui_spawns_streamlit_run(monkeypatch) -> None:

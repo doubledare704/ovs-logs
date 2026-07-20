@@ -200,9 +200,9 @@ def test_ui_upload_web_access_log_structured_preview(tmp_path: Path) -> None:
     preview_df = next(
         df.value
         for df in dataframes
-        if any(c in df.value.columns for c in ("timestamp", "source_ip", "status_code", "event_type"))
+        if any(c in df.value.columns for c in ("event_timestamp", "source_ip", "status_code", "event_type"))
     )
-    assert "timestamp" in preview_df.columns
+    assert "event_timestamp" in preview_df.columns
     assert "source_ip" in preview_df.columns
     assert "status_code" in preview_df.columns
     assert "event_type" in preview_df.columns
@@ -228,7 +228,7 @@ def test_ui_upload_ambiguous_text_fallback_warning(tmp_path: Path) -> None:
 
     preview_df = next(df.value for df in dataframes if "line" in df.value.columns)
     assert "line" in preview_df.columns
-    assert "timestamp" not in preview_df.columns
+    assert "event_timestamp" not in preview_df.columns
     assert "source_ip" not in preview_df.columns
     assert "status_code" not in preview_df.columns
     assert "event_type" not in preview_df.columns
@@ -253,9 +253,11 @@ def test_ui_upload_syslog_structured_preview(tmp_path: Path) -> None:
     assert len(dataframes) > 0
 
     preview_df = next(
-        df.value for df in dataframes if any(c in df.value.columns for c in ("timestamp", "source_ip", "event_type"))
+        df.value
+        for df in dataframes
+        if any(c in df.value.columns for c in ("event_timestamp", "source_ip", "event_type"))
     )
-    assert "timestamp" in preview_df.columns
+    assert "event_timestamp" in preview_df.columns
     assert "source_ip" in preview_df.columns
     assert "event_type" in preview_df.columns
 
@@ -281,9 +283,9 @@ def test_ui_upload_jsonline_structured_preview(tmp_path: Path) -> None:
     preview_df = next(
         df.value
         for df in dataframes
-        if any(c in df.value.columns for c in ("timestamp", "source_ip", "status_code", "event_type"))
+        if any(c in df.value.columns for c in ("event_timestamp", "source_ip", "status_code", "event_type"))
     )
-    assert "timestamp" in preview_df.columns
+    assert "event_timestamp" in preview_df.columns
     assert "source_ip" in preview_df.columns
     assert "status_code" in preview_df.columns
     assert "event_type" in preview_df.columns
@@ -314,9 +316,9 @@ def test_ui_upload_nginx_jsonline_structured_preview(tmp_path: Path) -> None:
     preview_df = next(
         df.value
         for df in dataframes
-        if any(c in df.value.columns for c in ("timestamp", "source_ip", "status_code", "event_type"))
+        if any(c in df.value.columns for c in ("event_timestamp", "source_ip", "status_code", "event_type"))
     )
-    assert "timestamp" in preview_df.columns
+    assert "event_timestamp" in preview_df.columns
     assert "source_ip" in preview_df.columns
     assert "status_code" in preview_df.columns
     assert "event_type" in preview_df.columns

@@ -106,6 +106,46 @@ def test_migration_renames_legacy_table(db: duckdb.DuckDBPyConnection) -> None:
     assert "incident_reports" not in tables
 
 
+def test_concurrent_save_report_is_safe(tmp_path: Path) -> None:
+    """Two threads saving reports simultaneously should both succeed."""
+    db_path = tmp_path / "concurrent_save.duckdb"
+    errors: list[tuple[str, str]] = []
+    report_ids: list[str] = []
+    barrier = threading.Barrier(2)
+    _lock = threading.Lock()
+
+    def worker(name: str) -> None:
+        try:
+            conn = duckdb.connect(str(db_path))
+            barrier.wait()
+            rid = ReportStore().save_report(conn, sample_report())
+            with _lock:
+                report_ids.append(rid)
+            conn.close()
+        except Exception as exc:
+            with _lock:
+                errors.append((name, f"{type(exc).__name__}: {exc}"))
+
+    t1 = threading.Thread(target=worker, args=("t1",))
+    t2 = threading.Thread(target=worker, args=("t2",))
+    t1.start()
+    t2.start()
+    t1.join()
+    t2.join()
+
+    assert not errors, f"Concurrent save_report raised: {errors}"
+    assert len(report_ids) == 2
+    assert report_ids[0] != report_ids[1]  # Unique IDs
+
+    # Verify both reports are persisted
+    with duckdb.connect(str(db_path)) as conn:
+        rows = conn.execute(
+            f"SELECT report_id FROM {quote_identifier(ReportStore.TABLE_NAME)} ORDER BY report_id"
+        ).fetchall()
+    stored_ids = {row[0] for row in rows}
+    assert stored_ids == set(report_ids)
+
+
 def test_save_report_stores_source_table(db: duckdb.DuckDBPyConnection) -> None:
     store = ReportStore()
     report_id = store.save_report(db, sample_report(), source_table="events")
