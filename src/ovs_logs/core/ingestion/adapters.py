@@ -5,6 +5,7 @@ from __future__ import annotations
 import csv
 import json
 import logging
+import subprocess
 import tempfile
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -14,7 +15,9 @@ from typing import Any
 import duckdb
 from evtx import PyEvtxParser
 
+from ovs_logs.config.settings import settings
 from ovs_logs.core.constants import EVTX_CSV_FIELDNAMES, SINGLE_COLUMN_DELIMITER
+from ovs_logs.core.errors import BinaryNotFoundError, IngestionError
 from ovs_logs.core.sql_utils import quote_identifier, resolve_table_name
 from ovs_logs.core.validation import LogFile
 
@@ -348,3 +351,90 @@ def iter_evtx_record_summaries(path: Path, max_records: int = 50) -> list[dict[s
             }
         )
     return summaries
+
+
+def load_evtx_via_hayabusa(
+    log_file: LogFile,
+    connection: duckdb.DuckDBPyConnection,
+    table_name: str | None = None,
+) -> LoadResult:
+    """Load an EVTX file via the Hayabusa CLI binary (csv-timeline subcommand).
+
+    Hayabusa outputs only events that match its Sigma rules as a CSV timeline.
+    """
+    name = resolve_table_name(log_file, table_name)
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tmp_path = Path(tmp_dir) / f"{name}.csv"
+        cmd = [
+            settings.evtx_tools.hayabusa_path,
+            "csv-timeline",
+            "-f",
+            str(log_file.path),
+            "-o",
+            str(tmp_path),
+            "-w",
+        ]
+        try:
+            subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=settings.evtx_tools.timeout_seconds)
+        except FileNotFoundError as exc:
+            raise BinaryNotFoundError(f"Hayabusa binary not found: {settings.evtx_tools.hayabusa_path}") from exc
+        except subprocess.CalledProcessError as exc:
+            raise IngestionError(f"hayabusa failed (exit {exc.returncode}): {exc.stderr}") from exc
+        except subprocess.TimeoutExpired as exc:
+            raise IngestionError(f"hayabusa timed out after {settings.evtx_tools.timeout_seconds}s") from exc
+
+        if not tmp_path.is_file() or tmp_path.stat().st_size == 0:
+            raise IngestionError(f"hayabusa produced no output at {tmp_path}")
+
+        quoted_name = quote_identifier(name)
+        connection.execute(
+            f"CREATE OR REPLACE TABLE {quoted_name} AS SELECT * FROM read_csv_auto(?, header=true)",
+            [str(tmp_path)],
+        )
+
+    return build_result(connection, name)
+
+
+def load_evtx_via_evtxecmd(
+    log_file: LogFile,
+    connection: duckdb.DuckDBPyConnection,
+    table_name: str | None = None,
+) -> LoadResult:
+    """Load an EVTX file via the EvtxECmd CLI binary (--csv output).
+
+    EvtxECmd outputs all events with map-enhanced fields as CSV.
+    """
+    name = resolve_table_name(log_file, table_name)
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        output_filename = f"{name}.csv"
+        cmd = [
+            settings.evtx_tools.evtxecmd_path,
+            "-f",
+            str(log_file.path),
+            "--csv",
+            str(tmp_dir),
+            "--csvf",
+            output_filename,
+        ]
+        try:
+            subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=settings.evtx_tools.timeout_seconds)
+        except FileNotFoundError as exc:
+            raise BinaryNotFoundError(f"EvtxECmd binary not found: {settings.evtx_tools.evtxecmd_path}") from exc
+        except subprocess.CalledProcessError as exc:
+            raise IngestionError(f"EvtxECmd failed (exit {exc.returncode}): {exc.stderr}") from exc
+        except subprocess.TimeoutExpired as exc:
+            raise IngestionError(f"EvtxECmd timed out after {settings.evtx_tools.timeout_seconds}s") from exc
+
+        output_path = Path(tmp_dir) / output_filename
+        if not output_path.is_file() or output_path.stat().st_size == 0:
+            raise IngestionError(f"EvtxECmd produced no output at {output_path}")
+
+        quoted_name = quote_identifier(name)
+        connection.execute(
+            f"CREATE OR REPLACE TABLE {quoted_name} AS SELECT * FROM read_csv_auto(?, header=true)",
+            [str(output_path)],
+        )
+
+    return build_result(connection, name)

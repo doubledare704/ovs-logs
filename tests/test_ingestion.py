@@ -1,15 +1,21 @@
 """Tests for the DuckDB ingestion adapters."""
 
+import subprocess
 from pathlib import Path
+from subprocess import CalledProcessError, TimeoutExpired
 
 import pytest
 
+from ovs_logs.config.settings import EVTXToolSettings, Settings
+from ovs_logs.core.errors import BinaryNotFoundError, IngestionError
 from ovs_logs.core.ingestion import adapters
 from ovs_logs.core.ingestion.adapters import (
     EVTX_CSV_FIELDNAMES,
     LoadResult,
     load_csv,
     load_evtx,
+    load_evtx_via_evtxecmd,
+    load_evtx_via_hayabusa,
     load_json,
     load_text_log,
 )
@@ -188,3 +194,235 @@ def test_load_evtx_cleans_up_temporary_csv_on_parser_error(db, tmp_path: Path, m
 
     with pytest.raises(RuntimeError, match="Unable to parse EVTX"):
         load_evtx(log, db, table_name="test_evtx")
+
+
+def _make_evtx_file(tmp_path: Path, name: str = "sample.evtx") -> Path:
+    """Create a dummy EVTX file for adapter tests."""
+    file = tmp_path / name
+    file.write_bytes(b"EVT\x00...")
+    return file
+
+
+def _custom_settings(
+    hayabusa_path: str = "hayabusa",
+    evtxecmd_path: str = "EvtxECmd",
+    timeout_seconds: int = 300,
+) -> Settings:
+    """Return a Settings with custom EVTX tool paths."""
+    return Settings(
+        evtx_tools=EVTXToolSettings(
+            hayabusa_path=hayabusa_path,
+            evtxecmd_path=evtxecmd_path,
+            timeout_seconds=timeout_seconds,
+        ),
+    )
+
+
+def test_load_evtx_via_hayabusa(db, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    file = _make_evtx_file(tmp_path)
+    log = validate_log_file(file)
+
+    monkeypatch.setattr(
+        "ovs_logs.core.ingestion.adapters.settings",
+        _custom_settings(hayabusa_path="fake-hayabusa"),
+    )
+
+    output_csv = "timestamp,computer,event_id,channel\n2024-01-01T00:00:00,HOST,4624,Security\n"
+
+    def fake_run(cmd, *args, **kwargs):
+        output_arg = None
+        for i, part in enumerate(cmd):
+            if part == "-o" and i + 1 < len(cmd):
+                output_arg = cmd[i + 1]
+                break
+        if output_arg:
+            Path(output_arg).write_text(output_csv, encoding="utf-8")
+        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    result = load_evtx_via_hayabusa(log, db, table_name="test_hayabusa")
+
+    assert result.table_name == "test_hayabusa"
+    assert result.row_count == 1
+    columns = schema_columns(result.schema)
+    assert "timestamp" in columns
+    assert "computer" in columns
+
+
+def test_load_evtx_via_hayabusa_binary_not_found(db, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    file = _make_evtx_file(tmp_path)
+    log = validate_log_file(file)
+
+    monkeypatch.setattr(
+        "ovs_logs.core.ingestion.adapters.settings",
+        _custom_settings(hayabusa_path="nonexistent-hayabusa"),
+    )
+
+    def fake_run(*args, **kwargs):
+        raise FileNotFoundError("No such file")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    with pytest.raises(BinaryNotFoundError, match="Hayabusa binary not found"):
+        load_evtx_via_hayabusa(log, db)
+
+
+def test_load_evtx_via_hayabusa_process_failure(db, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    file = _make_evtx_file(tmp_path)
+    log = validate_log_file(file)
+
+    monkeypatch.setattr(
+        "ovs_logs.core.ingestion.adapters.settings",
+        _custom_settings(hayabusa_path="fake-hayabusa"),
+    )
+
+    def fake_run(*args, **kwargs):
+        raise CalledProcessError(returncode=1, cmd=["hayabusa"], stderr="parse error")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    with pytest.raises(IngestionError, match="hayabusa failed"):
+        load_evtx_via_hayabusa(log, db)
+
+
+def test_load_evtx_via_hayabusa_timeout(db, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    file = _make_evtx_file(tmp_path)
+    log = validate_log_file(file)
+
+    monkeypatch.setattr(
+        "ovs_logs.core.ingestion.adapters.settings",
+        _custom_settings(hayabusa_path="fake-hayabusa", timeout_seconds=10),
+    )
+
+    def fake_run(*args, **kwargs):
+        raise TimeoutExpired(cmd=["hayabusa"], timeout=10)
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    with pytest.raises(IngestionError, match="hayabusa timed out"):
+        load_evtx_via_hayabusa(log, db)
+
+
+def test_load_evtx_via_hayabusa_missing_output(db, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    file = _make_evtx_file(tmp_path)
+    log = validate_log_file(file)
+
+    monkeypatch.setattr(
+        "ovs_logs.core.ingestion.adapters.settings",
+        _custom_settings(hayabusa_path="fake-hayabusa"),
+    )
+
+    def fake_run(*args, **kwargs):
+        return subprocess.CompletedProcess(args=["hayabusa"], returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    with pytest.raises(IngestionError, match="hayabusa produced no output"):
+        load_evtx_via_hayabusa(log, db)
+
+
+def test_load_evtx_via_evtxecmd(db, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    file = _make_evtx_file(tmp_path)
+    log = validate_log_file(file)
+
+    monkeypatch.setattr(
+        "ovs_logs.core.ingestion.adapters.settings",
+        _custom_settings(evtxecmd_path="fake-evtxecmd"),
+    )
+
+    output_csv = "Timestamp,Computer,EventId,Channel\n2024-01-01T00:00:00,HOST,4624,Security\n"
+
+    def fake_run(cmd, *args, **kwargs):
+        csvf = None
+        csv_dir = None
+        for i, part in enumerate(cmd):
+            if part == "--csvf" and i + 1 < len(cmd):
+                csvf = cmd[i + 1]
+            if part == "--csv" and i + 1 < len(cmd):
+                csv_dir = cmd[i + 1]
+        if csv_dir and csvf:
+            Path(csv_dir, csvf).write_text(output_csv, encoding="utf-8")
+        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    result = load_evtx_via_evtxecmd(log, db, table_name="test_evtxecmd")
+
+    assert result.table_name == "test_evtxecmd"
+    assert result.row_count == 1
+    columns = schema_columns(result.schema)
+    assert "timestamp" in columns
+    assert "computer" in columns
+
+
+def test_load_evtx_via_evtxecmd_binary_not_found(db, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    file = _make_evtx_file(tmp_path)
+    log = validate_log_file(file)
+
+    monkeypatch.setattr(
+        "ovs_logs.core.ingestion.adapters.settings",
+        _custom_settings(evtxecmd_path="nonexistent-evtxecmd"),
+    )
+
+    def fake_run(*args, **kwargs):
+        raise FileNotFoundError("No such file")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    with pytest.raises(BinaryNotFoundError, match="EvtxECmd binary not found"):
+        load_evtx_via_evtxecmd(log, db)
+
+
+def test_load_evtx_via_evtxecmd_process_failure(db, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    file = _make_evtx_file(tmp_path)
+    log = validate_log_file(file)
+
+    monkeypatch.setattr(
+        "ovs_logs.core.ingestion.adapters.settings",
+        _custom_settings(evtxecmd_path="fake-evtxecmd"),
+    )
+
+    def fake_run(*args, **kwargs):
+        raise CalledProcessError(returncode=1, cmd=["EvtxECmd"], stderr="error")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    with pytest.raises(IngestionError, match="EvtxECmd failed"):
+        load_evtx_via_evtxecmd(log, db)
+
+
+def test_load_evtx_via_evtxecmd_timeout(db, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    file = _make_evtx_file(tmp_path)
+    log = validate_log_file(file)
+
+    monkeypatch.setattr(
+        "ovs_logs.core.ingestion.adapters.settings",
+        _custom_settings(evtxecmd_path="fake-evtxecmd", timeout_seconds=10),
+    )
+
+    def fake_run(*args, **kwargs):
+        raise TimeoutExpired(cmd=["EvtxECmd"], timeout=10)
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    with pytest.raises(IngestionError, match="EvtxECmd timed out"):
+        load_evtx_via_evtxecmd(log, db)
+
+
+def test_load_evtx_via_evtxecmd_missing_output(db, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    file = _make_evtx_file(tmp_path)
+    log = validate_log_file(file)
+
+    monkeypatch.setattr(
+        "ovs_logs.core.ingestion.adapters.settings",
+        _custom_settings(evtxecmd_path="fake-evtxecmd"),
+    )
+
+    def fake_run(*args, **kwargs):
+        return subprocess.CompletedProcess(args=["EvtxECmd"], returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    with pytest.raises(IngestionError, match="EvtxECmd produced no output"):
+        load_evtx_via_evtxecmd(log, db)
