@@ -2,13 +2,20 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import duckdb
 import pytest
 
 from ovs_logs.config.settings import Settings, settings as _default_settings
-from ovs_logs.core.database import Database
+from ovs_logs.core.database import (
+    ALLOWLIST_TABLE,
+    Database,
+    _ensure_allowlist_table,
+    insert_allowlisted_indicator,
+    is_allowlisted,
+)
 
 # ---------------------------------------------------------------------------
 # In-memory sessions
@@ -245,3 +252,70 @@ class TestErrorHandling:
         # Parent directory is created, so connecting to a nested path works
         with db as conn:
             assert conn is not None
+
+
+# ---------------------------------------------------------------------------
+# Allowlisted indicators
+# ---------------------------------------------------------------------------
+
+
+class TestAllowlistedIndicators:
+    """Tests for the ``allowlisted_indicators`` table and helpers."""
+
+    def test_allowlist_table_created_idempotently(self) -> None:
+        with Database(":memory:") as conn:
+            _ensure_allowlist_table(conn)
+            _ensure_allowlist_table(conn)  # second call must not raise
+
+    def test_insert_and_query_allowlisted_indicator(self) -> None:
+        with Database(":memory:") as conn:
+            _ensure_allowlist_table(conn)
+            insert_allowlisted_indicator(
+                conn,
+                id="test-uuid",
+                indicator="10.0.0.1",
+                indicator_type="ip",
+                description="Internal DNS server",
+                metadata={"source": "admin"},
+            )
+            table = ALLOWLIST_TABLE
+            row = conn.execute(
+                f'SELECT "id", "indicator", "indicator_type", "description", "metadata" FROM "{table}"'
+            ).fetchone()
+            assert row is not None
+            assert row[0] == "test-uuid"
+            assert row[1] == "10.0.0.1"
+            assert row[2] == "ip"
+            assert row[3] == "Internal DNS server"
+            assert json.loads(row[4]) == {"source": "admin"}
+
+    def test_is_allowlisted_true(self) -> None:
+        with Database(":memory:") as conn:
+            _ensure_allowlist_table(conn)
+            insert_allowlisted_indicator(
+                conn,
+                id="uuid-1",
+                indicator="1.2.3.4",
+                indicator_type="ip",
+            )
+            assert is_allowlisted(conn, "1.2.3.4") is True
+            assert is_allowlisted(conn, "1.2.3.4", "ip") is True
+
+    def test_is_allowlisted_false(self) -> None:
+        with Database(":memory:") as conn:
+            _ensure_allowlist_table(conn)
+            assert is_allowlisted(conn, "5.6.7.8") is False
+            assert is_allowlisted(conn, "5.6.7.8", "ip") is False
+
+    def test_is_allowlisted_true_with_type_scope(self) -> None:
+        """Entry of type 'ip' should not match a query for type 'hostname'."""
+        with Database(":memory:") as conn:
+            _ensure_allowlist_table(conn)
+            insert_allowlisted_indicator(
+                conn,
+                id="uuid-2",
+                indicator="10.0.0.1",
+                indicator_type="ip",
+            )
+            assert is_allowlisted(conn, "10.0.0.1", "hostname") is False
+            assert is_allowlisted(conn, "10.0.0.1", "ip") is True

@@ -621,6 +621,11 @@ dev = [
     { name = "watchdog" },
 ]
 
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+]
+
 [package.metadata]
 requires-dist = [
     { name = "duckdb", specifier = ">=1.0.0" },
@@ -640,6 +645,9 @@ requires-dist = [
     { name = "watchdog", marker = "extra == 'dev'", specifier = "==6.0.0" },
 ]
 provides-extras = ["dev"]
+
+[package.metadata.requires-dev]
+dev = [{ name = "pytest", specifier = ">=9.1.1" }]
 
 [[package]]
 name = "packaging"

@@ -85,3 +85,8 @@ combine-as-imports = true
 [tool.pyrefly]
 project-includes = ["src", "tests"]
 search-path = ["src", "tests"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]

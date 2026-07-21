@@ -2,12 +2,21 @@
 
 from __future__ import annotations
 
+import datetime
+import json
+import logging
 from pathlib import Path
+from typing import Any
 
 import duckdb
 
 from ovs_logs.config import settings as _cfg
 from ovs_logs.config.settings import Settings
+from ovs_logs.core.sql_utils import quote_identifier
+
+logger = logging.getLogger(__name__)
+
+ALLOWLIST_TABLE = "allowlisted_indicators"
 
 
 class Database:
@@ -80,3 +89,81 @@ class Database:
             self._connection.close()
             self._connection = None
         self._managed_by_enter = False
+
+
+# ---------------------------------------------------------------------------
+# Allowlisted indicators table
+# ---------------------------------------------------------------------------
+
+
+def _ensure_allowlist_table(connection: duckdb.DuckDBPyConnection) -> None:
+    """Create the ``allowlisted_indicators`` table if it does not exist."""
+    table = quote_identifier(ALLOWLIST_TABLE)
+    connection.execute(
+        f"""
+        CREATE TABLE IF NOT EXISTS {table} (
+            "id"            VARCHAR PRIMARY KEY,
+            "indicator"     VARCHAR NOT NULL,
+            "indicator_type" VARCHAR NOT NULL,
+            "description"   VARCHAR,
+            "metadata"      JSON,
+            "created_at"    TIMESTAMP
+        )
+        """
+    )
+    logger.info("Ensured %s table exists", ALLOWLIST_TABLE)
+
+
+def insert_allowlisted_indicator(  # noqa: PLR0913
+    connection: duckdb.DuckDBPyConnection,
+    *,
+    id: str,
+    indicator: str,
+    indicator_type: str,
+    description: str | None = None,
+    metadata: dict[str, Any] | None = None,
+    created_at: datetime.datetime | None = None,
+) -> None:
+    """Insert a row into ``allowlisted_indicators``.
+
+    Parameters are keyword-only to avoid positional confusion.
+    """
+    table = quote_identifier(ALLOWLIST_TABLE)
+    connection.execute(
+        f"""
+        INSERT INTO {table} ("id", "indicator", "indicator_type", "description", "metadata", "created_at")
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        [
+            id,
+            indicator,
+            indicator_type,
+            description,
+            json.dumps(metadata) if metadata is not None else None,
+            created_at if created_at is not None else datetime.datetime.now(datetime.UTC),
+        ],
+    )
+    logger.debug("Inserted allowlisted indicator %s (%s)", indicator, indicator_type)
+
+
+def is_allowlisted(
+    connection: duckdb.DuckDBPyConnection,
+    indicator: str,
+    indicator_type: str | None = None,
+) -> bool:
+    """Return ``True`` if *indicator* is found in the allowlist.
+
+    When *indicator_type* is provided, the match is scoped to that type.
+    """
+    table = quote_identifier(ALLOWLIST_TABLE)
+    if indicator_type is not None:
+        row = connection.execute(
+            f'SELECT COUNT(*) FROM {table} WHERE "indicator" = ? AND "indicator_type" = ?',
+            [indicator, indicator_type],
+        ).fetchone()
+    else:
+        row = connection.execute(
+            f'SELECT COUNT(*) FROM {table} WHERE "indicator" = ?',
+            [indicator],
+        ).fetchone()
+    return row is not None and row[0] > 0
