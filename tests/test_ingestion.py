@@ -264,7 +264,7 @@ def test_load_evtx_via_hayabusa_binary_not_found(db, tmp_path: Path, monkeypatch
 
     monkeypatch.setattr(subprocess, "run", fake_run)
 
-    with pytest.raises(BinaryNotFoundError, match="Hayabusa binary not found"):
+    with pytest.raises(BinaryNotFoundError, match="hayabusa binary not found"):
         load_evtx_via_hayabusa(log, db)
 
 

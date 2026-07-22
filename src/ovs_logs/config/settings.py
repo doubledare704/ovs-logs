@@ -12,7 +12,9 @@ def _str_env(name: str, default: str) -> str:
 
 def _int_env(name: str, default: int) -> int:
     value = os.getenv(name)
-    return int(value) if value is not None else default
+    if value is None or not value.strip():
+        return default
+    return int(value)
 
 
 @dataclass(frozen=True)

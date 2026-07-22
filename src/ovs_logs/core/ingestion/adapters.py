@@ -46,6 +46,44 @@ def build_result(connection: duckdb.DuckDBPyConnection, table_name: str) -> Load
     return LoadResult(table_name=table_name, row_count=row_count, schema=schema)
 
 
+def _run_evtx_tool_to_csv(
+    cmd: list[str],
+    output_path: Path,
+    tool_name: str,
+    binary_path: str,
+    timeout_seconds: int,
+) -> None:
+    """Run external EVTX tool and validate that it produced a non-empty CSV."""
+    try:
+        subprocess.run(
+            cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, timeout=timeout_seconds
+        )
+    except FileNotFoundError as exc:
+        raise BinaryNotFoundError(f"{tool_name} binary not found: {binary_path}") from exc
+    except PermissionError as exc:
+        raise IngestionError(f"{tool_name} is not executable: {binary_path}") from exc
+    except subprocess.CalledProcessError as exc:
+        raise IngestionError(f"{tool_name} failed (exit {exc.returncode}): {exc.stderr}") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise IngestionError(f"{tool_name} timed out after {timeout_seconds}s") from exc
+
+    if not output_path.is_file() or output_path.stat().st_size == 0:
+        raise IngestionError(f"{tool_name} produced no output at {output_path}")
+
+
+def _load_csv_into_table(
+    connection: duckdb.DuckDBPyConnection,
+    name: str,
+    csv_path: Path,
+) -> LoadResult:
+    quoted_name = quote_identifier(name)
+    connection.execute(
+        f"CREATE OR REPLACE TABLE {quoted_name} AS SELECT * FROM read_csv_auto(?, header=true, all_varchar=true)",
+        [str(csv_path)],
+    )
+    return build_result(connection, name)
+
+
 def load_csv(
     log_file: LogFile,
     connection: duckdb.DuckDBPyConnection,
@@ -363,7 +401,6 @@ def load_evtx_via_hayabusa(
     Hayabusa outputs only events that match its Sigma rules as a CSV timeline.
     """
     name = resolve_table_name(log_file, table_name)
-
     with tempfile.TemporaryDirectory() as tmp_dir:
         tmp_path = Path(tmp_dir) / f"{name}.csv"
         cmd = [
@@ -375,25 +412,10 @@ def load_evtx_via_hayabusa(
             str(tmp_path),
             "-w",
         ]
-        try:
-            subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=settings.evtx_tools.timeout_seconds)
-        except FileNotFoundError as exc:
-            raise BinaryNotFoundError(f"Hayabusa binary not found: {settings.evtx_tools.hayabusa_path}") from exc
-        except subprocess.CalledProcessError as exc:
-            raise IngestionError(f"hayabusa failed (exit {exc.returncode}): {exc.stderr}") from exc
-        except subprocess.TimeoutExpired as exc:
-            raise IngestionError(f"hayabusa timed out after {settings.evtx_tools.timeout_seconds}s") from exc
-
-        if not tmp_path.is_file() or tmp_path.stat().st_size == 0:
-            raise IngestionError(f"hayabusa produced no output at {tmp_path}")
-
-        quoted_name = quote_identifier(name)
-        connection.execute(
-            f"CREATE OR REPLACE TABLE {quoted_name} AS SELECT * FROM read_csv_auto(?, header=true)",
-            [str(tmp_path)],
+        _run_evtx_tool_to_csv(
+            cmd, tmp_path, "hayabusa", settings.evtx_tools.hayabusa_path, settings.evtx_tools.timeout_seconds
         )
-
-    return build_result(connection, name)
+        return _load_csv_into_table(connection, name, tmp_path)
 
 
 def load_evtx_via_evtxecmd(
@@ -406,7 +428,6 @@ def load_evtx_via_evtxecmd(
     EvtxECmd outputs all events with map-enhanced fields as CSV.
     """
     name = resolve_table_name(log_file, table_name)
-
     with tempfile.TemporaryDirectory() as tmp_dir:
         output_filename = f"{name}.csv"
         cmd = [
@@ -418,23 +439,8 @@ def load_evtx_via_evtxecmd(
             "--csvf",
             output_filename,
         ]
-        try:
-            subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=settings.evtx_tools.timeout_seconds)
-        except FileNotFoundError as exc:
-            raise BinaryNotFoundError(f"EvtxECmd binary not found: {settings.evtx_tools.evtxecmd_path}") from exc
-        except subprocess.CalledProcessError as exc:
-            raise IngestionError(f"EvtxECmd failed (exit {exc.returncode}): {exc.stderr}") from exc
-        except subprocess.TimeoutExpired as exc:
-            raise IngestionError(f"EvtxECmd timed out after {settings.evtx_tools.timeout_seconds}s") from exc
-
         output_path = Path(tmp_dir) / output_filename
-        if not output_path.is_file() or output_path.stat().st_size == 0:
-            raise IngestionError(f"EvtxECmd produced no output at {output_path}")
-
-        quoted_name = quote_identifier(name)
-        connection.execute(
-            f"CREATE OR REPLACE TABLE {quoted_name} AS SELECT * FROM read_csv_auto(?, header=true)",
-            [str(output_path)],
+        _run_evtx_tool_to_csv(
+            cmd, output_path, "EvtxECmd", settings.evtx_tools.evtxecmd_path, settings.evtx_tools.timeout_seconds
         )
-
-    return build_result(connection, name)
+        return _load_csv_into_table(connection, name, output_path)
