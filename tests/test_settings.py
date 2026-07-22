@@ -113,3 +113,17 @@ def test_evtxtool_timeout_rejects_non_positive_values() -> None:
         pytest.raises(ValueError, match="EVTX_TOOL_TIMEOUT must be positive"),
     ):
         Settings()
+
+
+def test_evtxtool_settings_override_with_valid_values() -> None:
+    env = {
+        "HAYABUSA_PATH": "custom-hayabusa",
+        "EVTXECMD_PATH": "custom-evtxecmd",
+        "EVTX_TOOL_TIMEOUT": "600",
+    }
+    with patch.dict("os.environ", env, clear=False):
+        s = Settings()
+
+    assert s.evtx_tools.hayabusa_path == env["HAYABUSA_PATH"]
+    assert s.evtx_tools.evtxecmd_path == env["EVTXECMD_PATH"]
+    assert s.evtx_tools.timeout_seconds == 600

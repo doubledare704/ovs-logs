@@ -396,6 +396,12 @@ def load_evtx_via_hayabusa(
     connection: duckdb.DuckDBPyConnection,
     table_name: str | None = None,
 ) -> LoadResult:
+    """Load an EVTX file via the Hayabusa CLI binary (csv-timeline subcommand).
+
+    Hayabusa outputs only events that match its Sigma rules as a CSV timeline.
+    The delegated service constructs the subprocess command, runs the external
+    binary within a temporary directory, and loads the resulting CSV into DuckDB.
+    """
     from ovs_logs.services.evtx_workflow import _run_hayabusa_workflow  # noqa: PLC0415
 
     name = resolve_table_name(log_file, table_name)
@@ -407,6 +413,12 @@ def load_evtx_via_evtxecmd(
     connection: duckdb.DuckDBPyConnection,
     table_name: str | None = None,
 ) -> LoadResult:
+    """Load an EVTX file via the EvtxECmd CLI binary (--csv output).
+
+    EvtxECmd outputs all events with map-enhanced fields as CSV.
+    The delegated service constructs the subprocess command, runs the external
+    binary within a temporary directory, and loads the resulting CSV into DuckDB.
+    """
     from ovs_logs.services.evtx_workflow import _run_evtxecmd_workflow  # noqa: PLC0415
 
     name = resolve_table_name(log_file, table_name)
