@@ -29,6 +29,17 @@ class AbuseIPDBSettings:
 
 
 @dataclass(frozen=True)
+class VirusTotalSettings:
+    """VirusTotal API v3 client settings."""
+
+    api_url: str = "https://www.virustotal.com/api/v3/files/{hash}"
+    timeout: int = 10
+    max_requests_per_minute: int = 4
+    max_retries: int = 2
+    backoff_seconds: int = 1
+
+
+@dataclass(frozen=True)
 class LLMSettings:
     """OpenAI-compatible LLM provider settings."""
 
@@ -72,6 +83,18 @@ def _load_abuseipdb_settings() -> AbuseIPDBSettings:
         ),
         max_retries=_int_env("ABUSEIPDB_MAX_RETRIES", AbuseIPDBSettings.max_retries),
         backoff_seconds=_int_env("ABUSEIPDB_BACKOFF_SECONDS", AbuseIPDBSettings.backoff_seconds),
+    )
+
+
+def _load_virustotal_settings() -> VirusTotalSettings:
+    return VirusTotalSettings(
+        api_url=_str_env("VIRUSTOTAL_API_URL", VirusTotalSettings.api_url),
+        timeout=_int_env("VIRUSTOTAL_TIMEOUT", VirusTotalSettings.timeout),
+        max_requests_per_minute=_int_env(
+            "VIRUSTOTAL_MAX_REQUESTS_PER_MINUTE", VirusTotalSettings.max_requests_per_minute
+        ),
+        max_retries=_int_env("VIRUSTOTAL_MAX_RETRIES", VirusTotalSettings.max_retries),
+        backoff_seconds=_int_env("VIRUSTOTAL_BACKOFF_SECONDS", VirusTotalSettings.backoff_seconds),
     )
 
 
@@ -175,6 +198,7 @@ class Settings:
     """Project-wide configuration singleton."""
 
     abuseipdb: AbuseIPDBSettings = field(default_factory=_load_abuseipdb_settings)
+    virustotal: VirusTotalSettings = field(default_factory=_load_virustotal_settings)
     llm: LLMSettings = field(default_factory=_load_llm_settings)
     thresholds: AnalysisThresholds = field(default_factory=_load_thresholds)
     database: DatabaseSettings = field(default_factory=_load_database_settings)
