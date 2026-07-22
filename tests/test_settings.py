@@ -127,3 +127,10 @@ def test_evtxtool_settings_override_with_valid_values() -> None:
     assert s.evtx_tools.hayabusa_path == env["HAYABUSA_PATH"]
     assert s.evtx_tools.evtxecmd_path == env["EVTXECMD_PATH"]
     assert s.evtx_tools.timeout_seconds == 600
+
+
+def test_evtxtool_timeout_empty_string_uses_default() -> None:
+    with patch.dict("os.environ", {"EVTX_TOOL_TIMEOUT": ""}, clear=False):
+        s = Settings()
+
+    assert s.evtx_tools.timeout_seconds == 300
