@@ -32,7 +32,8 @@ class AbuseIPDBSettings:
 class VirusTotalSettings:
     """VirusTotal API v3 client settings."""
 
-    api_url: str = "https://www.virustotal.com/api/v3/files/{hash}"
+    api_key: str = ""
+    api_url: str = "https://www.virustotal.com/api/v3/files/{file_hash}"
     timeout: int = 10
     max_requests_per_minute: int = 4
     max_retries: int = 2
@@ -88,6 +89,7 @@ def _load_abuseipdb_settings() -> AbuseIPDBSettings:
 
 def _load_virustotal_settings() -> VirusTotalSettings:
     return VirusTotalSettings(
+        api_key=_str_env("VIRUSTOTAL_API_KEY", VirusTotalSettings.api_key),
         api_url=_str_env("VIRUSTOTAL_API_URL", VirusTotalSettings.api_url),
         timeout=_int_env("VIRUSTOTAL_TIMEOUT", VirusTotalSettings.timeout),
         max_requests_per_minute=_int_env(
