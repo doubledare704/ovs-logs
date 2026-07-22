@@ -12,7 +12,9 @@ def _str_env(name: str, default: str) -> str:
 
 def _int_env(name: str, default: int) -> int:
     value = os.getenv(name)
-    return int(value) if value is not None else default
+    if value is None or not value.strip():
+        return default
+    return int(value)
 
 
 @dataclass(frozen=True)
@@ -43,6 +45,15 @@ class AnalysisThresholds:
     error_spikes: int = 50
     event_distribution: int = 100
     temporal_anomaly: int = 100
+
+
+@dataclass(frozen=True)
+class EVTXToolSettings:
+    """Paths and timeout for external EVTX analysis tools."""
+
+    hayabusa_path: str = "hayabusa"
+    evtxecmd_path: str = "EvtxECmd"
+    timeout_seconds: int = 300
 
 
 @dataclass(frozen=True)
@@ -81,6 +92,17 @@ def _load_thresholds() -> AnalysisThresholds:
             AnalysisThresholds.event_distribution,
         ),
         temporal_anomaly=_int_env("OVS_LOGS_TEMPORAL_BUCKET_THRESHOLD", AnalysisThresholds.temporal_anomaly),
+    )
+
+
+def _load_evtxtool_settings() -> EVTXToolSettings:
+    timeout_seconds = _int_env("EVTX_TOOL_TIMEOUT", EVTXToolSettings.timeout_seconds)
+    if timeout_seconds <= 0:
+        raise ValueError(f"EVTX_TOOL_TIMEOUT must be positive, got {timeout_seconds}")
+    return EVTXToolSettings(
+        hayabusa_path=_str_env("HAYABUSA_PATH", EVTXToolSettings.hayabusa_path),
+        evtxecmd_path=_str_env("EVTXECMD_PATH", EVTXToolSettings.evtxecmd_path),
+        timeout_seconds=timeout_seconds,
     )
 
 
@@ -158,6 +180,7 @@ class Settings:
     database: DatabaseSettings = field(default_factory=_load_database_settings)
     text_parse: TextParseConfig = field(default_factory=_load_text_parse_settings)
     threat_lists: ThreatListSettings = field(default_factory=_load_threat_list_settings)
+    evtx_tools: EVTXToolSettings = field(default_factory=_load_evtxtool_settings)
 
 
 settings = Settings()

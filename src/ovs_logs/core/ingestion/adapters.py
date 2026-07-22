@@ -5,6 +5,7 @@ from __future__ import annotations
 import csv
 import json
 import logging
+import subprocess
 import tempfile
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -14,7 +15,9 @@ from typing import Any
 import duckdb
 from evtx import PyEvtxParser
 
+from ovs_logs.config.settings import settings
 from ovs_logs.core.constants import EVTX_CSV_FIELDNAMES, SINGLE_COLUMN_DELIMITER
+from ovs_logs.core.errors import BinaryNotFoundError, IngestionError
 from ovs_logs.core.sql_utils import quote_identifier, resolve_table_name
 from ovs_logs.core.validation import LogFile
 
@@ -41,6 +44,44 @@ def build_result(connection: duckdb.DuckDBPyConnection, table_name: str) -> Load
     schema_rows = connection.execute(f"DESCRIBE {quoted_name}").fetchall()
     schema = [(row[0], row[1]) for row in schema_rows]
     return LoadResult(table_name=table_name, row_count=row_count, schema=schema)
+
+
+def _run_evtx_tool_to_csv(
+    cmd: list[str],
+    output_path: Path,
+    tool_name: str,
+    binary_path: str,
+    timeout_seconds: int,
+) -> None:
+    """Run external EVTX tool and validate that it produced a non-empty CSV."""
+    try:
+        subprocess.run(
+            cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, timeout=timeout_seconds
+        )
+    except FileNotFoundError as exc:
+        raise BinaryNotFoundError(f"{tool_name} binary not found: {binary_path}") from exc
+    except PermissionError as exc:
+        raise IngestionError(f"{tool_name} is not executable: {binary_path}") from exc
+    except subprocess.CalledProcessError as exc:
+        raise IngestionError(f"{tool_name} failed (exit {exc.returncode}): {exc.stderr}") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise IngestionError(f"{tool_name} timed out after {timeout_seconds}s") from exc
+
+    if not output_path.is_file() or output_path.stat().st_size == 0:
+        raise IngestionError(f"{tool_name} produced no output at {output_path}")
+
+
+def _load_csv_into_table(
+    connection: duckdb.DuckDBPyConnection,
+    name: str,
+    csv_path: Path,
+) -> LoadResult:
+    quoted_name = quote_identifier(name)
+    connection.execute(
+        f"CREATE OR REPLACE TABLE {quoted_name} AS SELECT * FROM read_csv_auto(?, header=true, all_varchar=true)",
+        [str(csv_path)],
+    )
+    return build_result(connection, name)
 
 
 def load_csv(
@@ -348,3 +389,37 @@ def iter_evtx_record_summaries(path: Path, max_records: int = 50) -> list[dict[s
             }
         )
     return summaries
+
+
+def load_evtx_via_hayabusa(
+    log_file: LogFile,
+    connection: duckdb.DuckDBPyConnection,
+    table_name: str | None = None,
+) -> LoadResult:
+    """Load an EVTX file via the Hayabusa CLI binary (csv-timeline subcommand).
+
+    Hayabusa outputs only events that match its Sigma rules as a CSV timeline.
+    The delegated service constructs the subprocess command, runs the external
+    binary within a temporary directory, and loads the resulting CSV into DuckDB.
+    """
+    from ovs_logs.services.evtx_workflow import _run_hayabusa_workflow  # noqa: PLC0415
+
+    name = resolve_table_name(log_file, table_name)
+    return _run_hayabusa_workflow(log_file, connection, name, settings)
+
+
+def load_evtx_via_evtxecmd(
+    log_file: LogFile,
+    connection: duckdb.DuckDBPyConnection,
+    table_name: str | None = None,
+) -> LoadResult:
+    """Load an EVTX file via the EvtxECmd CLI binary (--csv output).
+
+    EvtxECmd outputs all events with map-enhanced fields as CSV.
+    The delegated service constructs the subprocess command, runs the external
+    binary within a temporary directory, and loads the resulting CSV into DuckDB.
+    """
+    from ovs_logs.services.evtx_workflow import _run_evtxecmd_workflow  # noqa: PLC0415
+
+    name = resolve_table_name(log_file, table_name)
+    return _run_evtxecmd_workflow(log_file, connection, name, settings)
