@@ -3,6 +3,8 @@
 import tempfile
 from unittest.mock import patch
 
+import pytest
+
 from ovs_logs.config.settings import (
     Settings,
     settings,
@@ -97,3 +99,17 @@ def test_environment_variables_override_defaults() -> None:
     assert s.threat_lists.cache_dir == ENV_THREATLIST_CACHE_DIR
     assert s.threat_lists.max_age_hours == ENV_THREATLIST_MAX_AGE_HOURS
     assert s.threat_lists.timeout == ENV_THREATLIST_TIMEOUT
+
+
+def test_evtxtool_timeout_rejects_non_positive_values() -> None:
+    with (
+        patch.dict("os.environ", {"EVTX_TOOL_TIMEOUT": "0"}),
+        pytest.raises(ValueError, match="EVTX_TOOL_TIMEOUT must be positive"),
+    ):
+        Settings()
+
+    with (
+        patch.dict("os.environ", {"EVTX_TOOL_TIMEOUT": "-1"}),
+        pytest.raises(ValueError, match="EVTX_TOOL_TIMEOUT must be positive"),
+    ):
+        Settings()

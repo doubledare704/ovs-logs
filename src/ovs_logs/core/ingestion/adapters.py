@@ -396,26 +396,10 @@ def load_evtx_via_hayabusa(
     connection: duckdb.DuckDBPyConnection,
     table_name: str | None = None,
 ) -> LoadResult:
-    """Load an EVTX file via the Hayabusa CLI binary (csv-timeline subcommand).
+    from ovs_logs.services.evtx_workflow import _run_hayabusa_workflow  # noqa: PLC0415
 
-    Hayabusa outputs only events that match its Sigma rules as a CSV timeline.
-    """
     name = resolve_table_name(log_file, table_name)
-    with tempfile.TemporaryDirectory() as tmp_dir:
-        tmp_path = Path(tmp_dir) / f"{name}.csv"
-        cmd = [
-            settings.evtx_tools.hayabusa_path,
-            "csv-timeline",
-            "-f",
-            str(log_file.path),
-            "-o",
-            str(tmp_path),
-            "-w",
-        ]
-        _run_evtx_tool_to_csv(
-            cmd, tmp_path, "hayabusa", settings.evtx_tools.hayabusa_path, settings.evtx_tools.timeout_seconds
-        )
-        return _load_csv_into_table(connection, name, tmp_path)
+    return _run_hayabusa_workflow(log_file, connection, name, settings)
 
 
 def load_evtx_via_evtxecmd(
@@ -423,24 +407,7 @@ def load_evtx_via_evtxecmd(
     connection: duckdb.DuckDBPyConnection,
     table_name: str | None = None,
 ) -> LoadResult:
-    """Load an EVTX file via the EvtxECmd CLI binary (--csv output).
+    from ovs_logs.services.evtx_workflow import _run_evtxecmd_workflow  # noqa: PLC0415
 
-    EvtxECmd outputs all events with map-enhanced fields as CSV.
-    """
     name = resolve_table_name(log_file, table_name)
-    with tempfile.TemporaryDirectory() as tmp_dir:
-        output_filename = f"{name}.csv"
-        cmd = [
-            settings.evtx_tools.evtxecmd_path,
-            "-f",
-            str(log_file.path),
-            "--csv",
-            str(tmp_dir),
-            "--csvf",
-            output_filename,
-        ]
-        output_path = Path(tmp_dir) / output_filename
-        _run_evtx_tool_to_csv(
-            cmd, output_path, "EvtxECmd", settings.evtx_tools.evtxecmd_path, settings.evtx_tools.timeout_seconds
-        )
-        return _load_csv_into_table(connection, name, output_path)
+    return _run_evtxecmd_workflow(log_file, connection, name, settings)

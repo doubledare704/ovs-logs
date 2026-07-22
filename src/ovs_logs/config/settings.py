@@ -96,10 +96,13 @@ def _load_thresholds() -> AnalysisThresholds:
 
 
 def _load_evtxtool_settings() -> EVTXToolSettings:
+    timeout_seconds = _int_env("EVTX_TOOL_TIMEOUT", EVTXToolSettings.timeout_seconds)
+    if timeout_seconds <= 0:
+        raise ValueError(f"EVTX_TOOL_TIMEOUT must be positive, got {timeout_seconds}")
     return EVTXToolSettings(
         hayabusa_path=_str_env("HAYABUSA_PATH", EVTXToolSettings.hayabusa_path),
         evtxecmd_path=_str_env("EVTXECMD_PATH", EVTXToolSettings.evtxecmd_path),
-        timeout_seconds=_int_env("EVTX_TOOL_TIMEOUT", EVTXToolSettings.timeout_seconds),
+        timeout_seconds=timeout_seconds,
     )
 
 

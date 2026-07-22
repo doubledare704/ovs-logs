@@ -410,6 +410,42 @@ def test_load_evtx_via_evtxecmd_timeout(db, tmp_path: Path, monkeypatch: pytest.
         load_evtx_via_evtxecmd(log, db)
 
 
+def test_load_evtx_via_hayabusa_permission_error(db, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    file = _make_evtx_file(tmp_path)
+    log = validate_log_file(file)
+
+    monkeypatch.setattr(
+        "ovs_logs.core.ingestion.adapters.settings",
+        _custom_settings(hayabusa_path="non-executable-hayabusa"),
+    )
+
+    def fake_run(*args, **kwargs):
+        raise PermissionError("Permission denied")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    with pytest.raises(IngestionError, match="hayabusa is not executable"):
+        load_evtx_via_hayabusa(log, db)
+
+
+def test_load_evtx_via_evtxecmd_permission_error(db, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    file = _make_evtx_file(tmp_path)
+    log = validate_log_file(file)
+
+    monkeypatch.setattr(
+        "ovs_logs.core.ingestion.adapters.settings",
+        _custom_settings(evtxecmd_path="non-executable-evtxecmd"),
+    )
+
+    def fake_run(*args, **kwargs):
+        raise PermissionError("Permission denied")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    with pytest.raises(IngestionError, match="EvtxECmd is not executable"):
+        load_evtx_via_evtxecmd(log, db)
+
+
 def test_load_evtx_via_evtxecmd_missing_output(db, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     file = _make_evtx_file(tmp_path)
     log = validate_log_file(file)
