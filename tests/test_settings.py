@@ -43,6 +43,7 @@ ENV_THRESHOLD_TOP_TALKERS = 500
 ENV_THRESHOLD_ERROR_SPIKES = 75
 ENV_THRESHOLD_EVENT_DISTRIBUTION = 200
 ENV_THRESHOLD_TEMPORAL_ANOMALY = 150
+ENV_THRESHOLD_LONG_TAIL_ANALYSIS = 7
 ENV_TEXT_PARSE_MAX_LINES_PER_FILE = 500
 ENV_THREATLIST_CACHE_DIR = tempfile.mkdtemp(prefix="ovs_logs_threats_")
 ENV_THREATLIST_MAX_AGE_HOURS = 48
@@ -63,6 +64,7 @@ def test_environment_variables_override_defaults() -> None:
         "OVS_LOGS_ERROR_THRESHOLD": str(ENV_THRESHOLD_ERROR_SPIKES),
         "OVS_LOGS_EVENT_DISTRIBUTION_THRESHOLD": str(ENV_THRESHOLD_EVENT_DISTRIBUTION),
         "OVS_LOGS_TEMPORAL_BUCKET_THRESHOLD": str(ENV_THRESHOLD_TEMPORAL_ANOMALY),
+        "OVS_LOGS_LONG_TAIL_THRESHOLD": str(ENV_THRESHOLD_LONG_TAIL_ANALYSIS),
         "OVS_LOGS_DB_PATH": "/tmp/ovs_logs.db",
         "OVS_LOGS_STRUCTURED": "false",
         "OVS_LOGS_PARSE_LIMIT": str(ENV_TEXT_PARSE_MAX_LINES_PER_FILE),
@@ -89,6 +91,7 @@ def test_environment_variables_override_defaults() -> None:
     assert s.thresholds.error_spikes == ENV_THRESHOLD_ERROR_SPIKES
     assert s.thresholds.event_distribution == ENV_THRESHOLD_EVENT_DISTRIBUTION
     assert s.thresholds.temporal_anomaly == ENV_THRESHOLD_TEMPORAL_ANOMALY
+    assert s.thresholds.long_tail_analysis == ENV_THRESHOLD_LONG_TAIL_ANALYSIS
 
     assert s.database.path == env["OVS_LOGS_DB_PATH"]
 

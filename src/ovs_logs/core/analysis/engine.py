@@ -148,19 +148,17 @@ class AnalysisEngine:
 
         for name, template in templates_to_run.items():
             sql = template.sql if table_name == "events" else build_aliased_query(template.sql, table_name, connection)
+            sql = sql.replace("__EVENTS_TABLE__", "events" if table_name == "events" else _quote_identifier(table_name))
             params = self._resolve_parameters(template, thresholds.get(name))
             try:
                 cursor = connection.execute(sql, params)
-            except duckdb.Error as exc:
-                if "Referenced column" in str(exc):
-                    logger.warning(
-                        "Skipping template '%s' — required columns not found in table '%s': %s",
-                        name,
-                        table_name,
-                        exc,
-                    )
-                    continue
-                raise
+            except duckdb.BinderException:
+                logger.warning(
+                    "Skipping template '%s' — required columns not found in table '%s'",
+                    name,
+                    table_name,
+                )
+                continue
             columns = [desc[0] for desc in cursor.description]
             results[name] = [dict(zip(columns, row, strict=True)) for row in cursor.fetchall()]
 
@@ -173,6 +171,7 @@ def _is_string_type(dtype: str) -> bool:
 
 
 def _column_dtype(target: str) -> str:
+    """Return the DuckDB SQL type for a normalized column name."""
     if target == "event_timestamp":
         return "TIMESTAMP"
     if target == "status_code":

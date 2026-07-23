@@ -59,14 +59,12 @@ class IndicatorProcessor:
         """Assign a severity level based on how much the value exceeds the threshold.
 
         For ``long_tail_analysis`` the logic is inverted: **low** counts are
-        suspicious (singleton \u2192 High, rare \u2192 Medium, common \u2192 Low).
+        suspicious (singleton \u2192 High, else \u2192 Medium).
         """
         if indicator_type == "long_tail_analysis":
             if value == 1:
                 return "High"
-            if value <= threshold:
-                return "Medium"
-            return "Low"
+            return "Medium"
 
         if threshold <= 0 or value < threshold:
             return "Low"
@@ -74,7 +72,7 @@ class IndicatorProcessor:
             return "High"
         return "Medium"
 
-    def _extract_value(self, indicator_type: str, evidence: dict[str, Any]) -> int:
+    def _extract_value(self, evidence: dict[str, Any]) -> int:
         """Extract the numeric count used for severity scoring."""
         return int(
             evidence.get("connection_count", 0) or evidence.get("event_count", 0) or evidence.get("error_count", 0) or 0
@@ -104,7 +102,7 @@ class IndicatorProcessor:
         for indicator_type, rows in results.items():
             threshold = self.thresholds.get(indicator_type, 0)
             for evidence in rows:
-                value = self._extract_value(indicator_type, evidence)
+                value = self._extract_value(evidence)
                 severity = self._severity(value, threshold, indicator_type)
                 description = self._build_description(indicator_type, evidence)
                 indicators.append(

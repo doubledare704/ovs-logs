@@ -79,7 +79,7 @@ TEMPLATES: dict[str, SQLTemplate] = {
         sql=(
             "WITH connection_counts AS ("
             "SELECT process_name, destination_ip, COUNT(*) AS connection_count "
-            "FROM events "
+            "FROM __EVENTS_TABLE__ "
             "WHERE event_type = 'Network Connection' "
             "GROUP BY process_name, destination_ip "
             "), "
@@ -92,7 +92,7 @@ TEMPLATES: dict[str, SQLTemplate] = {
             "t.total_connections "
             "FROM connection_counts cc "
             "CROSS JOIN totals t "
-            "WHERE cc.connection_count = 1 OR cc.connection_count <= ? "
+            "WHERE cc.connection_count <= GREATEST(?, 1) "
             "ORDER BY cc.connection_count ASC "
             "LIMIT ?"
         ),

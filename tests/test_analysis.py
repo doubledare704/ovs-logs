@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+import duckdb
 import pytest
 
 from ovs_logs.core.analysis.engine import AnalysisEngine
@@ -23,7 +24,7 @@ TEMPORAL_BUCKET_1_COUNT = 1
 
 
 @pytest.fixture
-def analysis_engine(db, tmp_path: Path):
+def analysis_engine(db: duckdb.DuckDBPyConnection, tmp_path: Path):
     """Populate an `events` table and return an AnalysisEngine."""
     csv_file = tmp_path / "events.csv"
     csv_file.write_text(
