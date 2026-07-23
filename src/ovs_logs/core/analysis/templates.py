@@ -93,6 +93,8 @@ TEMPLATES: dict[str, SQLTemplate] = {
             "FROM connection_counts cc "
             "CROSS JOIN totals t "
             "WHERE cc.connection_count <= GREATEST(?, 1) "
+            "AND cc.process_name IS NOT NULL "
+            "AND cc.destination_ip IS NOT NULL "
             "ORDER BY cc.connection_count ASC "
             "LIMIT ?"
         ),
