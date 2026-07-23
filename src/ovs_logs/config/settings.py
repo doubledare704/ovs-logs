@@ -57,6 +57,7 @@ class AnalysisThresholds:
     error_spikes: int = 50
     event_distribution: int = 100
     temporal_anomaly: int = 100
+    long_tail_analysis: int = 2
 
 
 @dataclass(frozen=True)
@@ -117,6 +118,7 @@ def _load_thresholds() -> AnalysisThresholds:
             AnalysisThresholds.event_distribution,
         ),
         temporal_anomaly=_int_env("OVS_LOGS_TEMPORAL_BUCKET_THRESHOLD", AnalysisThresholds.temporal_anomaly),
+        long_tail_analysis=_int_env("OVS_LOGS_LONG_TAIL_THRESHOLD", AnalysisThresholds.long_tail_analysis),
     )
 
 

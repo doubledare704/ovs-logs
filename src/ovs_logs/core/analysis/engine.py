@@ -123,14 +123,17 @@ class AnalysisEngine:
         connection: duckdb.DuckDBPyConnection,
         table_name: str = "events",
         thresholds: dict[str, dict[str, int]] | None = None,
+        template_names: list[str] | None = None,
     ) -> dict[str, list[dict[str, Any]]]:
-        """Execute all registered templates and return structured results.
+        """Execute templates and return structured results.
 
         Args:
             connection: An active DuckDB connection.
             table_name: DuckDB table to query (defaults to ``events``).
             thresholds: Optional per-template overrides. Example:
                 ``{"top_talkers": {"min_events": 5, "limit": 20}}``.
+            template_names: Subset of template names to run. When
+                ``None`` (default), all registered templates are executed.
 
         Returns:
             A dictionary mapping template name to a list of result rows, where
@@ -139,10 +142,25 @@ class AnalysisEngine:
         thresholds = thresholds or {}
         results: dict[str, list[dict[str, Any]]] = {}
 
-        for name, template in self.templates.items():
+        templates_to_run = {
+            name: tmpl for name, tmpl in self.templates.items() if template_names is None or name in template_names
+        }
+
+        for name, template in templates_to_run.items():
             sql = template.sql if table_name == "events" else build_aliased_query(template.sql, table_name, connection)
             params = self._resolve_parameters(template, thresholds.get(name))
-            cursor = connection.execute(sql, params)
+            try:
+                cursor = connection.execute(sql, params)
+            except duckdb.Error as exc:
+                if "Referenced column" in str(exc):
+                    logger.warning(
+                        "Skipping template '%s' — required columns not found in table '%s': %s",
+                        name,
+                        table_name,
+                        exc,
+                    )
+                    continue
+                raise
             columns = [desc[0] for desc in cursor.description]
             results[name] = [dict(zip(columns, row, strict=True)) for row in cursor.fetchall()]
 

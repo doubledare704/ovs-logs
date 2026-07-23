@@ -9,12 +9,13 @@ from ovs_logs.config.settings import AnalysisThresholds, settings
 
 
 def _thresholds_dict(source: AnalysisThresholds) -> dict[str, int]:
-    """Build the threshold mapping from any settings object exposing the four fields."""
+    """Build the threshold mapping from any settings object exposing the available fields."""
     return {
         "top_talkers": source.top_talkers,
         "error_spikes": source.error_spikes,
         "event_distribution": source.event_distribution,
         "temporal_anomaly": source.temporal_anomaly,
+        "long_tail_analysis": source.long_tail_analysis,
     }
 
 
@@ -54,19 +55,30 @@ class IndicatorProcessor:
         if thresholds:
             self.thresholds.update(thresholds)
 
-    def _severity(self, value: int, threshold: int) -> str:
-        """Assign a severity level based on how much the value exceeds the threshold."""
-        if threshold <= 0:
+    def _severity(self, value: int, threshold: int, indicator_type: str = "") -> str:
+        """Assign a severity level based on how much the value exceeds the threshold.
+
+        For ``long_tail_analysis`` the logic is inverted: **low** counts are
+        suspicious (singleton \u2192 High, rare \u2192 Medium, common \u2192 Low).
+        """
+        if indicator_type == "long_tail_analysis":
+            if value == 1:
+                return "High"
+            if value <= threshold:
+                return "Medium"
+            return "Low"
+
+        if threshold <= 0 or value < threshold:
             return "Low"
         if value >= threshold * 2:
             return "High"
-        if value >= threshold:
-            return "Medium"
-        return "Low"
+        return "Medium"
 
     def _extract_value(self, indicator_type: str, evidence: dict[str, Any]) -> int:
         """Extract the numeric count used for severity scoring."""
-        return int(evidence.get("event_count", 0) or evidence.get("error_count", 0) or 0)
+        return int(
+            evidence.get("connection_count", 0) or evidence.get("event_count", 0) or evidence.get("error_count", 0) or 0
+        )
 
     def _build_description(self, indicator_type: str, evidence: dict[str, Any]) -> str:
         """Generate a human-readable description for the indicator."""
@@ -78,6 +90,11 @@ class IndicatorProcessor:
             return f"Event type '{evidence['event_type']}' occurred {evidence['event_count']} times"
         if indicator_type == "temporal_anomaly":
             return f"Time bucket {evidence['time_bucket']} had {evidence['event_count']} events"
+        if indicator_type == "long_tail_analysis":
+            return (
+                f"Process '{evidence['process_name']}' made {evidence['connection_count']} connection(s) "
+                f"to {evidence['destination_ip']} (of {evidence['total_connections']} total)"
+            )
         return f"Indicator of type {indicator_type}: {evidence}"
 
     def process(self, results: dict[str, list[dict[str, Any]]]) -> list[SuspiciousIndicator]:
@@ -88,7 +105,7 @@ class IndicatorProcessor:
             threshold = self.thresholds.get(indicator_type, 0)
             for evidence in rows:
                 value = self._extract_value(indicator_type, evidence)
-                severity = self._severity(value, threshold)
+                severity = self._severity(value, threshold, indicator_type)
                 description = self._build_description(indicator_type, evidence)
                 indicators.append(
                     SuspiciousIndicator(

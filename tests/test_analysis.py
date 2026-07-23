@@ -43,7 +43,11 @@ def analysis_engine(db, tmp_path: Path):
 
 
 def test_top_talkers(analysis_engine, db) -> None:
-    results = analysis_engine.run_queries(db, thresholds={"top_talkers": {"min_events": 2, "limit": 10}})
+    results = analysis_engine.run_queries(
+        db,
+        thresholds={"top_talkers": {"min_events": 2, "limit": 10}},
+        template_names=["top_talkers"],
+    )
 
     top = results["top_talkers"]
     assert len(top) == TOP_TALKERS_COUNT
@@ -54,7 +58,11 @@ def test_top_talkers(analysis_engine, db) -> None:
 
 
 def test_error_spikes(analysis_engine, db) -> None:
-    results = analysis_engine.run_queries(db, thresholds={"error_spikes": {"min_errors": 1, "limit": 10}})
+    results = analysis_engine.run_queries(
+        db,
+        thresholds={"error_spikes": {"min_errors": 1, "limit": 10}},
+        template_names=["error_spikes"],
+    )
 
     errors = results["error_spikes"]
     assert len(errors) == ERROR_SPIKES_COUNT
@@ -65,7 +73,7 @@ def test_error_spikes(analysis_engine, db) -> None:
 
 
 def test_event_distribution(analysis_engine, db) -> None:
-    results = analysis_engine.run_queries(db)
+    results = analysis_engine.run_queries(db, template_names=["event_distribution"])
 
     distribution = results["event_distribution"]
     types = {row["event_type"]: row["event_count"] for row in distribution}
@@ -74,7 +82,11 @@ def test_event_distribution(analysis_engine, db) -> None:
 
 
 def test_temporal_anomaly(analysis_engine, db) -> None:
-    results = analysis_engine.run_queries(db, thresholds={"temporal_anomaly": {"min_events": 1, "limit": 10}})
+    results = analysis_engine.run_queries(
+        db,
+        thresholds={"temporal_anomaly": {"min_events": 1, "limit": 10}},
+        template_names=["temporal_anomaly"],
+    )
 
     buckets = results["temporal_anomaly"]
     assert len(buckets) == TEMPORAL_BUCKETS_COUNT
@@ -91,13 +103,79 @@ def test_error_spikes_raw_varchar_status_code(db) -> None:
     )
 
     results = AnalysisEngine().run_queries(
-        db, table_name="raw_logs", thresholds={"error_spikes": {"min_errors": 1, "limit": 10}}
+        db,
+        table_name="raw_logs",
+        thresholds={"error_spikes": {"min_errors": 1, "limit": 10}},
+        template_names=["error_spikes"],
     )
 
     errors = results["error_spikes"]
     assert len(errors) == ERROR_SPIKES_COUNT
     assert any(row["status_code"] == ERROR_STATUS_404 for row in errors)
     assert any(row["status_code"] == ERROR_STATUS_500 for row in errors)
+
+
+def test_long_tail_analysis(db) -> None:
+    """Long-tail analysis returns only rare process_name + destination_ip pairs."""
+    db.execute(
+        "CREATE TABLE events AS "
+        "SELECT "
+        "'2024-01-01T00:00:00'::TIMESTAMP AS event_timestamp, "
+        "'10.0.0.1'::VARCHAR AS source_ip, "
+        "'Network Connection'::VARCHAR AS event_type, "
+        "200::BIGINT AS status_code, "
+        "'line'::VARCHAR AS raw_message, "
+        "'chrome.exe'::VARCHAR AS process_name, "
+        "'8.8.8.8'::VARCHAR AS destination_ip "
+        "UNION ALL "
+        "SELECT "
+        "'2024-01-01T00:00:01'::TIMESTAMP, '10.0.0.2'::VARCHAR, "
+        "'Network Connection'::VARCHAR, 200::BIGINT, 'line'::VARCHAR, "
+        "'chrome.exe'::VARCHAR, '8.8.8.8'::VARCHAR "
+        "UNION ALL "
+        "SELECT "
+        "'2024-01-01T00:00:02'::TIMESTAMP, '10.0.0.3'::VARCHAR, "
+        "'Network Connection'::VARCHAR, 200::BIGINT, 'line'::VARCHAR, "
+        "'chrome.exe'::VARCHAR, '8.8.8.8'::VARCHAR "
+        "UNION ALL "
+        "SELECT "
+        "'2024-01-01T00:00:03'::TIMESTAMP, '10.0.0.4'::VARCHAR, "
+        "'Network Connection'::VARCHAR, 200::BIGINT, 'line'::VARCHAR, "
+        "'cmd.exe'::VARCHAR, '1.1.1.1'::VARCHAR "
+        "UNION ALL "
+        "SELECT "
+        "'2024-01-01T00:00:04'::TIMESTAMP, '10.0.0.5'::VARCHAR, "
+        "'Network Connection'::VARCHAR, 200::BIGINT, 'line'::VARCHAR, "
+        "'powershell.exe'::VARCHAR, '2.2.2.2'::VARCHAR "
+        "UNION ALL "
+        "SELECT "
+        "'2024-01-01T00:00:05'::TIMESTAMP, '10.0.0.6'::VARCHAR, "
+        "'Network Connection'::VARCHAR, 200::BIGINT, 'line'::VARCHAR, "
+        "'explorer.exe'::VARCHAR, '3.3.3.3'::VARCHAR"
+    )
+
+    results = AnalysisEngine().run_queries(
+        db,
+        thresholds={"long_tail_analysis": {"max_rare_count": 2, "limit": 50}},
+        template_names=["long_tail_analysis"],
+    )
+
+    long_tail = results["long_tail_analysis"]
+    # Four distinct pairs: chrome.exe+8.8.8.8 (3x) has count=3 so excluded;
+    # cmd.exe+1.1.1.1 (1x), powershell.exe+2.2.2.2 (1x), explorer.exe+3.3.3.3 (1x) are singletons
+    assert len(long_tail) == 3
+
+    pair_counts = {(row["process_name"], row["destination_ip"]): row["connection_count"] for row in long_tail}
+    assert pair_counts[("cmd.exe", "1.1.1.1")] == 1
+    assert pair_counts[("powershell.exe", "2.2.2.2")] == 1
+    assert pair_counts[("explorer.exe", "3.3.3.3")] == 1
+    assert all(row["total_connections"] == 6 for row in long_tail)
+    # Verify all are ordered ascending by connection_count
+    counts = [row["connection_count"] for row in long_tail]
+    assert counts == sorted(counts)
+
+    # chrome.exe+8.8.8.8 has count=3, which exceeds max_rare_count=2
+    assert ("chrome.exe", "8.8.8.8") not in pair_counts
 
 
 def test_aliased_query_handles_mixed_case_columns(db) -> None:
@@ -111,7 +189,10 @@ def test_aliased_query_handles_mixed_case_columns(db) -> None:
 
     # Should not raise a binder error despite uppercase quoted identifiers.
     results = AnalysisEngine().run_queries(
-        db, table_name="raw_mixed", thresholds={"error_spikes": {"min_errors": 1, "limit": 10}}
+        db,
+        table_name="raw_mixed",
+        thresholds={"error_spikes": {"min_errors": 1, "limit": 10}},
+        template_names=["error_spikes"],
     )
 
     errors = results["error_spikes"]
