@@ -101,10 +101,8 @@ def build_aliased_query(sql: str, table_name: str, connection: duckdb.DuckDBPyCo
         _build_expression_for_target(target, lower_columns, column_types, orig_columns) for target in NORMALIZED_COLUMNS
     ]
 
-    return sql.replace(
-        "FROM events",
-        f"FROM (SELECT {', '.join(expressions)} FROM {_quote_identifier(table_name)})",
-    )
+    aliased_from = f"FROM (SELECT {', '.join(expressions)} FROM {_quote_identifier(table_name)})"
+    return sql.replace("FROM events", aliased_from).replace("FROM __EVENTS_TABLE__", aliased_from)
 
 
 class AnalysisEngine:

@@ -137,3 +137,11 @@ def test_evtxtool_timeout_empty_string_uses_default() -> None:
         s = Settings()
 
     assert s.evtx_tools.timeout_seconds == 300
+
+
+def test_long_tail_threshold_env_override() -> None:
+    override = 42
+    with patch.dict("os.environ", {"OVS_LOGS_LONG_TAIL_THRESHOLD": str(override)}, clear=False):
+        s = Settings()
+
+    assert s.thresholds.long_tail_analysis == override

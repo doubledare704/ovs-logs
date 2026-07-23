@@ -116,7 +116,7 @@ def test_error_spikes_raw_varchar_status_code(db) -> None:
     assert any(row["status_code"] == ERROR_STATUS_500 for row in errors)
 
 
-def test_long_tail_analysis(db) -> None:
+def test_long_tail_analysis(db: duckdb.DuckDBPyConnection) -> None:
     """Long-tail analysis returns only rare process_name + destination_ip pairs."""
     db.execute(
         "CREATE TABLE events AS "
@@ -152,7 +152,17 @@ def test_long_tail_analysis(db) -> None:
         "SELECT "
         "'2024-01-01T00:00:05'::TIMESTAMP, '10.0.0.6'::VARCHAR, "
         "'Network Connection'::VARCHAR, 200::BIGINT, 'line'::VARCHAR, "
-        "'explorer.exe'::VARCHAR, '3.3.3.3'::VARCHAR"
+        "'explorer.exe'::VARCHAR, '3.3.3.3'::VARCHAR "
+        "UNION ALL "
+        "SELECT "
+        "'2024-01-01T00:00:06'::TIMESTAMP, '10.0.0.7'::VARCHAR, "
+        "'Network Connection'::VARCHAR, 200::BIGINT, 'line'::VARCHAR, "
+        "'notepad.exe'::VARCHAR, '4.4.4.4'::VARCHAR "
+        "UNION ALL "
+        "SELECT "
+        "'2024-01-01T00:00:07'::TIMESTAMP, '10.0.0.8'::VARCHAR, "
+        "'Network Connection'::VARCHAR, 200::BIGINT, 'line'::VARCHAR, "
+        "'notepad.exe'::VARCHAR, '4.4.4.4'::VARCHAR "
     )
 
     results = AnalysisEngine().run_queries(
@@ -162,21 +172,62 @@ def test_long_tail_analysis(db) -> None:
     )
 
     long_tail = results["long_tail_analysis"]
-    # Four distinct pairs: chrome.exe+8.8.8.8 (3x) has count=3 so excluded;
-    # cmd.exe+1.1.1.1 (1x), powershell.exe+2.2.2.2 (1x), explorer.exe+3.3.3.3 (1x) are singletons
-    assert len(long_tail) == 3
+    assert len(long_tail) == 4
 
     pair_counts = {(row["process_name"], row["destination_ip"]): row["connection_count"] for row in long_tail}
     assert pair_counts[("cmd.exe", "1.1.1.1")] == 1
     assert pair_counts[("powershell.exe", "2.2.2.2")] == 1
     assert pair_counts[("explorer.exe", "3.3.3.3")] == 1
-    assert all(row["total_connections"] == 6 for row in long_tail)
-    # Verify all are ordered ascending by connection_count
+    assert pair_counts[("notepad.exe", "4.4.4.4")] == 2
+    assert all(row["total_connections"] == 8 for row in long_tail)
     counts = [row["connection_count"] for row in long_tail]
     assert counts == sorted(counts)
 
-    # chrome.exe+8.8.8.8 has count=3, which exceeds max_rare_count=2
     assert ("chrome.exe", "8.8.8.8") not in pair_counts
+
+    db.execute(
+        "CREATE OR REPLACE TABLE events AS "
+        "SELECT "
+        "'2024-01-01T00:10:00'::TIMESTAMP AS event_timestamp, "
+        "'10.0.0.1'::VARCHAR AS source_ip, "
+        "'Network Connection'::VARCHAR AS event_type, "
+        "200::BIGINT AS status_code, "
+        "'line'::VARCHAR AS raw_message, "
+        "'chrome.exe'::VARCHAR AS process_name, "
+        "'8.8.8.8'::VARCHAR AS destination_ip "
+        "UNION ALL SELECT '2024-01-01T00:10:01'::TIMESTAMP, '10.0.0.2'::VARCHAR, "
+        "'Network Connection'::VARCHAR, 200::BIGINT, 'line'::VARCHAR, "
+        "'chrome.exe'::VARCHAR, '8.8.8.8'::VARCHAR "
+        "UNION ALL SELECT '2024-01-01T00:10:02'::TIMESTAMP, '10.0.0.3'::VARCHAR, "
+        "'Network Connection'::VARCHAR, 200::BIGINT, 'line'::VARCHAR, "
+        "NULL::VARCHAR, '5.5.5.5'::VARCHAR "
+        "UNION ALL SELECT '2024-01-01T00:10:03'::TIMESTAMP, '10.0.0.4'::VARCHAR, "
+        "'Network Connection'::VARCHAR, 200::BIGINT, 'line'::VARCHAR, "
+        "'cmd.exe'::VARCHAR, '1.1.1.1'::VARCHAR "
+        "UNION ALL SELECT '2024-01-01T00:10:04'::TIMESTAMP, '10.0.0.5'::VARCHAR, "
+        "'Network Connection'::VARCHAR, 200::BIGINT, 'line'::VARCHAR, "
+        "'notepad.exe'::VARCHAR, '4.4.4.4'::VARCHAR "
+        "UNION ALL SELECT '2024-01-01T00:10:05'::TIMESTAMP, '10.0.0.6'::VARCHAR, "
+        "'Network Connection'::VARCHAR, 200::BIGINT, 'line'::VARCHAR, "
+        "'msedge.exe'::VARCHAR, NULL::VARCHAR "
+        "UNION ALL SELECT '2024-01-01T00:10:06'::TIMESTAMP, '10.0.0.7'::VARCHAR, "
+        "'Network Connection'::VARCHAR, 200::BIGINT, 'line'::VARCHAR, "
+        "'notepad.exe'::VARCHAR, '4.4.4.4'::VARCHAR "
+    )
+
+    null_results = AnalysisEngine().run_queries(
+        db,
+        thresholds={"long_tail_analysis": {"max_rare_count": 2, "limit": 50}},
+        template_names=["long_tail_analysis"],
+    )
+
+    null_tail = null_results["long_tail_analysis"]
+    null_pairs = {(row["process_name"], row["destination_ip"]): row["connection_count"] for row in null_tail}
+    assert null_pairs[("chrome.exe", "8.8.8.8")] == 2
+    assert null_pairs[("cmd.exe", "1.1.1.1")] == 1
+    assert null_pairs[("notepad.exe", "4.4.4.4")] == 2
+    assert len(null_tail) == 3
+    assert all(row["total_connections"] == 7 for row in null_tail)
 
 
 def test_aliased_query_handles_mixed_case_columns(db) -> None:
