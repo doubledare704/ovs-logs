@@ -1,4 +1,4 @@
-"""Threat intelligence client for IP reputation lookups via AbuseIPDB."""
+"""Threat intelligence clients for IP and file-hash lookups via AbuseIPDB and VirusTotal."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from typing import Any
 
 import requests
 
-from ovs_logs.config.settings import AbuseIPDBSettings, settings
+from ovs_logs.config.settings import AbuseIPDBSettings, VirusTotalSettings, settings
 from ovs_logs.core.retry import retry
 
 logger = logging.getLogger(__name__)
@@ -41,6 +41,19 @@ class ReputationResult:
     domain: str | None = None
     total_reports: int = 0
     last_reported_at: str | None = None
+    cached: bool = False
+
+
+@dataclass(frozen=True)
+class VirusTotalResult:
+    """Normalized file-hash threat data from VirusTotal API v3."""
+
+    hash: str
+    malicious: int = 0
+    suspicious: int = 0
+    undetected: int = 0
+    harmless: int = 0
+    detection_ratio: float = 0.0
     cached: bool = False
 
 
@@ -180,3 +193,118 @@ class ThreatIntelClient:
         """Return reputation data for a list of unique IPs."""
         unique_ips = sorted(set(ips))
         return {ip: self.lookup(ip) for ip in unique_ips}
+
+
+class VirusTotalClient:
+    """Client for querying VirusTotal API v3 file-hash threat intelligence."""
+
+    def __init__(  # noqa: PLR0913
+        self,
+        api_key: str | None = None,
+        endpoint: str | None = None,
+        timeout: int | None = None,
+        max_requests_per_minute: int | None = None,
+        max_retries: int | None = None,
+        backoff_seconds: int | None = None,
+        *,
+        virustotal_settings: VirusTotalSettings | None = None,
+    ) -> None:
+        cfg = virustotal_settings or settings.virustotal
+        self.api_key = api_key if api_key is not None else cfg.api_key
+        self.endpoint = endpoint if endpoint is not None else cfg.api_url
+        self.timeout = timeout if timeout is not None else cfg.timeout
+        retries = max_retries if max_retries is not None else cfg.max_retries
+        backoff = backoff_seconds if backoff_seconds is not None else cfg.backoff_seconds
+        rate_limit = max_requests_per_minute if max_requests_per_minute is not None else cfg.max_requests_per_minute
+        self.rate_limiter = RateLimiter(max_requests_per_minute=rate_limit)
+        self._make_request = retry(
+            max_retries=retries,
+            backoff_seconds=backoff,
+            exceptions=(requests.Timeout, ThreatIntelTransientError),
+        )(self._make_request_impl)
+        self._cache: dict[str, VirusTotalResult] = {}
+
+    @staticmethod
+    def _build_result(file_hash: str, attributes: dict[str, Any]) -> VirusTotalResult:
+        stats = attributes.get("last_analysis_stats", {})
+        malicious = int(stats.get("malicious", 0) or 0)
+        suspicious = int(stats.get("suspicious", 0) or 0)
+        undetected = int(stats.get("undetected", 0) or 0)
+        harmless = int(stats.get("harmless", 0) or 0)
+        confirmed_timeout = int(stats.get("confirmed-timeout", 0) or 0)
+        failure = int(stats.get("failure", 0) or 0)
+        timeout = int(stats.get("timeout", 0) or 0)
+        type_unsupported = int(stats.get("type-unsupported", 0) or 0)
+        total = (
+            malicious + suspicious + undetected + harmless + confirmed_timeout + failure + timeout + type_unsupported
+        )
+        detection_ratio = malicious / total if total > 0 else 0.0
+        return VirusTotalResult(
+            hash=file_hash,
+            malicious=malicious,
+            suspicious=suspicious,
+            undetected=undetected,
+            harmless=harmless,
+            detection_ratio=detection_ratio,
+            cached=False,
+        )
+
+    def _is_transient(self, status_code: int) -> bool:
+        return status_code >= _TRANSIENT_STATUS_MIN or status_code == _RATE_LIMIT_STATUS
+
+    def _make_request_impl(self, file_hash: str) -> requests.Response:
+        self.rate_limiter.wait()
+        response = requests.get(
+            self.endpoint.format(file_hash=file_hash),
+            headers={
+                "x-apikey": self.api_key,
+                "Accept": "application/json",
+            },
+            timeout=self.timeout,
+        )
+        if self._is_transient(response.status_code):
+            raise ThreatIntelTransientError(f"VirusTotal lookup for {file_hash} returned HTTP {response.status_code}")
+        return response
+
+    def lookup(self, file_hash: str) -> VirusTotalResult:
+        """Return threat-intel data for a single file hash, using cache if available."""
+        if not self.api_key:
+            raise ThreatIntelError("VirusTotal API key is required; set VIRUSTOTAL_API_KEY")
+
+        if file_hash in self._cache:
+            return dataclasses.replace(self._cache[file_hash], cached=True)
+
+        try:
+            response = self._make_request(file_hash)
+        except ThreatIntelTransientError as exc:
+            raise ThreatIntelError(f"VirusTotal lookup failed for {file_hash} after retries: {exc}") from exc
+        except requests.Timeout as exc:
+            raise ThreatIntelError(f"VirusTotal lookup for {file_hash} timed out after retries") from exc
+        except requests.RequestException as exc:
+            raise ThreatIntelError(f"VirusTotal lookup for {file_hash} failed: {exc}") from exc
+
+        if response.status_code == _SUCCESS_STATUS:
+            try:
+                payload = response.json()
+            except ValueError as exc:
+                raise ThreatIntelError(f"VirusTotal lookup failed for {file_hash}: malformed JSON: {exc}") from exc
+            data = payload.get("data", {})
+            if not data:
+                raise ThreatIntelError(f"VirusTotal lookup failed for {file_hash}: missing 'data' in response")
+            attrs = data.get("attributes", {})
+            if not attrs:
+                raise ThreatIntelError(
+                    f"VirusTotal lookup failed for {file_hash}: missing 'data.attributes' in response",
+                )
+            result = self._build_result(file_hash, attrs)
+            self._cache[file_hash] = result
+            return result
+
+        raise ThreatIntelError(
+            f"VirusTotal lookup failed for {file_hash}: HTTP {response.status_code} - {response.text}",
+        )
+
+    def lookup_many(self, hashes: list[str]) -> dict[str, VirusTotalResult]:
+        """Return threat-intel data for a list of unique file hashes."""
+        unique_hashes = sorted(set(hashes))
+        return {h: self.lookup(h) for h in unique_hashes}
