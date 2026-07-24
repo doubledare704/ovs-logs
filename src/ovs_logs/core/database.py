@@ -107,7 +107,8 @@ def _ensure_allowlist_table(connection: duckdb.DuckDBPyConnection) -> None:
             "indicator_type" VARCHAR NOT NULL,
             "description"   VARCHAR,
             "metadata"      JSON,
-            "created_at"    TIMESTAMP
+            "created_at"    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE ("indicator", "indicator_type")
         )
         """
     )
@@ -128,6 +129,7 @@ def insert_allowlisted_indicator(  # noqa: PLR0913
 
     Parameters are keyword-only to avoid positional confusion.
     """
+    _ensure_allowlist_table(connection)
     table = quote_identifier(ALLOWLIST_TABLE)
     connection.execute(
         f"""
@@ -155,15 +157,16 @@ def is_allowlisted(
 
     When *indicator_type* is provided, the match is scoped to that type.
     """
+    _ensure_allowlist_table(connection)
     table = quote_identifier(ALLOWLIST_TABLE)
     if indicator_type is not None:
         row = connection.execute(
-            f'SELECT COUNT(*) FROM {table} WHERE "indicator" = ? AND "indicator_type" = ?',
+            f'SELECT 1 FROM {table} WHERE "indicator" = ? AND "indicator_type" = ? LIMIT 1',
             [indicator, indicator_type],
         ).fetchone()
     else:
         row = connection.execute(
-            f'SELECT COUNT(*) FROM {table} WHERE "indicator" = ?',
+            f'SELECT 1 FROM {table} WHERE "indicator" = ? LIMIT 1',
             [indicator],
         ).fetchone()
-    return row is not None and row[0] > 0
+    return row is not None
