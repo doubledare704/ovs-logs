@@ -272,7 +272,7 @@ class TestAllowlistedIndicators:
             _ensure_allowlist_table(conn)
             insert_allowlisted_indicator(
                 conn,
-                id="test-uuid",
+                indicator_id="test-uuid",
                 indicator="10.0.0.1",
                 indicator_type="ip",
                 description="Internal DNS server",
@@ -294,7 +294,7 @@ class TestAllowlistedIndicators:
             _ensure_allowlist_table(conn)
             insert_allowlisted_indicator(
                 conn,
-                id="uuid-1",
+                indicator_id="uuid-1",
                 indicator="1.2.3.4",
                 indicator_type="ip",
             )
@@ -313,9 +313,63 @@ class TestAllowlistedIndicators:
             _ensure_allowlist_table(conn)
             insert_allowlisted_indicator(
                 conn,
-                id="uuid-2",
+                indicator_id="uuid-2",
                 indicator="10.0.0.1",
                 indicator_type="ip",
             )
             assert is_allowlisted(conn, "10.0.0.1", "hostname") is False
             assert is_allowlisted(conn, "10.0.0.1", "ip") is True
+
+    def test_insert_omit_created_at_stores_timestamp(self) -> None:
+        """Omitting created_at automatically stores a non-null timestamp."""
+        with Database(":memory:") as conn:
+            _ensure_allowlist_table(conn)
+            insert_allowlisted_indicator(
+                conn,
+                indicator_id="uuid-3",
+                indicator="192.168.1.1",
+                indicator_type="ip",
+            )
+            row = conn.execute(
+                f'SELECT "created_at" FROM "{ALLOWLIST_TABLE}" WHERE "id" = ?',
+                ["uuid-3"],
+            ).fetchone()
+            assert row is not None
+            assert row[0] is not None
+
+    def test_duplicate_indicator_type_rejected(self) -> None:
+        """Inserting the same (indicator, indicator_type) pair raises an error."""
+        with Database(":memory:") as conn:
+            _ensure_allowlist_table(conn)
+            insert_allowlisted_indicator(
+                conn,
+                indicator_id="uuid-4",
+                indicator="10.0.0.2",
+                indicator_type="ip",
+            )
+            with pytest.raises(duckdb.IntegrityError):
+                insert_allowlisted_indicator(
+                    conn,
+                    indicator_id="uuid-5",
+                    indicator="10.0.0.2",
+                    indicator_type="ip",
+                )
+
+    def test_same_indicator_different_type_succeeds(self) -> None:
+        """The same indicator value with a different indicator_type is allowed."""
+        with Database(":memory:") as conn:
+            _ensure_allowlist_table(conn)
+            insert_allowlisted_indicator(
+                conn,
+                indicator_id="uuid-6",
+                indicator="10.0.0.3",
+                indicator_type="ip",
+            )
+            insert_allowlisted_indicator(
+                conn,
+                indicator_id="uuid-7",
+                indicator="10.0.0.3",
+                indicator_type="hostname",
+            )
+            assert is_allowlisted(conn, "10.0.0.3", "ip") is True
+            assert is_allowlisted(conn, "10.0.0.3", "hostname") is True

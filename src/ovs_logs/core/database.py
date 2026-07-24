@@ -118,7 +118,7 @@ def _ensure_allowlist_table(connection: duckdb.DuckDBPyConnection) -> None:
 def insert_allowlisted_indicator(  # noqa: PLR0913
     connection: duckdb.DuckDBPyConnection,
     *,
-    id: str,
+    indicator_id: str,
     indicator: str,
     indicator_type: str,
     description: str | None = None,
@@ -137,7 +137,7 @@ def insert_allowlisted_indicator(  # noqa: PLR0913
         VALUES (?, ?, ?, ?, ?, ?)
         """,
         [
-            id,
+            indicator_id,
             indicator,
             indicator_type,
             description,
