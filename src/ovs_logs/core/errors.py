@@ -17,6 +17,15 @@ EXIT_VALIDATION_ERROR = 3
 EXIT_NOT_SUPPORTED = 4
 EXIT_UNEXPECTED = 1
 
+
+class IngestionError(Exception):
+    """Raised when an ingestion operation fails."""
+
+
+class BinaryNotFoundError(IngestionError):
+    """Raised when an external binary required for ingestion cannot be found."""
+
+
 # Ordered classification ladder shared by ``classify_error`` and ``error_category``.
 # The first matching entry wins; anything unmatched falls back to the "unexpected"
 # defaults. Keeping this single source of truth prevents the exit code and the
@@ -24,6 +33,7 @@ EXIT_UNEXPECTED = 1
 _CLASSIFICATIONS: list[tuple[tuple[type[Exception], ...], int, str]] = [
     ((FileNotFoundError, PermissionError), EXIT_FILE_ERROR, "File error"),
     ((ValueError,), EXIT_VALIDATION_ERROR, "Validation error"),
+    ((IngestionError,), EXIT_VALIDATION_ERROR, "Ingestion error"),
     ((NotImplementedError,), EXIT_NOT_SUPPORTED, "Not supported"),
 ]
 

@@ -74,4 +74,31 @@ TEMPLATES: dict[str, SQLTemplate] = {
         parameters=["min_events", "limit"],
         default_thresholds={"min_events": 0, "limit": 10},
     ),
+    "long_tail_analysis": SQLTemplate(
+        name="long_tail_analysis",
+        sql=(
+            "WITH connection_counts AS ("
+            "SELECT process_name, destination_ip, COUNT(*) AS connection_count "
+            "FROM __EVENTS_TABLE__ "
+            "WHERE event_type = 'Network Connection' "
+            "GROUP BY process_name, destination_ip "
+            "), "
+            "totals AS ("
+            "SELECT SUM(connection_count) AS total_connections "
+            "FROM connection_counts "
+            ") "
+            "SELECT "
+            "cc.process_name, cc.destination_ip, cc.connection_count, "
+            "t.total_connections "
+            "FROM connection_counts cc "
+            "CROSS JOIN totals t "
+            "WHERE cc.connection_count <= GREATEST(?, 1) "
+            "AND cc.process_name IS NOT NULL "
+            "AND cc.destination_ip IS NOT NULL "
+            "ORDER BY cc.connection_count ASC "
+            "LIMIT ?"
+        ),
+        parameters=["max_rare_count", "limit"],
+        default_thresholds={"max_rare_count": 2, "limit": 50},
+    ),
 }

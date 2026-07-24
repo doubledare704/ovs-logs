@@ -12,7 +12,9 @@ def _str_env(name: str, default: str) -> str:
 
 def _int_env(name: str, default: int) -> int:
     value = os.getenv(name)
-    return int(value) if value is not None else default
+    if value is None or not value.strip():
+        return default
+    return int(value)
 
 
 @dataclass(frozen=True)
@@ -22,6 +24,18 @@ class AbuseIPDBSettings:
     api_url: str = "https://api.abuseipdb.com/api/v2/check"
     timeout: int = 10
     max_requests_per_minute: int = 60
+    max_retries: int = 2
+    backoff_seconds: int = 1
+
+
+@dataclass(frozen=True)
+class VirusTotalSettings:
+    """VirusTotal API v3 client settings."""
+
+    api_key: str = ""
+    api_url: str = "https://www.virustotal.com/api/v3/files/{file_hash}"
+    timeout: int = 10
+    max_requests_per_minute: int = 4
     max_retries: int = 2
     backoff_seconds: int = 1
 
@@ -43,6 +57,16 @@ class AnalysisThresholds:
     error_spikes: int = 50
     event_distribution: int = 100
     temporal_anomaly: int = 100
+    long_tail_analysis: int = 2
+
+
+@dataclass(frozen=True)
+class EVTXToolSettings:
+    """Paths and timeout for external EVTX analysis tools."""
+
+    hayabusa_path: str = "hayabusa"
+    evtxecmd_path: str = "EvtxECmd"
+    timeout_seconds: int = 300
 
 
 @dataclass(frozen=True)
@@ -64,6 +88,19 @@ def _load_abuseipdb_settings() -> AbuseIPDBSettings:
     )
 
 
+def _load_virustotal_settings() -> VirusTotalSettings:
+    return VirusTotalSettings(
+        api_key=_str_env("VIRUSTOTAL_API_KEY", VirusTotalSettings.api_key),
+        api_url=_str_env("VIRUSTOTAL_API_URL", VirusTotalSettings.api_url),
+        timeout=_int_env("VIRUSTOTAL_TIMEOUT", VirusTotalSettings.timeout),
+        max_requests_per_minute=_int_env(
+            "VIRUSTOTAL_MAX_REQUESTS_PER_MINUTE", VirusTotalSettings.max_requests_per_minute
+        ),
+        max_retries=_int_env("VIRUSTOTAL_MAX_RETRIES", VirusTotalSettings.max_retries),
+        backoff_seconds=_int_env("VIRUSTOTAL_BACKOFF_SECONDS", VirusTotalSettings.backoff_seconds),
+    )
+
+
 def _load_llm_settings() -> LLMSettings:
     return LLMSettings(
         api_url=_str_env("OVS_LOGS_LLM_API_URL", LLMSettings.api_url),
@@ -81,6 +118,18 @@ def _load_thresholds() -> AnalysisThresholds:
             AnalysisThresholds.event_distribution,
         ),
         temporal_anomaly=_int_env("OVS_LOGS_TEMPORAL_BUCKET_THRESHOLD", AnalysisThresholds.temporal_anomaly),
+        long_tail_analysis=_int_env("OVS_LOGS_LONG_TAIL_THRESHOLD", AnalysisThresholds.long_tail_analysis),
+    )
+
+
+def _load_evtxtool_settings() -> EVTXToolSettings:
+    timeout_seconds = _int_env("EVTX_TOOL_TIMEOUT", EVTXToolSettings.timeout_seconds)
+    if timeout_seconds <= 0:
+        raise ValueError(f"EVTX_TOOL_TIMEOUT must be positive, got {timeout_seconds}")
+    return EVTXToolSettings(
+        hayabusa_path=_str_env("HAYABUSA_PATH", EVTXToolSettings.hayabusa_path),
+        evtxecmd_path=_str_env("EVTXECMD_PATH", EVTXToolSettings.evtxecmd_path),
+        timeout_seconds=timeout_seconds,
     )
 
 
@@ -153,11 +202,13 @@ class Settings:
     """Project-wide configuration singleton."""
 
     abuseipdb: AbuseIPDBSettings = field(default_factory=_load_abuseipdb_settings)
+    virustotal: VirusTotalSettings = field(default_factory=_load_virustotal_settings)
     llm: LLMSettings = field(default_factory=_load_llm_settings)
     thresholds: AnalysisThresholds = field(default_factory=_load_thresholds)
     database: DatabaseSettings = field(default_factory=_load_database_settings)
     text_parse: TextParseConfig = field(default_factory=_load_text_parse_settings)
     threat_lists: ThreatListSettings = field(default_factory=_load_threat_list_settings)
+    evtx_tools: EVTXToolSettings = field(default_factory=_load_evtxtool_settings)
 
 
 settings = Settings()

@@ -10,7 +10,7 @@ from ovs_logs.core.analysis.indicators import (
     extract_unique_ips,
 )
 
-INDICATORS_TOTAL_COUNT = 5
+INDICATORS_TOTAL_COUNT = 7
 EXPECTED_EVENT_COUNT = 250
 
 
@@ -23,6 +23,20 @@ def _sample_results() -> dict[str, list[dict[str, Any]]]:
         "error_spikes": [{"source_ip": "1.2.3.4", "status_code": 404, "error_count": 120}],
         "event_distribution": [{"event_type": "GET", "event_count": 120}],
         "temporal_anomaly": [{"time_bucket": "2024-01-01 00:00:00", "event_count": 30}],
+        "long_tail_analysis": [
+            {
+                "process_name": "powershell.exe",
+                "destination_ip": "1.1.1.1",
+                "connection_count": 1,
+                "total_connections": 50,
+            },
+            {
+                "process_name": "cmd.exe",
+                "destination_ip": "2.2.2.2",
+                "connection_count": 2,
+                "total_connections": 50,
+            },
+        ],
     }
 
 
@@ -53,6 +67,21 @@ def test_default_thresholds_produce_expected_severity() -> None:
     temporal = next(i for i in indicators if i.type == "temporal_anomaly")
     assert temporal.severity == "Low"
     assert "Time bucket" in temporal.description
+
+    # long_tail_analysis uses inverted severity: 1 = High, 2 = Medium (default=2)
+    long_tail_high = next(
+        i for i in indicators if i.type == "long_tail_analysis" and i.evidence["process_name"] == "powershell.exe"
+    )
+    assert long_tail_high.severity == "High"
+    assert "powershell.exe" in long_tail_high.description
+    assert "1.1.1.1" in long_tail_high.description
+    assert "connection(s)" in long_tail_high.description
+
+    long_tail_med = next(
+        i for i in indicators if i.type == "long_tail_analysis" and i.evidence["process_name"] == "cmd.exe"
+    )
+    assert long_tail_med.severity == "Medium"
+    assert "cmd.exe" in long_tail_med.description
 
 
 def test_custom_thresholds_override_defaults() -> None:
