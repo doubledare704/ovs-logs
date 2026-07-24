@@ -101,10 +101,8 @@ def build_aliased_query(sql: str, table_name: str, connection: duckdb.DuckDBPyCo
         _build_expression_for_target(target, lower_columns, column_types, orig_columns) for target in NORMALIZED_COLUMNS
     ]
 
-    return sql.replace(
-        "FROM events",
-        f"FROM (SELECT {', '.join(expressions)} FROM {_quote_identifier(table_name)})",
-    )
+    aliased_from = f"FROM (SELECT {', '.join(expressions)} FROM {_quote_identifier(table_name)})"
+    return sql.replace("FROM events", aliased_from).replace("FROM __EVENTS_TABLE__", aliased_from)
 
 
 class AnalysisEngine:
@@ -123,14 +121,17 @@ class AnalysisEngine:
         connection: duckdb.DuckDBPyConnection,
         table_name: str = "events",
         thresholds: dict[str, dict[str, int]] | None = None,
+        template_names: list[str] | None = None,
     ) -> dict[str, list[dict[str, Any]]]:
-        """Execute all registered templates and return structured results.
+        """Execute templates and return structured results.
 
         Args:
             connection: An active DuckDB connection.
             table_name: DuckDB table to query (defaults to ``events``).
             thresholds: Optional per-template overrides. Example:
                 ``{"top_talkers": {"min_events": 5, "limit": 20}}``.
+            template_names: Subset of template names to run. When
+                ``None`` (default), all registered templates are executed.
 
         Returns:
             A dictionary mapping template name to a list of result rows, where
@@ -139,10 +140,23 @@ class AnalysisEngine:
         thresholds = thresholds or {}
         results: dict[str, list[dict[str, Any]]] = {}
 
-        for name, template in self.templates.items():
+        templates_to_run = {
+            name: tmpl for name, tmpl in self.templates.items() if template_names is None or name in template_names
+        }
+
+        for name, template in templates_to_run.items():
             sql = template.sql if table_name == "events" else build_aliased_query(template.sql, table_name, connection)
+            sql = sql.replace("__EVENTS_TABLE__", "events" if table_name == "events" else _quote_identifier(table_name))
             params = self._resolve_parameters(template, thresholds.get(name))
-            cursor = connection.execute(sql, params)
+            try:
+                cursor = connection.execute(sql, params)
+            except duckdb.BinderException:
+                logger.warning(
+                    "Skipping template '%s' — required columns not found in table '%s'",
+                    name,
+                    table_name,
+                )
+                continue
             columns = [desc[0] for desc in cursor.description]
             results[name] = [dict(zip(columns, row, strict=True)) for row in cursor.fetchall()]
 
@@ -155,6 +169,7 @@ def _is_string_type(dtype: str) -> bool:
 
 
 def _column_dtype(target: str) -> str:
+    """Return the DuckDB SQL type for a normalized column name."""
     if target == "event_timestamp":
         return "TIMESTAMP"
     if target == "status_code":
