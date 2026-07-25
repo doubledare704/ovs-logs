@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import time
-
 import pytest
 from pytest_mock.plugin import MockerFixture
 
@@ -109,6 +107,7 @@ def test_exponential_backoff_timing(mocker: MockerFixture) -> None:
 def test_non_matching_exception_propagates_immediately(mocker: MockerFixture) -> None:
     """Exceptions not in the retry list propagate immediately without retry."""
     call_count = 0
+    mock_sleep = mocker.patch("ovs_logs.core.retry.time.sleep")
 
     @retry(max_retries=2, backoff_seconds=0.01, exceptions=(ValueError,))
     def wrapped() -> str:
@@ -116,13 +115,11 @@ def test_non_matching_exception_propagates_immediately(mocker: MockerFixture) ->
         call_count += 1
         raise TypeError("not retryable")
 
-    start = time.monotonic()
     with pytest.raises(TypeError, match="not retryable"):
         wrapped()
-    elapsed = time.monotonic() - start
 
     assert call_count == 1
-    assert elapsed < 0.005
+    mock_sleep.assert_not_called()
 
 
 def test_no_retry_max_retries_zero(mocker: MockerFixture) -> None:

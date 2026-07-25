@@ -177,11 +177,12 @@ def test_synthesize_report_skips_intel_when_enrich_intel_false(
     )
 
     mock_enrich = mocker.patch.object(service, "_enrich_intel")
-    mocker.patch.object(service, "_synthesize", return_value=(mocker.Mock(), "report-123"))
+    mock_synthesize = mocker.patch.object(service, "_synthesize", return_value=(mocker.Mock(), "report-123"))
     report_id = service.synthesize_report(db, [indicator], enrich_intel=False)
 
     assert report_id == "report-123"
     mock_enrich.assert_not_called()
+    mock_synthesize.assert_called_once_with(db, [indicator], None)
 
 
 def test_synthesize_report_raises_value_error_when_no_api_key(
