@@ -46,14 +46,14 @@ def build_result(connection: duckdb.DuckDBPyConnection, table_name: str) -> Load
     return LoadResult(table_name=table_name, row_count=row_count, schema=schema)
 
 
-def _run_evtx_tool_to_csv(
+def _run_evtx_tool(
     cmd: list[str],
     output_path: Path,
     tool_name: str,
     binary_path: str,
     timeout_seconds: int,
 ) -> None:
-    """Run external EVTX tool and validate that it produced a non-empty CSV."""
+    """Run an external EVTX tool and validate that it produced output."""
     try:
         subprocess.run(
             cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, timeout=timeout_seconds
@@ -80,6 +80,19 @@ def _load_csv_into_table(
     connection.execute(
         f"CREATE OR REPLACE TABLE {quoted_name} AS SELECT * FROM read_csv_auto(?, header=true, all_varchar=true)",
         [str(csv_path)],
+    )
+    return build_result(connection, name)
+
+
+def _load_json_into_table(
+    connection: duckdb.DuckDBPyConnection,
+    name: str,
+    json_path: Path,
+) -> LoadResult:
+    quoted_name = quote_identifier(name)
+    connection.execute(
+        f"CREATE OR REPLACE TABLE {quoted_name} AS SELECT * FROM read_json_auto(?)",
+        [str(json_path)],
     )
     return build_result(connection, name)
 
@@ -423,3 +436,27 @@ def load_evtx_via_evtxecmd(
 
     name = resolve_table_name(log_file, table_name)
     return _run_evtxecmd_workflow(log_file, connection, name, settings)
+
+
+def load_evtx_via_hayabusa_json(
+    log_file: LogFile,
+    connection: duckdb.DuckDBPyConnection,
+    table_name: str | None = None,
+) -> LoadResult:
+    """Load an EVTX file via Hayabusa JSON timeline output."""
+    from ovs_logs.services.evtx_workflow import _run_hayabusa_json_workflow  # noqa: PLC0415
+
+    name = resolve_table_name(log_file, table_name)
+    return _run_hayabusa_json_workflow(log_file, connection, name, settings)
+
+
+def load_evtx_via_evtxecmd_json(
+    log_file: LogFile,
+    connection: duckdb.DuckDBPyConnection,
+    table_name: str | None = None,
+) -> LoadResult:
+    """Load an EVTX file via EvtxECmd JSON output."""
+    from ovs_logs.services.evtx_workflow import _run_evtxecmd_json_workflow  # noqa: PLC0415
+
+    name = resolve_table_name(log_file, table_name)
+    return _run_evtxecmd_json_workflow(log_file, connection, name, settings)
