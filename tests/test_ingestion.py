@@ -3,6 +3,7 @@
 import subprocess
 from pathlib import Path
 from subprocess import CalledProcessError, TimeoutExpired
+from typing import Any, Never
 
 import pytest
 
@@ -476,7 +477,7 @@ def test_load_evtx_via_hayabusa_json(db, tmp_path: Path, monkeypatch: pytest.Mon
 
     output_json = '{"timestamp":"2024-01-01T00:00:00","computer":"HOST","event_id":"4624","channel":"Security"}\n'
 
-    def fake_run(cmd, *args, **kwargs):
+    def fake_run(cmd: list[str], *args: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
         output_arg = None
         for i, part in enumerate(cmd):
             if part == "-o" and i + 1 < len(cmd):
@@ -504,7 +505,7 @@ def test_load_evtx_via_hayabusa_json_binary_not_found(db, tmp_path: Path, monkey
         _custom_settings(hayabusa_path="nonexistent-hayabusa"),
     )
 
-    def fake_run(*args, **kwargs):
+    def fake_run(*args: Any, **kwargs: Any) -> Never:
         raise FileNotFoundError("No such file")
 
     monkeypatch.setattr(subprocess, "run", fake_run)
@@ -521,7 +522,7 @@ def test_load_evtx_via_hayabusa_json_process_failure(db, tmp_path: Path, monkeyp
         _custom_settings(hayabusa_path="fake-hayabusa"),
     )
 
-    def fake_run(*args, **kwargs):
+    def fake_run(*args: Any, **kwargs: Any) -> Never:
         raise CalledProcessError(returncode=1, cmd=["hayabusa"], stderr="parse error")
 
     monkeypatch.setattr(subprocess, "run", fake_run)
@@ -538,7 +539,7 @@ def test_load_evtx_via_hayabusa_json_timeout(db, tmp_path: Path, monkeypatch: py
         _custom_settings(hayabusa_path="fake-hayabusa", timeout_seconds=10),
     )
 
-    def fake_run(*args, **kwargs):
+    def fake_run(*args: Any, **kwargs: Any) -> Never:
         raise TimeoutExpired(cmd=["hayabusa"], timeout=10)
 
     monkeypatch.setattr(subprocess, "run", fake_run)
@@ -555,7 +556,7 @@ def test_load_evtx_via_hayabusa_json_missing_output(db, tmp_path: Path, monkeypa
         _custom_settings(hayabusa_path="fake-hayabusa"),
     )
 
-    def fake_run(*args, **kwargs):
+    def fake_run(*args: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
         return subprocess.CompletedProcess(args=["hayabusa"], returncode=0, stdout="", stderr="")
 
     monkeypatch.setattr(subprocess, "run", fake_run)
@@ -574,7 +575,7 @@ def test_load_evtx_via_evtxecmd_json(db, tmp_path: Path, monkeypatch: pytest.Mon
 
     output_json = '{"timestamp":"2024-01-01T00:00:00","computer":"HOST","event_id":"4624","channel":"Security"}\n'
 
-    def fake_run(cmd, *args, **kwargs):
+    def fake_run(cmd: list[str], *args: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
         jsonf = None
         json_dir = None
         for i, part in enumerate(cmd):
@@ -604,7 +605,7 @@ def test_load_evtx_via_evtxecmd_json_binary_not_found(db, tmp_path: Path, monkey
         _custom_settings(evtxecmd_path="nonexistent-evtxecmd"),
     )
 
-    def fake_run(*args, **kwargs):
+    def fake_run(*args: Any, **kwargs: Any) -> Never:
         raise FileNotFoundError("No such file")
 
     monkeypatch.setattr(subprocess, "run", fake_run)
@@ -621,7 +622,7 @@ def test_load_evtx_via_evtxecmd_json_process_failure(db, tmp_path: Path, monkeyp
         _custom_settings(evtxecmd_path="fake-evtxecmd"),
     )
 
-    def fake_run(*args, **kwargs):
+    def fake_run(*args: Any, **kwargs: Any) -> Never:
         raise CalledProcessError(returncode=1, cmd=["EvtxECmd"], stderr="error")
 
     monkeypatch.setattr(subprocess, "run", fake_run)
@@ -638,7 +639,7 @@ def test_load_evtx_via_evtxecmd_json_timeout(db, tmp_path: Path, monkeypatch: py
         _custom_settings(evtxecmd_path="fake-evtxecmd", timeout_seconds=10),
     )
 
-    def fake_run(*args, **kwargs):
+    def fake_run(*args: Any, **kwargs: Any) -> Never:
         raise TimeoutExpired(cmd=["EvtxECmd"], timeout=10)
 
     monkeypatch.setattr(subprocess, "run", fake_run)
@@ -655,7 +656,7 @@ def test_load_evtx_via_evtxecmd_json_missing_output(db, tmp_path: Path, monkeypa
         _custom_settings(evtxecmd_path="fake-evtxecmd"),
     )
 
-    def fake_run(*args, **kwargs):
+    def fake_run(*args: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
         return subprocess.CompletedProcess(args=["EvtxECmd"], returncode=0, stdout="", stderr="")
 
     monkeypatch.setattr(subprocess, "run", fake_run)

@@ -46,14 +46,14 @@ def build_result(connection: duckdb.DuckDBPyConnection, table_name: str) -> Load
     return LoadResult(table_name=table_name, row_count=row_count, schema=schema)
 
 
-def _run_evtx_tool_to_csv(
+def _run_evtx_tool(
     cmd: list[str],
     output_path: Path,
     tool_name: str,
     binary_path: str,
     timeout_seconds: int,
 ) -> None:
-    """Run external EVTX tool and validate that it produced a non-empty CSV."""
+    """Run an external EVTX tool and validate that it produced output."""
     try:
         subprocess.run(
             cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, timeout=timeout_seconds

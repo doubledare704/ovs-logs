@@ -12,7 +12,7 @@ from ovs_logs.core.ingestion.adapters import (
     LoadResult,
     _load_csv_into_table,
     _load_json_into_table,
-    _run_evtx_tool_to_csv,
+    _run_evtx_tool,
 )
 from ovs_logs.core.validation import LogFile
 
@@ -34,7 +34,7 @@ def _run_hayabusa_workflow(
             str(tmp_path),
             "-w",
         ]
-        _run_evtx_tool_to_csv(
+        _run_evtx_tool(
             cmd, tmp_path, "hayabusa", settings.evtx_tools.hayabusa_path, settings.evtx_tools.timeout_seconds
         )
         return _load_csv_into_table(connection, table_name, tmp_path)
@@ -58,7 +58,7 @@ def _run_evtxecmd_workflow(
             output_filename,
         ]
         output_path = Path(tmp_dir) / output_filename
-        _run_evtx_tool_to_csv(
+        _run_evtx_tool(
             cmd, output_path, "EvtxECmd", settings.evtx_tools.evtxecmd_path, settings.evtx_tools.timeout_seconds
         )
         return _load_csv_into_table(connection, table_name, output_path)
@@ -81,7 +81,7 @@ def _run_hayabusa_json_workflow(
             str(tmp_path),
             "-w",
         ]
-        _run_evtx_tool_to_csv(
+        _run_evtx_tool(
             cmd, tmp_path, "hayabusa", settings.evtx_tools.hayabusa_path, settings.evtx_tools.timeout_seconds
         )
         return _load_json_into_table(connection, table_name, tmp_path)
@@ -105,7 +105,7 @@ def _run_evtxecmd_json_workflow(
             output_filename,
         ]
         output_path = Path(tmp_dir) / output_filename
-        _run_evtx_tool_to_csv(
+        _run_evtx_tool(
             cmd, output_path, "EvtxECmd", settings.evtx_tools.evtxecmd_path, settings.evtx_tools.timeout_seconds
         )
         return _load_json_into_table(connection, table_name, output_path)
