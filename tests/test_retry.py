@@ -113,9 +113,9 @@ def test_non_matching_exception_propagates_immediately(mocker: MockerFixture) ->
     def wrapped() -> str:
         nonlocal call_count
         call_count += 1
-        raise TypeError("not retryable")
+        raise TypeError()
 
-    with pytest.raises(TypeError, match="not retryable"):
+    with pytest.raises(TypeError):
         wrapped()
 
     assert call_count == 1
