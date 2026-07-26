@@ -11,16 +11,17 @@ This document defines the technical architecture of **OVS-Log** for the MVP. It 
 
 ## 2. System Components
 
-| Component           | Role                                                                       | Backlog       |
-|---------------------|----------------------------------------------------------------------------|---------------|
-| Ingestion Engine    | Reads CSV, JSON, TXT, LOG, and EVTX into DuckDB with schema detection      | OVD-5         |
-| DuckDB Local Store  | Columnar analytical state and result cache                                 | OVD-5 / OVD-6 |
-| Analyzer            | Runs SQL aggregation templates, orchestrates enrichment and LLM synthesis  | OVD-6         |
-| Threat Intel Client | Queries AbuseIPDB for IP reputation and caches results locally             | OVD-6         |
-| LLM Provider        | Generates incident timeline, MITRE ATT&CK mapping, and mitigation guidance | OVD-6         |
-| Typer CLI           | `ingest`, `process`, `analyze`, `export-rule`, `version`, and `ui` commands| OVD-7         |
-| Streamlit UI        | Single-page upload, run, and 3-tab results view                            | OVD-8         |
-| Packaging & Tests   | Entrypoints, automated tests, and BOTS v1 validation                       | OVD-9         |
+| Component             | Role                                                                       | Backlog       |
+|-----------------------|----------------------------------------------------------------------------|---------------|
+| Ingestion Engine      | Reads CSV, JSON, TXT, LOG, and EVTX into DuckDB with schema detection      | OVD-5         |
+| DuckDB Local Store    | Columnar analytical state and result cache                                 | OVD-5 / OVD-6 |
+| Analyzer (Core)       | Runs SQL aggregation templates, orchestrates enrichment and LLM synthesis  | OVD-6         |
+| Presentation Formatter| Converts analysis results to Markdown / structured dicts (outside core)    | OVD-6         |
+| Threat Intel Client   | Queries AbuseIPDB for IP reputation and caches results locally             | OVD-6         |
+| LLM Provider          | Generates incident timeline, MITRE ATT&CK mapping, and mitigation guidance | OVD-6         |
+| Typer CLI             | `ingest`, `process`, `analyze`, `export-rule`, `version`, and `ui` commands| OVD-7         |
+| Streamlit UI          | Single-page upload, run, and 3-tab results view                            | OVD-8         |
+| Packaging & Tests     | Entrypoints, automated tests, and BOTS v1 validation                       | OVD-9         |
 
 ## 3. Component Diagram
 
@@ -110,3 +111,4 @@ sequenceDiagram
 - The LLM receives only structured aggregations (top IPs, endpoints, error rates, reputation context), not full raw logs, to minimize token usage and preserve privacy.
 - The CLI and UI share the same `Analyzer` workflow, so a result validated in the dashboard can be reproduced identically from the command line.
 - Threat-intel enrichment is optional; the engine degrades gracefully when the AbuseIPDB API key is missing or the service is unavailable.
+- Presentation formatting (Markdown rendering, LLM bullet lists) lives in the top-level `ovs_logs.presentation` module, **outside** the core layer. The `AnalysisEngine` exposes raw results as plain dicts only—callers (CLI, UI, tests) import `format_context` from `ovs_logs.presentation` or `ovs_logs` when they need rendered output. This keeps core business logic free of presentation concerns.

@@ -5,10 +5,11 @@ from pathlib import Path
 import duckdb
 import pytest
 
-from ovs_logs.core.analysis.engine import AnalysisEngine, FormattedContext
+from ovs_logs.core.analysis.engine import AnalysisEngine
 from ovs_logs.core.ingestion.adapters import load_csv
 from ovs_logs.core.normalization import NormalizationEngine
 from ovs_logs.core.validation import validate_log_file
+from ovs_logs.presentation import FormattedContext, FormatterConfig, format_context
 
 TOP_TALKERS_COUNT = 2
 TOP_TALKER_1_COUNT = 3
@@ -333,6 +334,32 @@ def test_source_ip_sequence_tied_counts_ordered_deterministically(
     assert ips == sorted(ips)
 
 
+def test_source_ip_sequence_equal_timestamps_duplicate_messages_ordered_stably(
+    db: duckdb.DuckDBPyConnection,
+) -> None:
+    """STRING_AGG must remain deterministic when timestamps and messages tie."""
+    db.execute(
+        "CREATE TABLE events AS "
+        "SELECT '2024-01-01T00:00:00'::TIMESTAMP AS event_timestamp, "
+        "'10.0.0.1'::VARCHAR AS source_ip, 'A'::VARCHAR AS event_type, "
+        "200::BIGINT AS status_code, 'line'::VARCHAR AS raw_message, "
+        "NULL::VARCHAR AS process_name, NULL::VARCHAR AS destination_ip "
+        "UNION ALL SELECT '2024-01-01T00:00:00'::TIMESTAMP, '10.0.0.1', "
+        "'B', 200, 'line', NULL, NULL "
+        "UNION ALL SELECT '2024-01-01T00:00:00'::TIMESTAMP, '10.0.0.1', "
+        "'C', 200, 'line', NULL, NULL "
+    )
+    results = AnalysisEngine().run_queries(
+        db,
+        thresholds={"source_ip_sequence": {"max_events_per_ip": 50, "min_events": 1, "limit": 10}},
+        template_names=["source_ip_sequence"],
+    )
+    seq = results["source_ip_sequence"]
+    assert len(seq) == 1
+    assert seq[0]["source_ip"] == "10.0.0.1"
+    assert seq[0]["event_sequence"] == "A → B → C"
+
+
 def test_source_ip_sequence_per_ip_cap(
     db: duckdb.DuckDBPyConnection,
 ) -> None:
@@ -383,9 +410,8 @@ def test_source_ip_sequence_all_rows_exceed_cap(
 
 
 def test_format_context_returns_dataclass() -> None:
-    engine = AnalysisEngine(templates={})
     results = {"test": [{"col1": "val1"}]}
-    ctx = engine.format_context(results)
+    ctx = format_context(results, FormatterConfig())
     assert isinstance(ctx, FormattedContext)
     assert isinstance(ctx.markdown, str)
     assert ctx.markdown != ""
@@ -393,9 +419,8 @@ def test_format_context_returns_dataclass() -> None:
 
 
 def test_format_context_structured_shape() -> None:
-    engine = AnalysisEngine(templates={})
     results = {"test": [{"col1": "val1"}]}
-    ctx = engine.format_context(results)
+    ctx = format_context(results, FormatterConfig())
     s = ctx.structured
     assert s["title"] == "Analysis Results"
     assert s["summary"]["templates_executed"] == 1
@@ -405,9 +430,8 @@ def test_format_context_structured_shape() -> None:
 
 
 def test_format_context_markdown_structure() -> None:
-    engine = AnalysisEngine(templates={})
     results = {"Anomalies": [{"source_ip": "1.2.3.4", "event_count": 5}]}
-    md = engine.format_context(results).markdown
+    md = format_context(results, FormatterConfig()).markdown
     assert md.startswith("# Analysis Results")
     assert "## Summary" in md
     assert "## Anomalies" in md
@@ -419,44 +443,34 @@ def test_format_context_markdown_structure() -> None:
 
 
 def test_format_context_markdown_empty_results() -> None:
-    engine = AnalysisEngine(templates={})
-    md = engine.format_context({}).markdown
+    md = format_context({}, FormatterConfig()).markdown
     assert md == "# Analysis Results\n\nNo findings."
 
-    s = engine.format_context({}).structured
+    s = format_context({}, FormatterConfig()).structured
     assert s["tables"] == {}
     assert s["llm_bullets"] == []
 
 
 def test_format_context_truncates_long_values() -> None:
-    engine = AnalysisEngine(templates={})
     long_val = "a" * 100
     results = {"test": [{"col1": long_val, "col2": None}]}
-    md = engine.format_context(results, max_cell_width=10).markdown
+    md = format_context(results, FormatterConfig(max_cell_width=10)).markdown
     assert "aaa" in md
     assert "..." in md
     assert "\u2014" in md
 
 
 def test_format_context_llm_bullets() -> None:
-    engine = AnalysisEngine(templates={})
     results = {"t1": [{"col1": "v1"}], "t2": [{"col1": "v2"}, {"col1": "v3"}]}
-    ctx = engine.format_context(results)
+    ctx = format_context(results, FormatterConfig())
     assert ctx.structured["llm_bullets"] == ["[t1] col1=v1", "[t2] col1=v2", "[t2] col1=v3"]
 
 
 def test_format_context_empty_template_list() -> None:
     """Empty template results (template -> []) should produce 'No findings'."""
-    engine = AnalysisEngine(templates={})
-    md = engine.format_context({"template": []}).markdown
+    md = format_context({"template": []}, FormatterConfig()).markdown
     assert md == "# Analysis Results\n\nNo findings."
 
-    s = engine.format_context({"template": []}).structured
+    s = format_context({"template": []}, FormatterConfig()).structured
     assert s["tables"] == {"template": []}
     assert s["llm_bullets"] == []
-
-
-def test_format_context_markdown_alias() -> None:
-    engine = AnalysisEngine(templates={})
-    results = {"test": [{"col1": "val1"}]}
-    assert engine.format_context_markdown(results) == engine.format_context(results).markdown

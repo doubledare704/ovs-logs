@@ -1,8 +1,20 @@
-"""Core-layer formatter for rendering analysis results as Markdown and structured context.
+"""Presentation-layer formatter for rendering analysis results as Markdown and structured context.
 
-This module provides presentation-layer formatting utilities that operate on
-core-layer data structures. It is independent of the CLI and UI layers and
-can be used by any presentation consumer.
+This module lives **outside** the core layer (``src/ovs_logs/presentation.py``) to keep
+core business logic free of presentation concerns. The ``AnalysisEngine``
+exposes raw results as plain dicts only; callers that need rendered output
+import ``format_context`` and its helpers from here.
+
+Import paths:
+    from ovs_logs.presentation import format_context, FormatterConfig, FormattedContext
+    # or, equivalently, via the package-level convenience re-export:
+    from ovs_logs import format_context, FormatterConfig, FormattedContext
+
+Typical usage:
+    config = FormatterConfig(title="My Analysis", max_bullets=50)
+    ctx = format_context(raw_results, config)
+    print(ctx.markdown)       # Human-readable Markdown
+    print(ctx.structured)     # Dict with summary, tables, llm_bullets
 """
 
 from __future__ import annotations
@@ -77,14 +89,19 @@ def format_context(
         "tables": dict(results),
     }
 
+    max_bullets = max(config.max_bullets, 0)
     llm_bullets: list[str] = []
     for name, rows in results.items():
+        if len(llm_bullets) >= max_bullets:
+            break
         for row in rows:
             bullet_text = _first_readable_value(row)
             escaped_text = _escape_cell(bullet_text, config.max_cell_width)
             llm_bullets.append(f"[{name}] {escaped_text}")
+            if len(llm_bullets) >= max_bullets:
+                break
 
-    structured["llm_bullets"] = llm_bullets[: config.max_bullets]
+    structured["llm_bullets"] = llm_bullets[:max_bullets]
 
     if not results or total_findings == 0:
         markdown = f"# {config.title}\n\nNo findings."

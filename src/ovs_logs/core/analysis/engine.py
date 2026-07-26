@@ -3,14 +3,12 @@
 from __future__ import annotations
 
 import logging
-import warnings
 from typing import Any
 
 import duckdb
 
 from ..constants import NORMALIZED_COLUMNS
 from ..normalization import FIELD_ALIASES
-from ..presentation import FormattedContext, FormatterConfig, format_context
 from ..sql_utils import quote_identifier as _quote_identifier, timestamp_cast_expression
 from .templates import TEMPLATES, SQLTemplate
 
@@ -163,56 +161,6 @@ class AnalysisEngine:
             results[name] = [dict(zip(columns, row, strict=True)) for row in cursor.fetchall()]
 
         return results
-
-    def format_context(
-        self,
-        results: dict[str, list[dict[str, Any]]],
-        *,
-        title: str = "Analysis Results",
-        max_cell_width: int = 50,
-        max_rows: int = 100,
-        max_bullets: int = 100,
-    ) -> FormattedContext:
-        """Convert analysis results into structured markdown context.
-
-        Args:
-            results: Dict mapping template name to list of result row dicts
-                (i.e. the output of ``run_queries``).
-            title: Markdown H1 heading.
-            max_cell_width: Max characters per table cell before truncation.
-            max_rows: Maximum rows per table in markdown output.
-            max_bullets: Maximum LLM bullet points in structured output.
-
-        Returns:
-            A ``FormattedContext`` with ``markdown`` (str) and ``structured``
-            (dict) fields.
-        """
-        config = FormatterConfig(
-            title=title,
-            max_cell_width=max_cell_width,
-            max_rows=max_rows,
-            max_bullets=max_bullets,
-        )
-        return format_context(results, config)
-
-    def format_context_markdown(
-        self,
-        results: dict[str, list[dict[str, Any]]],
-        *,
-        title: str = "Analysis Results",
-        max_cell_width: int = 50,
-        max_rows: int = 100,
-        max_bullets: int = 100,
-    ) -> str:
-        """Deprecated: use ``format_context(...).markdown`` instead."""
-        warnings.warn(
-            "format_context_markdown is deprecated. Migrate to format_context(...).markdown.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return self.format_context(
-            results, title=title, max_cell_width=max_cell_width, max_rows=max_rows, max_bullets=max_bullets
-        ).markdown
 
 
 def _is_string_type(dtype: str) -> bool:

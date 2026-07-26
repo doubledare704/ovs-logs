@@ -84,15 +84,12 @@ class IndicatorProcessor:
         descriptions = {
             "top_talkers": lambda: f"IP {evidence['source_ip']} generated {evidence['event_count']} events",
             "error_spikes": lambda: (
-                f"IP {evidence['source_ip']} returned HTTP {evidence['status_code']} "
-                f"{evidence['error_count']} times"
+                f"IP {evidence['source_ip']} returned HTTP {evidence['status_code']} {evidence['error_count']} times"
             ),
             "event_distribution": lambda: (
                 f"Event type '{evidence['event_type']}' occurred {evidence['event_count']} times"
             ),
-            "temporal_anomaly": lambda: (
-                f"Time bucket {evidence['time_bucket']} had {evidence['event_count']} events"
-            ),
+            "temporal_anomaly": lambda: f"Time bucket {evidence['time_bucket']} had {evidence['event_count']} events",
             "long_tail_analysis": lambda: (
                 f"Process '{evidence['process_name']}' made {evidence['connection_count']} "
                 f"connection(s) to {evidence['destination_ip']} "
