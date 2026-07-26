@@ -105,8 +105,8 @@ TEMPLATES: dict[str, SQLTemplate] = {
         name="source_ip_sequence",
         sql=(
             "WITH ranked AS ("
-            "SELECT source_ip, event_type, event_timestamp, "
-            "ROW_NUMBER() OVER (PARTITION BY source_ip ORDER BY event_timestamp) AS rn "
+            "SELECT source_ip, event_type, event_timestamp, raw_message, "
+            "ROW_NUMBER() OVER (PARTITION BY source_ip ORDER BY event_timestamp, raw_message) AS rn "
             "FROM __EVENTS_TABLE__ "
             "WHERE source_ip IS NOT NULL AND event_type IS NOT NULL "
             ") "

@@ -44,10 +44,15 @@ def _escape_cell(value: str, max_width: int) -> str:
 
 
 def _first_readable_value(row: dict[str, Any]) -> str:
-    """Return the first non-null string value from a row, falling back to str(row)."""
-    for v in row.values():
-        if v is not None and isinstance(v, str):
-            return v
+    """Render all relevant non-null field values from a row."""
+    parts: list[str] = []
+    for key, value in row.items():
+        if value is None:
+            continue
+        if isinstance(value, str | int | float):
+            parts.append(f"{key}={value}")
+    if parts:
+        return ", ".join(parts)
     return str(row)
 
 
@@ -76,7 +81,8 @@ def format_context(
     for name, rows in results.items():
         for row in rows:
             bullet_text = _first_readable_value(row)
-            llm_bullets.append(f"[{name}] {bullet_text}")
+            escaped_text = _escape_cell(bullet_text, config.max_cell_width)
+            llm_bullets.append(f"[{name}] {escaped_text}")
 
     structured["llm_bullets"] = llm_bullets[: config.max_bullets]
 
@@ -113,8 +119,7 @@ def format_context(
             parts.append("")
 
         parts.append("## Context for LLM")
-        for bullet in llm_bullets[: config.max_bullets]:
-            parts.append(f"- {bullet}")
+        parts.extend(f"- {bullet}" for bullet in llm_bullets[: config.max_bullets])
 
         markdown = "\n".join(parts)
 

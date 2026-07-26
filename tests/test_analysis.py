@@ -401,7 +401,7 @@ def test_format_context_structured_shape() -> None:
     assert s["summary"]["templates_executed"] == 1
     assert s["summary"]["total_findings"] == 1
     assert s["tables"]["test"] == [{"col1": "val1"}]
-    assert s["llm_bullets"] == ["[test] val1"]
+    assert s["llm_bullets"] == ["[test] col1=val1"]
 
 
 def test_format_context_markdown_structure() -> None:
@@ -415,7 +415,7 @@ def test_format_context_markdown_structure() -> None:
     assert "|---|---|" in md
     assert "| 1.2.3.4 | 5 |" in md
     assert "## Context for LLM" in md
-    assert "- [Anomalies] 1.2.3.4" in md
+    assert "- [Anomalies] source_ip=1.2.3.4, event_count=5" in md
 
 
 def test_format_context_markdown_empty_results() -> None:
@@ -442,7 +442,7 @@ def test_format_context_llm_bullets() -> None:
     engine = AnalysisEngine(templates={})
     results = {"t1": [{"col1": "v1"}], "t2": [{"col1": "v2"}, {"col1": "v3"}]}
     ctx = engine.format_context(results)
-    assert ctx.structured["llm_bullets"] == ["[t1] v1", "[t2] v2", "[t2] v3"]
+    assert ctx.structured["llm_bullets"] == ["[t1] col1=v1", "[t2] col1=v2", "[t2] col1=v3"]
 
 
 def test_format_context_empty_template_list() -> None:

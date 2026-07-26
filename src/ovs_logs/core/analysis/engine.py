@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import warnings
 from typing import Any
 
 import duckdb
@@ -204,6 +205,11 @@ class AnalysisEngine:
         max_bullets: int = 100,
     ) -> str:
         """Deprecated: use ``format_context(...).markdown`` instead."""
+        warnings.warn(
+            "format_context_markdown is deprecated. Migrate to format_context(...).markdown.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         return self.format_context(
             results, title=title, max_cell_width=max_cell_width, max_rows=max_rows, max_bullets=max_bullets
         ).markdown
