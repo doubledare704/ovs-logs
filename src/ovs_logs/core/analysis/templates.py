@@ -101,4 +101,20 @@ TEMPLATES: dict[str, SQLTemplate] = {
         parameters=["max_rare_count", "limit"],
         default_thresholds={"max_rare_count": 2, "limit": 50},
     ),
+    "source_ip_sequence": SQLTemplate(
+        name="source_ip_sequence",
+        sql=(
+            "SELECT source_ip, "
+            "STRING_AGG(event_type, ' → ' ORDER BY event_timestamp) AS event_sequence, "
+            "COUNT(*) AS event_count "
+            "FROM __EVENTS_TABLE__ "
+            "WHERE source_ip IS NOT NULL "
+            "GROUP BY source_ip "
+            "HAVING COUNT(*) >= ? "
+            "ORDER BY event_count DESC "
+            "LIMIT ?"
+        ),
+        parameters=["min_events", "limit"],
+        default_thresholds={"min_events": 1, "limit": 20},
+    ),
 }

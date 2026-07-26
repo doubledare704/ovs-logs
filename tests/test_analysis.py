@@ -5,7 +5,7 @@ from pathlib import Path
 import duckdb
 import pytest
 
-from ovs_logs.core.analysis.engine import AnalysisEngine
+from ovs_logs.core.analysis.engine import AnalysisEngine, FormattedContext
 from ovs_logs.core.ingestion.adapters import load_csv
 from ovs_logs.core.normalization import NormalizationEngine
 from ovs_logs.core.validation import validate_log_file
@@ -251,3 +251,97 @@ def test_aliased_query_handles_mixed_case_columns(db) -> None:
     assert any(row["source_ip"] == "1.2.3.4" for row in errors)
     assert any(row["status_code"] == ERROR_STATUS_404 for row in errors)
     assert any(row["status_code"] == ERROR_STATUS_500 for row in errors)
+
+
+def test_source_ip_sequence(analysis_engine, db) -> None:
+    results = analysis_engine.run_queries(
+        db,
+        template_names=["source_ip_sequence"],
+    )
+    seq = results["source_ip_sequence"]
+    assert len(seq) == 2
+    assert seq[0]["source_ip"] == "1.2.3.4"
+    assert seq[0]["event_sequence"] == "GET → GET → POST"
+    assert seq[0]["event_count"] == 3
+    assert seq[1]["source_ip"] == "5.6.7.8"
+    assert seq[1]["event_sequence"] == "GET → GET"
+    assert seq[1]["event_count"] == 2
+
+
+def test_source_ip_sequence_respects_limit(analysis_engine, db) -> None:
+    results = analysis_engine.run_queries(
+        db,
+        thresholds={"source_ip_sequence": {"min_events": 1, "limit": 1}},
+        template_names=["source_ip_sequence"],
+    )
+    seq = results["source_ip_sequence"]
+    assert len(seq) == 1
+
+
+def test_format_context_returns_dataclass() -> None:
+    engine = AnalysisEngine(templates={})
+    results = {"test": [{"col1": "val1"}]}
+    ctx = engine.format_context(results)
+    assert isinstance(ctx, FormattedContext)
+    assert isinstance(ctx.markdown, str)
+    assert ctx.markdown != ""
+    assert isinstance(ctx.structured, dict)
+
+
+def test_format_context_structured_shape() -> None:
+    engine = AnalysisEngine(templates={})
+    results = {"test": [{"col1": "val1"}]}
+    ctx = engine.format_context(results)
+    s = ctx.structured
+    assert s["title"] == "Analysis Results"
+    assert s["summary"]["templates_executed"] == 1
+    assert s["summary"]["total_findings"] == 1
+    assert s["tables"]["test"] == [{"col1": "val1"}]
+    assert s["llm_bullets"] == ["[test] val1"]
+
+
+def test_format_context_markdown_structure() -> None:
+    engine = AnalysisEngine(templates={})
+    results = {"Anomalies": [{"source_ip": "1.2.3.4", "event_count": 5}]}
+    md = engine.format_context(results).markdown
+    assert md.startswith("# Analysis Results")
+    assert "## Summary" in md
+    assert "## Anomalies" in md
+    assert "| source_ip | event_count |" in md
+    assert "|---|---|" in md
+    assert "| 1.2.3.4 | 5 |" in md
+    assert "## Context for LLM" in md
+    assert "- [Anomalies] 1.2.3.4" in md
+
+
+def test_format_context_markdown_empty_results() -> None:
+    engine = AnalysisEngine(templates={})
+    md = engine.format_context({}).markdown
+    assert md == "# Analysis Results\n\nNo findings."
+
+    s = engine.format_context({}).structured
+    assert s["tables"] == {}
+    assert s["llm_bullets"] == []
+
+
+def test_format_context_truncates_long_values() -> None:
+    engine = AnalysisEngine(templates={})
+    long_val = "a" * 100
+    results = {"test": [{"col1": long_val, "col2": None}]}
+    md = engine.format_context(results, max_cell_width=10).markdown
+    assert "aaa" in md
+    assert "..." in md
+    assert "\u2014" in md
+
+
+def test_format_context_llm_bullets() -> None:
+    engine = AnalysisEngine(templates={})
+    results = {"t1": [{"col1": "v1"}], "t2": [{"col1": "v2"}, {"col1": "v3"}]}
+    ctx = engine.format_context(results)
+    assert ctx.structured["llm_bullets"] == ["[t1] v1", "[t2] v2", "[t2] v3"]
+
+
+def test_format_context_markdown_alias() -> None:
+    engine = AnalysisEngine(templates={})
+    results = {"test": [{"col1": "val1"}]}
+    assert engine.format_context_markdown(results) == engine.format_context(results).markdown

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from typing import Any
 
 import duckdb
@@ -105,6 +106,20 @@ def build_aliased_query(sql: str, table_name: str, connection: duckdb.DuckDBPyCo
     return sql.replace("FROM events", aliased_from).replace("FROM __EVENTS_TABLE__", aliased_from)
 
 
+def _first_readable_value(row: dict[str, Any]) -> str:
+    """Return the first non-null string value from a row, falling back to str(row)."""
+    for v in row.values():
+        if v is not None and isinstance(v, str):
+            return v
+    return str(row)
+
+
+@dataclass(frozen=True)
+class FormattedContext:
+    markdown: str
+    structured: dict[str, Any]
+
+
 class AnalysisEngine:
     """Runs parameterized SQL templates against the unified `events` table."""
 
@@ -161,6 +176,90 @@ class AnalysisEngine:
             results[name] = [dict(zip(columns, row, strict=True)) for row in cursor.fetchall()]
 
         return results
+
+    def format_context(
+        self,
+        results: dict[str, list[dict[str, Any]]],
+        *,
+        title: str = "Analysis Results",
+        max_cell_width: int = 50,
+    ) -> FormattedContext:
+        """Convert analysis results into structured markdown context.
+
+        Args:
+            results: Dict mapping template name to list of result row dicts
+                (i.e. the output of ``run_queries``).
+            title: Markdown H1 heading.
+            max_cell_width: Max characters per table cell before truncation.
+
+        Returns:
+            A ``FormattedContext`` with ``markdown`` (str) and ``structured``
+            (dict) fields.
+        """
+        total_findings = sum(len(rows) for rows in results.values())
+
+        structured: dict[str, Any] = {
+            "title": title,
+            "summary": {"templates_executed": len(results), "total_findings": total_findings},
+            "tables": dict(results),
+        }
+
+        llm_bullets: list[str] = []
+        for name, rows in results.items():
+            for row in rows:
+                bullet_text = _first_readable_value(row)
+                llm_bullets.append(f"[{name}] {bullet_text}")
+        structured["llm_bullets"] = llm_bullets
+
+        if not results:
+            markdown = f"# {title}\n\nNo findings."
+        else:
+            parts: list[str] = []
+            parts.append(f"# {title}")
+            parts.append("")
+            parts.append("## Summary")
+            parts.append(f"Templates executed: {len(results)}")
+            parts.append(f"Total findings: {total_findings}")
+            parts.append("")
+
+            for name, rows in results.items():
+                if not rows:
+                    continue
+                parts.append(f"## {name}")
+                columns = list(rows[0].keys())
+                parts.append("| " + " | ".join(columns) + " |")
+                parts.append("|" + "|".join("---" for _ in columns) + "|")
+                for row in rows:
+                    cells: list[str] = []
+                    for col in columns:
+                        val = row.get(col)
+                        if val is None:
+                            cells.append("\u2014")
+                        else:
+                            s = str(val)
+                            if len(s) > max_cell_width:
+                                s = s[:max_cell_width] + "..."
+                            cells.append(s)
+                    parts.append("| " + " | ".join(cells) + " |")
+                parts.append("")
+
+            parts.append("## Context for LLM")
+            for bullet in llm_bullets:
+                parts.append(f"- {bullet}")
+
+            markdown = "\n".join(parts)
+
+        return FormattedContext(markdown=markdown, structured=structured)
+
+    def format_context_markdown(
+        self,
+        results: dict[str, list[dict[str, Any]]],
+        *,
+        title: str = "Analysis Results",
+        max_cell_width: int = 50,
+    ) -> str:
+        """Deprecated: use ``format_context(...).markdown`` instead."""
+        return self.format_context(results, title=title, max_cell_width=max_cell_width).markdown
 
 
 def _is_string_type(dtype: str) -> bool:
