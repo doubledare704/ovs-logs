@@ -104,17 +104,23 @@ TEMPLATES: dict[str, SQLTemplate] = {
     "source_ip_sequence": SQLTemplate(
         name="source_ip_sequence",
         sql=(
-            "SELECT source_ip, "
-            "STRING_AGG(event_type, ' → ' ORDER BY event_timestamp) AS event_sequence, "
-            "COUNT(*) AS event_count "
+            "WITH ranked AS ("
+            "SELECT source_ip, event_type, event_timestamp, "
+            "ROW_NUMBER() OVER (PARTITION BY source_ip ORDER BY event_timestamp) AS rn "
             "FROM __EVENTS_TABLE__ "
-            "WHERE source_ip IS NOT NULL "
+            "WHERE source_ip IS NOT NULL AND event_type IS NOT NULL "
+            ") "
+            "SELECT source_ip, "
+            "STRING_AGG(event_type, ' \u2192 ' ORDER BY event_timestamp) AS event_sequence, "
+            "COUNT(*) AS event_count "
+            "FROM ranked "
+            "WHERE rn <= ? "
             "GROUP BY source_ip "
             "HAVING COUNT(*) >= ? "
-            "ORDER BY event_count DESC "
+            "ORDER BY event_count DESC, source_ip ASC "
             "LIMIT ?"
         ),
-        parameters=["min_events", "limit"],
-        default_thresholds={"min_events": 1, "limit": 20},
+        parameters=["max_events_per_ip", "min_events", "limit"],
+        default_thresholds={"max_events_per_ip": 50, "min_events": 1, "limit": 20},
     ),
 }

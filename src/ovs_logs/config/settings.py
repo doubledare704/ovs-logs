@@ -58,6 +58,7 @@ class AnalysisThresholds:
     event_distribution: int = 100
     temporal_anomaly: int = 100
     long_tail_analysis: int = 2
+    source_ip_sequence: int = 50
 
 
 @dataclass(frozen=True)
@@ -119,6 +120,7 @@ def _load_thresholds() -> AnalysisThresholds:
         ),
         temporal_anomaly=_int_env("OVS_LOGS_TEMPORAL_BUCKET_THRESHOLD", AnalysisThresholds.temporal_anomaly),
         long_tail_analysis=_int_env("OVS_LOGS_LONG_TAIL_THRESHOLD", AnalysisThresholds.long_tail_analysis),
+        source_ip_sequence=_int_env("OVS_LOGS_SOURCE_IP_SEQUENCE_THRESHOLD", AnalysisThresholds.source_ip_sequence),
     )
 
 
