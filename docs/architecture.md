@@ -41,6 +41,9 @@ graph LR
         C3[Analyzer Engine]
         C4[Threat Intel Client]
     end
+    subgraph Presentation
+        D1[Presentation Formatter]
+    end
     subgraph External
         E1[AbuseIPDB API]
         E2[LLM Provider API]
@@ -54,9 +57,11 @@ graph LR
     C2 -->|SQL aggregation| C3
     C3 -->|reputation lookup| C4
     C4 -->|HTTP / cache| E1
-    C3 -->|synthesis prompt| E2
-    C3 -->|JSON report / indicators| B1
-    C3 -->|render data| B2
+    C3 -->|raw results| D1
+    D1 -->|Markdown / structured context| B1
+    D1 -->|Markdown / structured context| B2
+    C3 -->|synthesis context| E2
+    E2 -->|incident report| C3
 ```
 
 ## 4. Sequence Diagram: The "Analyze" Flow
@@ -68,6 +73,7 @@ sequenceDiagram
     participant I as Ingestion Engine
     participant D as DuckDB
     participant A as Analyzer
+    participant P as Presentation Formatter
     participant T as Threat Intel Client
     participant L as LLM Provider
 
@@ -76,16 +82,17 @@ sequenceDiagram
     I->>D: CREATE / INSERT via read_*_auto
     D-->>I: schema + row count
     I-->>C: success / error
-    C->>A: analyze(thresholds, format)
+    C->>A: analyze(thresholds)
     A->>D: execute SQL aggregation templates
     D-->>A: suspicious indicators
     A->>T: enrich(indicators)
     T->>D: cache miss → store result
     T-->>A: reputation scores + context
-    A->>A: build synthesis context
     A->>L: prompt with structured context
     L-->>A: incident report (timeline, MITRE, mitigation)
-    A-->>C: report + rule artifact
+    A-->>C: raw results + report
+    C->>P: format_context(raw_results)
+    P-->>C: Markdown / structured context
     C-->>U: 3-tab UI or exported file
 ```
 

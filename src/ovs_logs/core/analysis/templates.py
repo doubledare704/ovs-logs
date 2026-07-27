@@ -123,6 +123,6 @@ TEMPLATES: dict[str, SQLTemplate] = {
             "LIMIT ?"
         ),
         parameters=["max_events_per_ip", "min_events", "limit"],
-        default_thresholds={"max_events_per_ip": 50, "min_events": 1, "limit": 20},
+        default_thresholds={"max_events_per_ip": 100, "min_events": 1, "limit": 20},
     ),
 }

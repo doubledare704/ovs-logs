@@ -410,6 +410,7 @@ def test_source_ip_sequence_all_rows_exceed_cap(
 
 
 def test_format_context_returns_dataclass() -> None:
+    """format_context returns a FormattedContext with non-empty markdown and structured dict."""
     results = {"test": [{"col1": "val1"}]}
     ctx = format_context(results, FormatterConfig())
     assert isinstance(ctx, FormattedContext)
@@ -419,6 +420,7 @@ def test_format_context_returns_dataclass() -> None:
 
 
 def test_format_context_structured_shape() -> None:
+    """Structured output preserves title, summary, tables, and LLM bullets."""
     results = {"test": [{"col1": "val1"}]}
     ctx = format_context(results, FormatterConfig())
     s = ctx.structured
@@ -430,6 +432,7 @@ def test_format_context_structured_shape() -> None:
 
 
 def test_format_context_markdown_structure() -> None:
+    """Markdown output includes heading, summary, table, and LLM context sections."""
     results = {"Anomalies": [{"source_ip": "1.2.3.4", "event_count": 5}]}
     md = format_context(results, FormatterConfig()).markdown
     assert md.startswith("# Analysis Results")
@@ -443,6 +446,7 @@ def test_format_context_markdown_structure() -> None:
 
 
 def test_format_context_markdown_empty_results() -> None:
+    """Empty results render as 'No findings' with empty tables and bullets."""
     md = format_context({}, FormatterConfig()).markdown
     assert md == "# Analysis Results\n\nNo findings."
 
@@ -452,6 +456,7 @@ def test_format_context_markdown_empty_results() -> None:
 
 
 def test_format_context_truncates_long_values() -> None:
+    """Cell values exceeding max_cell_width are truncated with ellipsis."""
     long_val = "a" * 100
     results = {"test": [{"col1": long_val, "col2": None}]}
     md = format_context(results, FormatterConfig(max_cell_width=10)).markdown
@@ -461,6 +466,7 @@ def test_format_context_truncates_long_values() -> None:
 
 
 def test_format_context_llm_bullets() -> None:
+    """LLM bullets include all rendered key=value pairs per row."""
     results = {"t1": [{"col1": "v1"}], "t2": [{"col1": "v2"}, {"col1": "v3"}]}
     ctx = format_context(results, FormatterConfig())
     assert ctx.structured["llm_bullets"] == ["[t1] col1=v1", "[t2] col1=v2", "[t2] col1=v3"]
