@@ -9,6 +9,7 @@ from ovs_logs.core.analysis.engine import AnalysisEngine
 from ovs_logs.core.ingestion.adapters import load_csv
 from ovs_logs.core.normalization import NormalizationEngine
 from ovs_logs.core.validation import validate_log_file
+from ovs_logs.presentation import FormattedContext, FormatterConfig, format_context
 
 TOP_TALKERS_COUNT = 2
 TOP_TALKER_1_COUNT = 3
@@ -251,3 +252,231 @@ def test_aliased_query_handles_mixed_case_columns(db) -> None:
     assert any(row["source_ip"] == "1.2.3.4" for row in errors)
     assert any(row["status_code"] == ERROR_STATUS_404 for row in errors)
     assert any(row["status_code"] == ERROR_STATUS_500 for row in errors)
+
+
+def test_source_ip_sequence(
+    analysis_engine: AnalysisEngine,
+    db: duckdb.DuckDBPyConnection,
+) -> None:
+    results = analysis_engine.run_queries(
+        db,
+        template_names=["source_ip_sequence"],
+    )
+    seq = results["source_ip_sequence"]
+    assert len(seq) == 2
+    assert seq[0]["source_ip"] == "1.2.3.4"
+    assert seq[0]["event_sequence"] == "GET \u2192 GET \u2192 POST"
+    assert seq[0]["event_count"] == 3
+    assert seq[1]["source_ip"] == "5.6.7.8"
+    assert seq[1]["event_sequence"] == "GET \u2192 GET"
+    assert seq[1]["event_count"] == 2
+
+
+def test_source_ip_sequence_respects_limit(
+    analysis_engine: AnalysisEngine,
+    db: duckdb.DuckDBPyConnection,
+) -> None:
+    results = analysis_engine.run_queries(
+        db,
+        thresholds={"source_ip_sequence": {"max_events_per_ip": 50, "min_events": 1, "limit": 1}},
+        template_names=["source_ip_sequence"],
+    )
+    seq = results["source_ip_sequence"]
+    assert len(seq) == 1
+
+
+def test_source_ip_sequence_excludes_null_event_type(
+    db: duckdb.DuckDBPyConnection,
+) -> None:
+    """NULL event_type rows should be excluded from sequence and count."""
+    db.execute(
+        "CREATE TABLE events AS "
+        "SELECT '2024-01-01T00:00:00'::TIMESTAMP AS event_timestamp, "
+        "'10.0.0.1'::VARCHAR AS source_ip, NULL::VARCHAR AS event_type, "
+        "200::BIGINT AS status_code, 'line'::VARCHAR AS raw_message, "
+        "NULL::VARCHAR AS process_name, NULL::VARCHAR AS destination_ip "
+        "UNION ALL SELECT '2024-01-01T00:00:01'::TIMESTAMP, '10.0.0.1', "
+        "NULL, 200, 'line', NULL, NULL "
+    )
+    results = AnalysisEngine().run_queries(
+        db,
+        thresholds={"source_ip_sequence": {"max_events_per_ip": 50, "min_events": 1, "limit": 10}},
+        template_names=["source_ip_sequence"],
+    )
+    assert "source_ip_sequence" not in results or len(results["source_ip_sequence"]) == 0
+
+
+def test_source_ip_sequence_tied_counts_ordered_deterministically(
+    db: duckdb.DuckDBPyConnection,
+) -> None:
+    """IPs with equal event_count should be ordered by source_ip ASC."""
+    db.execute(
+        "CREATE TABLE events AS "
+        "SELECT '2024-01-01T00:00:00'::TIMESTAMP AS event_timestamp, "
+        "'10.0.0.2'::VARCHAR AS source_ip, 'GET'::VARCHAR AS event_type, "
+        "200::BIGINT AS status_code, 'line'::VARCHAR AS raw_message, "
+        "NULL::VARCHAR AS process_name, NULL::VARCHAR AS destination_ip "
+        "UNION ALL SELECT '2024-01-01T00:00:01'::TIMESTAMP, '10.0.0.1', "
+        "'POST', 200, 'line', NULL, NULL "
+        "UNION ALL SELECT '2024-01-01T00:00:02'::TIMESTAMP, '10.0.0.2', "
+        "'PUT', 200, 'line', NULL, NULL "
+        "UNION ALL SELECT '2024-01-01T00:00:03'::TIMESTAMP, '10.0.0.1', "
+        "'DELETE', 200, 'line', NULL, NULL "
+    )
+    results = AnalysisEngine().run_queries(
+        db,
+        thresholds={"source_ip_sequence": {"max_events_per_ip": 50, "min_events": 1, "limit": 10}},
+        template_names=["source_ip_sequence"],
+    )
+    seq = results["source_ip_sequence"]
+    assert len(seq) == 2
+    ips = [row["source_ip"] for row in seq]
+    assert ips == sorted(ips)
+
+
+def test_source_ip_sequence_equal_timestamps_duplicate_messages_ordered_stably(
+    db: duckdb.DuckDBPyConnection,
+) -> None:
+    """STRING_AGG must remain deterministic when timestamps and messages tie."""
+    db.execute(
+        "CREATE TABLE events AS "
+        "SELECT '2024-01-01T00:00:00'::TIMESTAMP AS event_timestamp, "
+        "'10.0.0.1'::VARCHAR AS source_ip, 'A'::VARCHAR AS event_type, "
+        "200::BIGINT AS status_code, 'line'::VARCHAR AS raw_message, "
+        "NULL::VARCHAR AS process_name, NULL::VARCHAR AS destination_ip "
+        "UNION ALL SELECT '2024-01-01T00:00:00'::TIMESTAMP, '10.0.0.1', "
+        "'B', 200, 'line', NULL, NULL "
+        "UNION ALL SELECT '2024-01-01T00:00:00'::TIMESTAMP, '10.0.0.1', "
+        "'C', 200, 'line', NULL, NULL "
+    )
+    results = AnalysisEngine().run_queries(
+        db,
+        thresholds={"source_ip_sequence": {"max_events_per_ip": 50, "min_events": 1, "limit": 10}},
+        template_names=["source_ip_sequence"],
+    )
+    seq = results["source_ip_sequence"]
+    assert len(seq) == 1
+    assert seq[0]["source_ip"] == "10.0.0.1"
+    assert seq[0]["event_sequence"] == "A → B → C"
+
+
+def test_source_ip_sequence_per_ip_cap(
+    db: duckdb.DuckDBPyConnection,
+) -> None:
+    """max_events_per_ip caps the rows per source_ip before aggregation."""
+    db.execute(
+        "CREATE TABLE events AS "
+        "SELECT '2024-01-01T00:00:00'::TIMESTAMP AS event_timestamp, "
+        "'10.0.0.1'::VARCHAR AS source_ip, 'A'::VARCHAR AS event_type, "
+        "200::BIGINT AS status_code, 'line'::VARCHAR AS raw_message, "
+        "NULL::VARCHAR AS process_name, NULL::VARCHAR AS destination_ip "
+        "UNION ALL SELECT '2024-01-01T00:00:01'::TIMESTAMP, '10.0.0.1', "
+        "'B', 200, 'line', NULL, NULL "
+        "UNION ALL SELECT '2024-01-01T00:00:02'::TIMESTAMP, '10.0.0.1', "
+        "'C', 200, 'line', NULL, NULL "
+        "UNION ALL SELECT '2024-01-01T00:00:03'::TIMESTAMP, '10.0.0.1', "
+        "'D', 200, 'line', NULL, NULL "
+    )
+    results = AnalysisEngine().run_queries(
+        db,
+        thresholds={"source_ip_sequence": {"max_events_per_ip": 2, "min_events": 1, "limit": 10}},
+        template_names=["source_ip_sequence"],
+    )
+    seq = results["source_ip_sequence"]
+    assert len(seq) == 1
+    assert seq[0]["event_count"] == 2
+    assert seq[0]["event_sequence"] == "A \u2192 B"
+
+
+def test_source_ip_sequence_all_rows_exceed_cap(
+    db: duckdb.DuckDBPyConnection,
+) -> None:
+    """When max_events_per_ip is below min_events, no IPs are returned."""
+    db.execute(
+        "CREATE TABLE events AS "
+        "SELECT '2024-01-01T00:00:00'::TIMESTAMP AS event_timestamp, "
+        "'10.0.0.1'::VARCHAR AS source_ip, 'A'::VARCHAR AS event_type, "
+        "200::BIGINT AS status_code, 'line'::VARCHAR AS raw_message, "
+        "NULL::VARCHAR AS process_name, NULL::VARCHAR AS destination_ip "
+        "UNION ALL SELECT '2024-01-01T00:00:01'::TIMESTAMP, '10.0.0.1', "
+        "'B', 200, 'line', NULL, NULL "
+    )
+    results = AnalysisEngine().run_queries(
+        db,
+        thresholds={"source_ip_sequence": {"max_events_per_ip": 1, "min_events": 2, "limit": 10}},
+        template_names=["source_ip_sequence"],
+    )
+    assert "source_ip_sequence" not in results or len(results["source_ip_sequence"]) == 0
+
+
+def test_format_context_returns_dataclass() -> None:
+    """format_context returns a FormattedContext with non-empty markdown and structured dict."""
+    results = {"test": [{"col1": "val1"}]}
+    ctx = format_context(results, FormatterConfig())
+    assert isinstance(ctx, FormattedContext)
+    assert isinstance(ctx.markdown, str)
+    assert ctx.markdown != ""
+    assert isinstance(ctx.structured, dict)
+
+
+def test_format_context_structured_shape() -> None:
+    """Structured output preserves title, summary, tables, and LLM bullets."""
+    results = {"test": [{"col1": "val1"}]}
+    ctx = format_context(results, FormatterConfig())
+    s = ctx.structured
+    assert s["title"] == "Analysis Results"
+    assert s["summary"]["templates_executed"] == 1
+    assert s["summary"]["total_findings"] == 1
+    assert s["tables"]["test"] == [{"col1": "val1"}]
+    assert s["llm_bullets"] == ["[test] col1=val1"]
+
+
+def test_format_context_markdown_structure() -> None:
+    """Markdown output includes heading, summary, table, and LLM context sections."""
+    results = {"Anomalies": [{"source_ip": "1.2.3.4", "event_count": 5}]}
+    md = format_context(results, FormatterConfig()).markdown
+    assert md.startswith("# Analysis Results")
+    assert "## Summary" in md
+    assert "## Anomalies" in md
+    assert "| source_ip | event_count |" in md
+    assert "|---|---|" in md
+    assert "| 1.2.3.4 | 5 |" in md
+    assert "## Context for LLM" in md
+    assert "- [Anomalies] source_ip=1.2.3.4, event_count=5" in md
+
+
+def test_format_context_markdown_empty_results() -> None:
+    """Empty results render as 'No findings' with empty tables and bullets."""
+    md = format_context({}, FormatterConfig()).markdown
+    assert md == "# Analysis Results\n\nNo findings."
+
+    s = format_context({}, FormatterConfig()).structured
+    assert s["tables"] == {}
+    assert s["llm_bullets"] == []
+
+
+def test_format_context_truncates_long_values() -> None:
+    """Cell values exceeding max_cell_width are truncated with ellipsis."""
+    long_val = "a" * 100
+    results = {"test": [{"col1": long_val, "col2": None}]}
+    md = format_context(results, FormatterConfig(max_cell_width=10)).markdown
+    assert "aaa" in md
+    assert "..." in md
+    assert "\u2014" in md
+
+
+def test_format_context_llm_bullets() -> None:
+    """LLM bullets include all rendered key=value pairs per row."""
+    results = {"t1": [{"col1": "v1"}], "t2": [{"col1": "v2"}, {"col1": "v3"}]}
+    ctx = format_context(results, FormatterConfig())
+    assert ctx.structured["llm_bullets"] == ["[t1] col1=v1", "[t2] col1=v2", "[t2] col1=v3"]
+
+
+def test_format_context_empty_template_list() -> None:
+    """Empty template results (template -> []) should produce 'No findings'."""
+    md = format_context({"template": []}, FormatterConfig()).markdown
+    assert md == "# Analysis Results\n\nNo findings."
+
+    s = format_context({"template": []}, FormatterConfig()).structured
+    assert s["tables"] == {"template": []}
+    assert s["llm_bullets"] == []

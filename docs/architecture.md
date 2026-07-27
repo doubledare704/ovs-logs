@@ -11,16 +11,17 @@ This document defines the technical architecture of **OVS-Log** for the MVP. It 
 
 ## 2. System Components
 
-| Component           | Role                                                                       | Backlog       |
-|---------------------|----------------------------------------------------------------------------|---------------|
-| Ingestion Engine    | Reads CSV, JSON, TXT, LOG, and EVTX into DuckDB with schema detection      | OVD-5         |
-| DuckDB Local Store  | Columnar analytical state and result cache                                 | OVD-5 / OVD-6 |
-| Analyzer            | Runs SQL aggregation templates, orchestrates enrichment and LLM synthesis  | OVD-6         |
-| Threat Intel Client | Queries AbuseIPDB for IP reputation and caches results locally             | OVD-6         |
-| LLM Provider        | Generates incident timeline, MITRE ATT&CK mapping, and mitigation guidance | OVD-6         |
-| Typer CLI           | `ingest`, `process`, `analyze`, `export-rule`, `version`, and `ui` commands| OVD-7         |
-| Streamlit UI        | Single-page upload, run, and 3-tab results view                            | OVD-8         |
-| Packaging & Tests   | Entrypoints, automated tests, and BOTS v1 validation                       | OVD-9         |
+| Component             | Role                                                                       | Backlog       |
+|-----------------------|----------------------------------------------------------------------------|---------------|
+| Ingestion Engine      | Reads CSV, JSON, TXT, LOG, and EVTX into DuckDB with schema detection      | OVD-5         |
+| DuckDB Local Store    | Columnar analytical state and result cache                                 | OVD-5 / OVD-6 |
+| Analyzer (Core)       | Runs SQL aggregation templates, orchestrates enrichment and LLM synthesis  | OVD-6         |
+| Presentation Formatter| Converts analysis results to Markdown / structured dicts (outside core)    | OVD-6         |
+| Threat Intel Client   | Queries AbuseIPDB for IP reputation and caches results locally             | OVD-6         |
+| LLM Provider          | Generates incident timeline, MITRE ATT&CK mapping, and mitigation guidance | OVD-6         |
+| Typer CLI             | `ingest`, `process`, `analyze`, `export-rule`, `version`, and `ui` commands| OVD-7         |
+| Streamlit UI          | Single-page upload, run, and 3-tab results view                            | OVD-8         |
+| Packaging & Tests     | Entrypoints, automated tests, and BOTS v1 validation                       | OVD-9         |
 
 ## 3. Component Diagram
 
@@ -40,6 +41,9 @@ graph LR
         C3[Analyzer Engine]
         C4[Threat Intel Client]
     end
+    subgraph Presentation
+        D1[Presentation Formatter]
+    end
     subgraph External
         E1[AbuseIPDB API]
         E2[LLM Provider API]
@@ -53,9 +57,11 @@ graph LR
     C2 -->|SQL aggregation| C3
     C3 -->|reputation lookup| C4
     C4 -->|HTTP / cache| E1
-    C3 -->|synthesis prompt| E2
-    C3 -->|JSON report / indicators| B1
-    C3 -->|render data| B2
+    C3 -->|raw results| D1
+    D1 -->|Markdown / structured context| B1
+    D1 -->|Markdown / structured context| B2
+    C3 -->|synthesis context| E2
+    E2 -->|incident report| C3
 ```
 
 ## 4. Sequence Diagram: The "Analyze" Flow
@@ -67,6 +73,7 @@ sequenceDiagram
     participant I as Ingestion Engine
     participant D as DuckDB
     participant A as Analyzer
+    participant P as Presentation Formatter
     participant T as Threat Intel Client
     participant L as LLM Provider
 
@@ -75,16 +82,17 @@ sequenceDiagram
     I->>D: CREATE / INSERT via read_*_auto
     D-->>I: schema + row count
     I-->>C: success / error
-    C->>A: analyze(thresholds, format)
+    C->>A: analyze(thresholds)
     A->>D: execute SQL aggregation templates
     D-->>A: suspicious indicators
     A->>T: enrich(indicators)
     T->>D: cache miss → store result
     T-->>A: reputation scores + context
-    A->>A: build synthesis context
     A->>L: prompt with structured context
     L-->>A: incident report (timeline, MITRE, mitigation)
-    A-->>C: report + rule artifact
+    A-->>C: raw results
+    C->>P: format_context(raw_results)
+    P-->>C: Markdown / structured context
     C-->>U: 3-tab UI or exported file
 ```
 
@@ -110,3 +118,4 @@ sequenceDiagram
 - The LLM receives only structured aggregations (top IPs, endpoints, error rates, reputation context), not full raw logs, to minimize token usage and preserve privacy.
 - The CLI and UI share the same `Analyzer` workflow, so a result validated in the dashboard can be reproduced identically from the command line.
 - Threat-intel enrichment is optional; the engine degrades gracefully when the AbuseIPDB API key is missing or the service is unavailable.
+- Presentation formatting (Markdown rendering, LLM bullet lists) lives in the top-level `ovs_logs.presentation` module, **outside** the core layer. The `AnalysisEngine` exposes raw results as plain dicts only—callers (CLI, UI, tests) import `format_context` from `ovs_logs.presentation` or `ovs_logs` when they need rendered output. This keeps core business logic free of presentation concerns.

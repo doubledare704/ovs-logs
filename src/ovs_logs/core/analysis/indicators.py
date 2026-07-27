@@ -16,6 +16,7 @@ def _thresholds_dict(source: AnalysisThresholds) -> dict[str, int]:
         "event_distribution": source.event_distribution,
         "temporal_anomaly": source.temporal_anomaly,
         "long_tail_analysis": source.long_tail_analysis,
+        "source_ip_sequence": source.source_ip_sequence,
     }
 
 
@@ -80,19 +81,28 @@ class IndicatorProcessor:
 
     def _build_description(self, indicator_type: str, evidence: dict[str, Any]) -> str:
         """Generate a human-readable description for the indicator."""
-        if indicator_type == "top_talkers":
-            return f"IP {evidence['source_ip']} generated {evidence['event_count']} events"
-        if indicator_type == "error_spikes":
-            return f"IP {evidence['source_ip']} returned HTTP {evidence['status_code']} {evidence['error_count']} times"
-        if indicator_type == "event_distribution":
-            return f"Event type '{evidence['event_type']}' occurred {evidence['event_count']} times"
-        if indicator_type == "temporal_anomaly":
-            return f"Time bucket {evidence['time_bucket']} had {evidence['event_count']} events"
-        if indicator_type == "long_tail_analysis":
-            return (
-                f"Process '{evidence['process_name']}' made {evidence['connection_count']} connection(s) "
-                f"to {evidence['destination_ip']} (of {evidence['total_connections']} total)"
-            )
+        descriptions = {
+            "top_talkers": lambda: f"IP {evidence['source_ip']} generated {evidence['event_count']} events",
+            "error_spikes": lambda: (
+                f"IP {evidence['source_ip']} returned HTTP {evidence['status_code']} {evidence['error_count']} times"
+            ),
+            "event_distribution": lambda: (
+                f"Event type '{evidence['event_type']}' occurred {evidence['event_count']} times"
+            ),
+            "temporal_anomaly": lambda: f"Time bucket {evidence['time_bucket']} had {evidence['event_count']} events",
+            "long_tail_analysis": lambda: (
+                f"Process '{evidence['process_name']}' made {evidence['connection_count']} "
+                f"connection(s) to {evidence['destination_ip']} "
+                f"(of {evidence['total_connections']} total)"
+            ),
+            "source_ip_sequence": lambda: (
+                f"IP {evidence['source_ip']} had sequence: {evidence['event_sequence']} "
+                f"({evidence['event_count']} events)"
+            ),
+        }
+        func = descriptions.get(indicator_type)
+        if func:
+            return func()
         return f"Indicator of type {indicator_type}: {evidence}"
 
     def process(self, results: dict[str, list[dict[str, Any]]]) -> list[SuspiciousIndicator]:
