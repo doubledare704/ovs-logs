@@ -24,10 +24,11 @@ import duckdb
 from ovs_logs.config.settings import Settings, settings as _default_settings
 from ovs_logs.core.analysis import AnalysisEngine, IndicatorProcessor
 from ovs_logs.core.analysis.indicators import SuspiciousIndicator, extract_unique_ips
-from ovs_logs.core.database import Database
+from ovs_logs.core.database import ALLOWLIST_TABLE, Database, _ensure_allowlist_table
 from ovs_logs.core.llm import LLMSynthesizer, create_llm_provider
 from ovs_logs.core.persistence import ReportStore
 from ovs_logs.core.report import IncidentReport
+from ovs_logs.core.sql_utils import quote_identifier
 from ovs_logs.core.threat_intel import ThreatIntelClient, ThreatIntelError
 
 logger = logging.getLogger(__name__)
@@ -80,6 +81,81 @@ class AnalysisService:
         self._report_store = ReportStore()
 
     # ------------------------------------------------------------------
+    # Allowlist filtering
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _extract_indicator_ip(indicator: SuspiciousIndicator) -> str | None:
+        """Extract the relevant IP from an indicator's evidence.
+
+        Returns ``None`` for indicator types that carry no IP (e.g.
+        ``event_distribution``, ``temporal_anomaly``).
+        """
+        if indicator.type in ("top_talkers", "error_spikes"):
+            return indicator.evidence.get("source_ip")
+        if indicator.type == "long_tail_analysis":
+            return indicator.evidence.get("destination_ip")
+        return None
+
+    def _filter_allowlisted(
+        self,
+        connection: duckdb.DuckDBPyConnection,
+        indicators: list[SuspiciousIndicator],
+    ) -> list[SuspiciousIndicator]:
+        """Remove indicators whose IP is in the allowlist.
+
+        Collects all unique IPs from indicators and performs a single
+        batched SQL query against the allowlist table instead of one
+        query per indicator.
+
+        Indicators without an extractable IP (e.g.
+        ``event_distribution``, ``temporal_anomaly``) pass through
+        unchanged.
+        """
+        # 1. Collect all unique IPs from indicators
+        unique_ips: set[str] = set()
+        for indicator in indicators:
+            ip = self._extract_indicator_ip(indicator)
+            if ip:
+                unique_ips.add(ip)
+
+        if not unique_ips:
+            return indicators
+
+        # 2. Single batched query to find all allowlisted IPs.
+        #    _ensure_allowlist_table is called so the query doesn't fail
+        #    when the table has never been created (same pattern as
+        #    is_allowlisted in database.py).
+        _ensure_allowlist_table(connection)
+        table = quote_identifier(ALLOWLIST_TABLE)
+        rows = connection.execute(
+            f'SELECT DISTINCT "indicator" FROM {table} WHERE "indicator_type" = \'ip\' AND "indicator" = ANY(?)',
+            [list(unique_ips)],
+        ).fetchall()
+        allowlisted: set[str] = {row[0] for row in rows}
+
+        if not allowlisted:
+            return indicators
+
+        # 3. Filter indicators against the allowlist set
+        filtered: list[SuspiciousIndicator] = []
+        dropped = 0
+        for indicator in indicators:
+            ip = self._extract_indicator_ip(indicator)
+            if ip and ip in allowlisted:
+                dropped += 1
+            else:
+                filtered.append(indicator)
+
+        if dropped:
+            logger.debug(
+                "Dropped %d allowlisted indicators from %d total",
+                dropped,
+                len(indicators),
+            )
+        return filtered
+
+    # ------------------------------------------------------------------
     # Public pipeline
     # ------------------------------------------------------------------
 
@@ -112,8 +188,13 @@ class AnalysisService:
 
         This is a convenience method for callers that only need indicators
         without the full pipeline (e.g. the UI's analysis tab).
+
+        Allowlisted indicators are filtered out before returning.
         """
-        return self._run_analysis(connection)
+        indicators = self._run_analysis(connection)
+        if indicators is None:
+            return None
+        return self._filter_allowlisted(connection, indicators)
 
     def synthesize_report(
         self,
@@ -146,6 +227,8 @@ class AnalysisService:
         indicators = self._run_analysis(connection)
         if not indicators:
             return indicators, None
+
+        indicators = self._filter_allowlisted(connection, indicators)
 
         threat_intel = self._enrich_intel(indicators) if self.config.intel else None
         result = self._synthesize(connection, indicators, threat_intel) if self.config.llm else None

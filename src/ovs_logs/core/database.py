@@ -148,6 +148,51 @@ def insert_allowlisted_indicator(  # noqa: PLR0913
     logger.debug("Inserted allowlisted indicator %s (%s)", indicator, indicator_type)
 
 
+def delete_allowlisted_indicator(
+    connection: duckdb.DuckDBPyConnection,
+    indicator_id: str,
+) -> None:
+    """Delete an allowlist entry by its ID.
+
+    Returns ``None``.  If the ID does not exist the operation is a no-op.
+    """
+    _ensure_allowlist_table(connection)
+    table = quote_identifier(ALLOWLIST_TABLE)
+    connection.execute(
+        f'DELETE FROM {table} WHERE "id" = ?',
+        [indicator_id],
+    )
+    logger.debug("Deleted allowlisted indicator %s", indicator_id)
+
+
+def list_allowlisted_indicators(
+    connection: duckdb.DuckDBPyConnection,
+    *,
+    indicator_type: str | None = None,
+) -> list[dict[str, Any]]:
+    """Return all allowlisted indicators.
+
+    When *indicator_type* is provided the result is scoped to that type.
+    Results are ordered by ``created_at`` descending.
+    """
+    _ensure_allowlist_table(connection)
+    table = quote_identifier(ALLOWLIST_TABLE)
+    if indicator_type is not None:
+        rows = connection.execute(
+            f'SELECT "id", "indicator", "indicator_type", "description", '
+            f'"metadata", "created_at" FROM {table} '
+            'WHERE "indicator_type" = ? ORDER BY "created_at" DESC',
+            [indicator_type],
+        ).fetchall()
+    else:
+        rows = connection.execute(
+            f'SELECT "id", "indicator", "indicator_type", "description", '
+            f'"metadata", "created_at" FROM {table} ORDER BY "created_at" DESC'
+        ).fetchall()
+    columns = ["id", "indicator", "indicator_type", "description", "metadata", "created_at"]
+    return [dict(zip(columns, row, strict=True)) for row in rows]
+
+
 def is_allowlisted(
     connection: duckdb.DuckDBPyConnection,
     indicator: str,

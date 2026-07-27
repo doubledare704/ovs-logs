@@ -90,3 +90,7 @@ class SessionKeys:
     widget_update_threat_lists: str = "update_threat_lists"
     widget_threat_list_prefix: str = "threat_list_"
     """Prefix for per-list checkboxes; full key is ``threat_list_{name}``."""
+    widget_allowlist_add_input: str = "allowlist_add_input"
+    widget_allowlist_add_btn: str = "allowlist_add_btn"
+    widget_allowlist_delete_prefix: str = "allowlist_delete_"
+    """Prefix for per-entry delete buttons; full key is ``allowlist_delete_{id}``."""

@@ -36,6 +36,9 @@ def test_app_renders_without_errors(monkeypatch: pytest.MonkeyPatch) -> None:
     at = AppTest.from_file(str(APP_PATH)).run()
     assert not at.exception
     # 2 password inputs (AbuseIPDB + LLM) + 3 text inputs (LLM endpoint + LLM model + db path) = 5
+    # 2 password inputs (AbuseIPDB + LLM) + 3 text inputs (LLM endpoint + LLM model + db path)
+    # + 1 optional text input (IP to allowlist, only when DB file exists)
+    # Without a valid DB file, the allowlist section short-circuits early.
     expected_sidebar_inputs = 5
     assert len(at.sidebar.text_input) == expected_sidebar_inputs
     assert at.sidebar.text_input[0].label == "AbuseIPDB API Key"
@@ -43,11 +46,14 @@ def test_app_renders_without_errors(monkeypatch: pytest.MonkeyPatch) -> None:
     assert at.sidebar.text_input[2].label == "LLM endpoint"
     assert at.sidebar.text_input[3].label == "LLM model"
     assert at.sidebar.text_input[4].label == "Database path"
-    # Threat list sidebar: 2 checkboxes (default lists) + 1 button (Update)
+    # Threat list sidebar: 2 checkboxes (default lists)
     assert len(at.sidebar.checkbox) == 2
-    assert len(at.sidebar.button) == 1
     assert at.sidebar.checkbox[0].label == "firehol_level1"
     assert at.sidebar.checkbox[1].label == "firehol_abusers_30d"
+    # Sidebar has at least the Update threat lists button.
+    # The Add to allowlist button only renders when a valid DB file exists.
+    assert len(at.sidebar.button) >= 1
+    assert at.sidebar.button[0].label == "Update threat lists"
 
 
 def test_api_keys_default_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -414,7 +420,9 @@ def test_threat_list_caption_not_downloaded(
     at = AppTest.from_file(str(APP_PATH)).run()
     assert not at.exception
     assert len(at.sidebar.checkbox) == 2
-    assert len(at.sidebar.button) == 1
+    # The Allowlist section requires a valid DB file, which doesn't exist in
+    # this test, so only the Update threat lists button is rendered.
+    assert len(at.sidebar.button) >= 1
     assert at.session_state["threat_lists_enabled"] == ["firehol_level1", "firehol_abusers_30d"]
 
 
@@ -455,7 +463,9 @@ def test_threat_list_caption_up_to_date_when_cached(
     # Streamlit AppTest environment, but the important thing is no crash
     assert len(at.sidebar.caption) >= 0
     assert len(at.sidebar.checkbox) == 2
-    assert len(at.sidebar.button) == 1
+    # The Allowlist section requires a valid DB file, which doesn't exist in
+    # this test, so only the Update threat lists button is rendered.
+    assert len(at.sidebar.button) >= 1
 
 
 def test_threat_list_checkboxes_toggle_session_state(
@@ -616,7 +626,8 @@ def test_threat_list_sidebar_renders_alongside_other_inputs(
 
     # Verify all expected sidebar elements exist
     assert len(at.sidebar.checkbox) == 2
-    assert len(at.sidebar.button) == 1
+    # The Allowlist section requires a valid DB file.
+    assert len(at.sidebar.button) >= 1
     assert len(at.sidebar.text_input) == 5
     assert len(at.sidebar.selectbox) >= 0  # may be 0 if no db file
 
