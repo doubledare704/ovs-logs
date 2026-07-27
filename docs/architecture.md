@@ -90,7 +90,7 @@ sequenceDiagram
     T-->>A: reputation scores + context
     A->>L: prompt with structured context
     L-->>A: incident report (timeline, MITRE, mitigation)
-    A-->>C: raw results + report
+    A-->>C: raw results
     C->>P: format_context(raw_results)
     P-->>C: Markdown / structured context
     C-->>U: 3-tab UI or exported file
