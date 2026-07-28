@@ -6,6 +6,7 @@ and a "Recent Tables" navigator.
 
 from __future__ import annotations
 
+import ipaddress
 import logging
 import os
 import uuid
@@ -123,7 +124,7 @@ def _threat_list_download(enabled: list[str], cache_dir: str) -> None:
             st.sidebar.error(f"Failed to update threat lists: {exc}")
 
 
-def _render_sidebar_allowlist(db_path: str | None) -> None:
+def _render_sidebar_allowlist(db_path: str | None) -> None:  # noqa: PLR0912 UI flow requires multiple branches
     """Render the Allowlist management sidebar section.
 
     Allows users to add and remove IP-based allowlisted indicators.
@@ -152,26 +153,34 @@ def _render_sidebar_allowlist(db_path: str | None) -> None:
         if not new_indicator or not new_indicator.strip():
             st.sidebar.warning("Enter a valid IP address.")
         else:
+            canonical_ip = new_indicator.strip()
             try:
-                with duckdb.connect(database=str(db_path)) as conn:
-                    insert_allowlisted_indicator(
-                        conn,
-                        indicator_id=str(uuid.uuid4()),
-                        indicator=new_indicator.strip(),
-                        indicator_type="ip",
-                    )
-                st.sidebar.success(f"Added {new_indicator.strip()} to allowlist.")
-                st.rerun()
-            except duckdb.IntegrityError:
-                st.sidebar.warning(f"{new_indicator.strip()} is already in the allowlist.")
-            except (OSError, duckdb.Error) as exc:
-                st.sidebar.error(f"Failed to add: {exc}")
+                parsed = ipaddress.ip_address(canonical_ip)
+                canonical_ip = str(parsed)
+            except ValueError:
+                st.sidebar.warning("Enter a valid IP address.")
+            else:
+                try:
+                    with duckdb.connect(database=str(db_path)) as conn:
+                        insert_allowlisted_indicator(
+                            conn,
+                            indicator_id=str(uuid.uuid4()),
+                            indicator=canonical_ip,
+                            indicator_type="ip",
+                        )
+                    st.sidebar.success(f"Added {canonical_ip} to allowlist.")
+                    st.rerun()
+                except duckdb.IntegrityError:
+                    st.sidebar.warning(f"{canonical_ip} is already in the allowlist.")
+                except (OSError, duckdb.Error) as exc:
+                    st.sidebar.error(f"Failed to add: {exc}")
 
     # --- Existing allowlist entries ---
     try:
-        with duckdb.connect(database=str(db_path), read_only=True) as conn:
+        with duckdb.connect(database=str(db_path)) as conn:
             entries = list_allowlisted_indicators(conn)
-    except (OSError, duckdb.Error):
+    except (OSError, duckdb.Error) as exc:
+        st.sidebar.error(f"Failed to load allowlist: {exc}")
         entries = []
 
     if not entries:

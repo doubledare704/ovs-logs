@@ -174,21 +174,25 @@ def list_allowlisted_indicators(
 
     When *indicator_type* is provided the result is scoped to that type.
     Results are ordered by ``created_at`` descending.
+
+    Returns an empty list when the allowlist table has not yet been created.
     """
-    _ensure_allowlist_table(connection)
     table = quote_identifier(ALLOWLIST_TABLE)
-    if indicator_type is not None:
-        rows = connection.execute(
-            f'SELECT "id", "indicator", "indicator_type", "description", '
-            f'"metadata", "created_at" FROM {table} '
-            'WHERE "indicator_type" = ? ORDER BY "created_at" DESC',
-            [indicator_type],
-        ).fetchall()
-    else:
-        rows = connection.execute(
-            f'SELECT "id", "indicator", "indicator_type", "description", '
-            f'"metadata", "created_at" FROM {table} ORDER BY "created_at" DESC'
-        ).fetchall()
+    try:
+        if indicator_type is not None:
+            rows = connection.execute(
+                f'SELECT "id", "indicator", "indicator_type", "description", '
+                f'"metadata", "created_at" FROM {table} '
+                'WHERE "indicator_type" = ? ORDER BY "created_at" DESC',
+                [indicator_type],
+            ).fetchall()
+        else:
+            rows = connection.execute(
+                f'SELECT "id", "indicator", "indicator_type", "description", '
+                f'"metadata", "created_at" FROM {table} ORDER BY "created_at" DESC'
+            ).fetchall()
+    except duckdb.CatalogException:
+        return []
     columns = ["id", "indicator", "indicator_type", "description", "metadata", "created_at"]
     return [dict(zip(columns, row, strict=True)) for row in rows]
 

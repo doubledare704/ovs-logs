@@ -91,7 +91,7 @@ class AnalysisService:
         Returns ``None`` for indicator types that carry no IP (e.g.
         ``event_distribution``, ``temporal_anomaly``).
         """
-        if indicator.type in ("top_talkers", "error_spikes"):
+        if indicator.type in ("top_talkers", "error_spikes", "source_ip_sequence"):
             return indicator.evidence.get("source_ip")
         if indicator.type == "long_tail_analysis":
             return indicator.evidence.get("destination_ip")
@@ -229,6 +229,8 @@ class AnalysisService:
             return indicators, None
 
         indicators = self._filter_allowlisted(connection, indicators)
+        if not indicators:
+            return indicators, None
 
         threat_intel = self._enrich_intel(indicators) if self.config.intel else None
         result = self._synthesize(connection, indicators, threat_intel) if self.config.llm else None
