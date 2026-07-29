@@ -1,10 +1,14 @@
 """Tests for the Typer CLI."""
 
+import subprocess
+import sys
 from pathlib import Path
 from unittest.mock import Mock, patch
 
 from typer.testing import CliRunner
 
+import ovs_logs.__main__ as main_module
+from ovs_logs import __version__
 from ovs_logs.cli.main import app
 
 runner = CliRunner()
@@ -461,3 +465,28 @@ def test_ui_propagates_streamlit_exit_code() -> None:
         result = runner.invoke(app, ["ui"])
 
     assert result.exit_code == EXIT_CODE_PROPAGATED_STREAMLIT
+
+
+def test_module_invocation_version(monkeypatch) -> None:
+    """Test that `python -m ovs_logs version` works."""
+    monkeypatch.setattr(main_module, "app", app)
+
+    result = runner.invoke(main_module.app, ["version"])
+
+    assert result.exit_code == EXIT_CODE_SUCCESS
+    assert f"OVS-Log {__version__}" in result.output
+
+
+def test_module_version_invocation() -> None:
+    """Test that `python -m ovs_logs version` works and prints version."""
+    result = subprocess.run(
+        [sys.executable, "-m", "ovs_logs", "version"],
+        capture_output=True,
+        text=True,
+        cwd="src",
+        check=False,
+    )
+
+    assert result.returncode == EXIT_CODE_SUCCESS, result.stderr
+    assert "OVS-Log" in result.stdout
+    assert "0.1.0" in result.stdout
