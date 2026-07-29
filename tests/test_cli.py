@@ -467,10 +467,8 @@ def test_ui_propagates_streamlit_exit_code() -> None:
     assert result.exit_code == EXIT_CODE_PROPAGATED_STREAMLIT
 
 
-def test_module_invocation_version(monkeypatch) -> None:
+def test_module_invocation_version() -> None:
     """Test that `python -m ovs_logs version` works."""
-    monkeypatch.setattr(main_module, "app", app)
-
     result = runner.invoke(main_module.app, ["version"])
 
     assert result.exit_code == EXIT_CODE_SUCCESS

@@ -9,7 +9,7 @@ description = "Local AI-powered log tracer and DFIR assistant"
 readme = "README.md"
 license = {text = "MIT"}
 authors = [
-    {name = "OVS-Log Contributors", email = "ovs-log@example.com"},
+    {name = "OVS-Log Contributors"},
 ]
 keywords = [
     "dfir",
