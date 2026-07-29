@@ -14,6 +14,7 @@ from unittest.mock import patch
 
 import duckdb
 import pytest
+from pytest_mock.plugin import MockerFixture
 
 from ovs_logs.core.analysis.indicators import SuspiciousIndicator
 from ovs_logs.core.database import insert_allowlisted_indicator, is_allowlisted
@@ -239,7 +240,9 @@ class TestAllowlistFiltering:
         assert indicators[0].evidence.get("source_ip") == "5.6.7.8"
         assert report is None  # --llm not enabled
 
-    def test_pipeline_all_filtered_skips_llm_synthesis(self, db: duckdb.DuckDBPyConnection) -> None:
+    def test_pipeline_all_filtered_skips_llm_synthesis(
+        self, db: duckdb.DuckDBPyConnection, mocker: MockerFixture
+    ) -> None:
         """When every indicator is allowlisted, ``_synthesize`` must not be called."""
         insert_allowlisted_indicator(db, indicator_id="uuid-all-1", indicator="1.2.3.4", indicator_type="ip")
         insert_allowlisted_indicator(db, indicator_id="uuid-all-2", indicator="5.6.7.8", indicator_type="ip")
@@ -258,11 +261,9 @@ class TestAllowlistFiltering:
             _make_top_talker("5.6.7.8"),
         ]
 
-        with (
-            patch.object(service, "_run_analysis", return_value=mock_indicators),
-            patch.object(service, "_synthesize") as synth_mock,
-        ):
-            indicators, report = service.run(db)
+        mocker.patch.object(service, "_run_analysis", return_value=mock_indicators)
+        synth_mock = mocker.patch.object(service, "_synthesize")
+        indicators, report = service.run(db)
 
         assert indicators == []
         assert report is None
