@@ -178,7 +178,7 @@ def _render_sidebar_allowlist(db_path: str | None) -> None:  # noqa: PLR0912 UI 
     # --- Existing allowlist entries ---
     try:
         with duckdb.connect(database=str(db_path)) as conn:
-            entries = list_allowlisted_indicators(conn)
+            entries = list_allowlisted_indicators(conn, indicator_type="ip")
     except (OSError, duckdb.Error) as exc:
         st.sidebar.error(f"Failed to load allowlist: {exc}")
         entries = []

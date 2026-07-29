@@ -178,3 +178,23 @@ def test_allowlist_add_malformed_ip_shows_warning(tmp_path: Path) -> None:
     with duckdb.connect(str(db)) as conn:
         entries = list_allowlisted_indicators(conn)
     assert not entries, "Malformed IP should not be persisted"
+
+
+def test_allowlist_add_ipv6_normalized(tmp_path: Path) -> None:
+    """An IPv6 address with surrounding whitespace should be stored in canonical form."""
+    db = make_db(tmp_path, [("events", "SELECT 1 AS id")])
+
+    at = AppTest.from_file(str(APP_PATH)).run()
+    text_input_by_label(at, "Database path").set_value(str(db)).run()
+
+    allowlist_input = text_input_by_label(at, "IP to allowlist")
+    allowlist_input.set_value("  2001:db8::1  ").run()
+
+    add_btn = next(btn for btn in at.sidebar.button if btn.label == "Add to allowlist")
+    add_btn.click().run()
+
+    assert not at.exception
+    with duckdb.connect(str(db)) as conn:
+        entries = list_allowlisted_indicators(conn)
+    stored = {e["indicator"] for e in entries}
+    assert "2001:db8::1" in stored, "Expected canonical IPv6 address to be persisted"

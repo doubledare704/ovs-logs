@@ -74,6 +74,16 @@ def _make_event_distribution(event_type: str = "GET", event_count: int = 50) -> 
     )
 
 
+def _make_source_ip_sequence(source_ip: str) -> SuspiciousIndicator:
+    """Return a ``source_ip_sequence`` indicator for the given source IP."""
+    return SuspiciousIndicator(
+        type="source_ip_sequence",
+        severity="Medium",
+        description=f"IP {source_ip} appeared in a suspicious sequence",
+        evidence={"source_ip": source_ip},
+    )
+
+
 def _config(db: duckdb.DuckDBPyConnection) -> AnalysisConfig:
     """Return a minimal ``AnalysisConfig`` pointing at an in-memory database."""
     return AnalysisConfig(
@@ -257,3 +267,34 @@ class TestAllowlistFiltering:
         assert indicators == []
         assert report is None
         synth_mock.assert_not_called()
+
+    def test_source_ip_sequence_allowlisted_filtered(self, db: duckdb.DuckDBPyConnection) -> None:
+        """A ``source_ip_sequence`` indicator with an allowlisted source_ip must be dropped."""
+        insert_allowlisted_indicator(db, indicator_id="uuid-sip-1", indicator="10.0.0.1", indicator_type="ip")
+
+        service = _service(db)
+        mock_indicators = [
+            _make_source_ip_sequence("10.0.0.1"),
+            _make_source_ip_sequence("192.168.1.1"),
+        ]
+
+        with patch.object(service, "_run_analysis", return_value=mock_indicators):
+            result = service.run_analysis(db)
+
+        assert result is not None
+        assert len(result) == 1
+        assert result[0].evidence.get("source_ip") == "192.168.1.1"
+        assert result[0].type == "source_ip_sequence"
+
+    def test_source_ip_sequence_non_allowlisted_preserved(self, db: duckdb.DuckDBPyConnection) -> None:
+        """A ``source_ip_sequence`` indicator whose IP is not allowlisted must be kept."""
+        service = _service(db)
+        mock_indicators = [_make_source_ip_sequence("192.168.1.1")]
+
+        with patch.object(service, "_run_analysis", return_value=mock_indicators):
+            result = service.run_analysis(db)
+
+        assert result is not None
+        assert len(result) == 1
+        assert result[0].type == "source_ip_sequence"
+        assert result[0].evidence.get("source_ip") == "192.168.1.1"
