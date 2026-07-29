@@ -6,8 +6,10 @@ and a "Recent Tables" navigator.
 
 from __future__ import annotations
 
+import ipaddress
 import logging
 import os
+import uuid
 from pathlib import Path
 
 import duckdb
@@ -15,6 +17,11 @@ import streamlit as st
 
 from ovs_logs.config import settings as _cfg
 from ovs_logs.config.settings import DEFAULT_ENDPOINT_SENTINEL, LLM_PRESETS
+from ovs_logs.core.database import (
+    delete_allowlisted_indicator,
+    insert_allowlisted_indicator,
+    list_allowlisted_indicators,
+)
 from ovs_logs.core.llm import is_ollama_endpoint
 from ovs_logs.core.threat_lists import (
     ensure_cache_dir as tl_ensure_cache_dir,
@@ -117,6 +124,82 @@ def _threat_list_download(enabled: list[str], cache_dir: str) -> None:
             st.sidebar.error(f"Failed to update threat lists: {exc}")
 
 
+def _render_sidebar_allowlist(db_path: str | None) -> None:  # noqa: PLR0912 UI flow requires multiple branches
+    """Render the Allowlist management sidebar section.
+
+    Allows users to add and remove IP-based allowlisted indicators.
+    """
+    st.sidebar.subheader("Allowlist")
+    st.sidebar.caption("Manage IPs that should be excluded from analysis")
+
+    if not db_path:
+        st.sidebar.info("Set a database path to manage allowlisted IPs.")
+        return
+
+    db_file = Path(db_path)
+    if not db_file.exists():
+        st.sidebar.warning(f"Database file not found: {db_path}")
+        return
+
+    # --- Add new allowlist entry ---
+    new_indicator = st.sidebar.text_input(
+        "IP to allowlist",
+        placeholder="e.g. 10.0.0.1",
+        key=SK.widget_allowlist_add_input,
+        help="Enter an IP address to exclude from future analysis results.",
+    )
+
+    if st.sidebar.button("Add to allowlist", key=SK.widget_allowlist_add_btn):
+        if not new_indicator or not new_indicator.strip():
+            st.sidebar.warning("Enter a valid IP address.")
+        else:
+            canonical_ip = new_indicator.strip()
+            try:
+                parsed = ipaddress.ip_address(canonical_ip)
+                canonical_ip = str(parsed)
+            except ValueError:
+                st.sidebar.warning("Enter a valid IP address.")
+            else:
+                try:
+                    with duckdb.connect(database=str(db_path)) as conn:
+                        insert_allowlisted_indicator(
+                            conn,
+                            indicator_id=str(uuid.uuid4()),
+                            indicator=canonical_ip,
+                            indicator_type="ip",
+                        )
+                    st.sidebar.success(f"Added {canonical_ip} to allowlist.")
+                    st.rerun()
+                except duckdb.IntegrityError:
+                    st.sidebar.warning(f"{canonical_ip} is already in the allowlist.")
+                except (OSError, duckdb.Error) as exc:
+                    st.sidebar.error(f"Failed to add: {exc}")
+
+    # --- Existing allowlist entries ---
+    try:
+        with duckdb.connect(database=str(db_path)) as conn:
+            entries = list_allowlisted_indicators(conn, indicator_type="ip")
+    except (OSError, duckdb.Error) as exc:
+        st.sidebar.error(f"Failed to load allowlist: {exc}")
+        entries = []
+
+    if not entries:
+        st.sidebar.caption("No allowlisted IPs yet.")
+        return
+
+    for entry in entries:
+        col1, col2 = st.sidebar.columns([3, 1])
+        col1.text(entry["indicator"])
+        delete_key = f"{SK.widget_allowlist_delete_prefix}{entry['id']}"
+        if col2.button("✕", key=delete_key, help=f"Remove {entry['indicator']} from allowlist"):
+            try:
+                with duckdb.connect(database=str(db_path)) as conn:
+                    delete_allowlisted_indicator(conn, entry["id"])
+                st.rerun()
+            except (OSError, duckdb.Error) as exc:
+                st.sidebar.error(f"Failed to remove: {exc}")
+
+
 def _render_sidebar_threat_lists() -> None:
     """Render the Threat Lists sidebar section."""
     st.sidebar.subheader("Threat Lists")
@@ -215,6 +298,7 @@ def render_sidebar() -> None:
     )
 
     _render_sidebar_threat_lists()
+    _render_sidebar_allowlist(db_path)
 
     # ------------------------------------------------------------------ #
     st.sidebar.subheader("Recent Tables")
