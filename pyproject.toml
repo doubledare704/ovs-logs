@@ -6,6 +6,31 @@ build-backend = "hatchling.build"
 name = "ovs-logs"
 version = "0.1.0"
 description = "Local AI-powered log tracer and DFIR assistant"
+readme = "README.md"
+license = {text = "MIT"}
+authors = [
+    {name = "OVS-Log Contributors"},
+]
+keywords = [
+    "dfir",
+    "log-analysis",
+    "threat-intelligence",
+    "duckdb",
+    "streamlit",
+    "typer",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Information Technology",
+    "Intended Audience :: System Administrators",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Security",
+    "Topic :: System :: Logging",
+    "Topic :: System :: Monitoring",
+]
 requires-python = ">=3.12"
 dependencies = [
     "duckdb>=1.0.0",
@@ -22,12 +47,20 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0.0",
+    "pytest-mock>=3.15.1",
     "ruff>=0.15.20",
     "pyrefly>=1.1.1",
     "pre-commit>=4.6.0",
     "watchdog==6.0.0",
     "pytz",
 ]
+
+[project.urls]
+Homepage = "https://github.com/ovs-log/ovs-logs"
+Repository = "https://github.com/ovs-log/ovs-logs"
+Issues = "https://github.com/ovs-log/ovs-logs/issues"
+Documentation = "https://ovs-log.readthedocs.io"
+Changelog = "https://github.com/ovs-log/ovs-logs/blob/main/CHANGELOG.md"
 
 [project.scripts]
 ovs-log = "ovs_logs.cli.main:app"
@@ -85,6 +118,18 @@ combine-as-imports = true
 [tool.pyrefly]
 project-includes = ["src", "tests"]
 search-path = ["src", "tests"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ovs_logs"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "/src",
+    "/tests",
+    "/pyproject.toml",
+    "/README.md",
+    "/LICENSE",
+]
 
 [dependency-groups]
 dev = [
