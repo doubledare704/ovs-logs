@@ -100,7 +100,25 @@ def test_normalize_unmatched_columns(db, tmp_path: Path) -> None:
         assert result.mapping[target] is None
 
     rows = db.execute("SELECT * FROM events").fetchall()
-    assert rows[0] == (None, None, None, None, None)
+    assert rows[0] == (None, None, None, None, None, None, None)
+
+
+def test_normalize_process_name_and_destination_ip(db, tmp_path: Path) -> None:
+    """Raw source columns for network-connection logs map to the new normalized fields."""
+    file = tmp_path / "netflow.csv"
+    file.write_text(
+        "timestamp,src_ip,dst_ip,process,event_type\n"
+        "2024-01-01T00:00:00,10.0.0.1,8.8.8.8,chrome.exe,Network Connection\n"
+    )
+
+    log = validate_log_file(file)
+    load_result = load_csv(log, db, table_name="raw_netflow")
+    result = NormalizationEngine().normalize_table(db, load_result)
+
+    assert result.mapping["process_name"] == "process"
+    assert result.mapping["destination_ip"] == "dst_ip"
+    rows = db.execute("SELECT process_name, destination_ip FROM events").fetchall()
+    assert rows[0] == ("chrome.exe", "8.8.8.8")
 
 
 def test_normalize_web_apache_timestamp_to_utc(db, tmp_path: Path) -> None:

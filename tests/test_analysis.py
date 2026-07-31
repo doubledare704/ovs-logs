@@ -231,6 +231,30 @@ def test_long_tail_analysis(db: duckdb.DuckDBPyConnection) -> None:
     assert all(row["total_connections"] == 7 for row in null_tail)
 
 
+def test_long_tail_analysis_via_normalization(db, tmp_path: Path) -> None:
+    """``long_tail_analysis`` runs without BinderException when events come from
+    the normalization engine (which now produces ``process_name``/``destination_ip``
+    columns, even when NULL for non-network sources)."""
+    csv_file = tmp_path / "netflow.csv"
+    csv_file.write_text(
+        "timestamp,client_ip,process_name,destination_ip,event_type,status_code\n"
+        "2024-01-01T00:00:00,10.0.0.1,cmd.exe,1.1.1.1,Network Connection,200\n"
+    )
+    log = validate_log_file(csv_file)
+    load_result = load_csv(log, db, table_name="raw_netflow")
+    NormalizationEngine().normalize_table(db, load_result)
+
+    results = AnalysisEngine().run_queries(
+        db,
+        thresholds={"long_tail_analysis": {"max_rare_count": 2, "limit": 50}},
+        template_names=["long_tail_analysis"],
+    )
+    long_tail = results["long_tail_analysis"]
+    assert len(long_tail) == 1
+    assert long_tail[0]["process_name"] == "cmd.exe"
+    assert long_tail[0]["destination_ip"] == "1.1.1.1"
+
+
 def test_aliased_query_handles_mixed_case_columns(db) -> None:
     """Uppercase raw column names must resolve via case-preserving quoted identifiers."""
     db.execute('CREATE TABLE raw_mixed ("Timestamp" VARCHAR, "Client_IP" VARCHAR, "Status" VARCHAR, "Method" VARCHAR)')

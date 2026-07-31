@@ -209,3 +209,42 @@ def test_synthesize_report_raises_value_error_when_no_api_key(
 
     with pytest.raises(ValueError, match="LLM synthesis requires an API key"):
         service.synthesize_report(db, [indicator], enrich_intel=False)
+
+
+def test_synthesize_report_allows_ollama_without_api_key(
+    db: duckdb.DuckDBPyConnection,
+    monkeypatch: pytest.MonkeyPatch,
+    mocker: MockerFixture,
+) -> None:
+    """_synthesize must not require an API key when the endpoint is local Ollama."""
+    monkeypatch.delenv("LLM_API_KEY", raising=False)
+
+    config = AnalysisConfig(
+        db_path=Path(":memory:"),
+        table="events",
+        llm=True,
+        llm_api_key=None,
+        llm_endpoint="http://localhost:11434",
+        llm_model="qwen3.5:4b",
+    )
+    service = AnalysisService(config)
+
+    indicator = SuspiciousIndicator(
+        type="top_talkers",
+        severity="Medium",
+        description="IP 1.2.3.4 generated 100 events",
+        evidence={"source_ip": "1.2.3.4", "event_count": 100},
+    )
+
+    mock_provider = mocker.patch("ovs_logs.services.analysis_service.create_llm_provider")
+    mock_synthesizer = mocker.patch("ovs_logs.services.analysis_service.LLMSynthesizer")
+    mock_report = mocker.Mock()
+    mock_synthesizer.return_value.synthesize.return_value = mock_report
+    mocker.patch.object(service._report_store, "save_report", return_value="report-ollama")
+
+    report_id = service.synthesize_report(db, [indicator], enrich_intel=False)
+
+    assert report_id == "report-ollama"
+    mock_provider.assert_called_once()
+    assert mock_provider.call_args.kwargs["api_key"] == ""
+    assert mock_provider.call_args.kwargs["endpoint"] == "http://localhost:11434"

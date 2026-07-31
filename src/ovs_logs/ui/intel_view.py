@@ -69,9 +69,9 @@ def _generate_and_save_report(
 
     try:
         report_id = service.synthesize_report(connection, indicators, enrich_intel=enrich_intel)
-    except (ValueError, requests.exceptions.RequestException):
+    except (ValueError, requests.exceptions.RequestException) as exc:
         logger.exception("LLM synthesis failed for table %s", table_name)
-        st.error("LLM synthesis failed. The response was incomplete.")
+        st.error(f"LLM synthesis failed: {exc}")
         return
 
     st.success(f"Report saved ({report_id})")

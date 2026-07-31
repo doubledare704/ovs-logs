@@ -12,6 +12,7 @@ from streamlit.testing.v1 import AppTest
 
 from ovs_logs.config.settings import Settings, settings
 from ovs_logs.core.analysis import engine
+from ovs_logs.core.database import ALLOWLIST_TABLE, insert_allowlisted_indicator
 from ovs_logs.core.ingestion import adapters
 from ovs_logs.core.persistence import ReportStore
 
@@ -355,6 +356,25 @@ def test_internal_report_table_excluded_from_navigator(tmp_path: Path) -> None:
 
     assert "events_2026" in selectbox_by_label(at, "Select a table").options
     assert ReportStore.TABLE_NAME not in selectbox_by_label(at, "Select a table").options
+
+
+def test_allowlisted_indicators_excluded_from_navigator(tmp_path: Path) -> None:
+    """The ``allowlisted_indicators`` table must not appear in the Recent Tables navigator."""
+    db = make_db(tmp_path, [("events_2026", "SELECT 1 AS id")])
+    with duckdb.connect(str(db)) as conn:
+        insert_allowlisted_indicator(
+            conn,
+            indicator_id="test-id",
+            indicator="10.0.0.1",
+            indicator_type="ip",
+        )
+
+    at = AppTest.from_file(str(APP_PATH)).run()
+    text_input_by_label(at, "Database path").set_value(str(db)).run()
+
+    options = selectbox_by_label(at, "Select a table").options
+    assert "events_2026" in options
+    assert ALLOWLIST_TABLE not in options
 
 
 def test_sidebar_llm_widgets_persist_to_session_state(monkeypatch: pytest.MonkeyPatch) -> None:

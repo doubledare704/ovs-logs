@@ -18,6 +18,7 @@ import streamlit as st
 from ovs_logs.config import settings as _cfg
 from ovs_logs.config.settings import DEFAULT_ENDPOINT_SENTINEL, LLM_PRESETS
 from ovs_logs.core.database import (
+    ALLOWLIST_TABLE,
     delete_allowlisted_indicator,
     insert_allowlisted_indicator,
     list_allowlisted_indicators,
@@ -41,6 +42,10 @@ _SYSTEM_TABLE_PREFIXES: tuple[str, ...] = (
     "_ovs_",
 )
 
+_SYSTEM_TABLES: frozenset[str] = frozenset({ALLOWLIST_TABLE})
+"""Exact table names that are internal bookkeeping and must not appear in the
+"Recent Tables" navigator or analysis flows."""
+
 _SYSTEM_SCHEMAS: tuple[str, ...] = (
     "information_schema",
     "pg_catalog",
@@ -59,6 +64,8 @@ def _read_user_tables(db_path: str) -> list[str]:
         if schema in _SYSTEM_SCHEMAS:
             continue
         if any(name.startswith(prefix) for prefix in _SYSTEM_TABLE_PREFIXES):
+            continue
+        if name in _SYSTEM_TABLES:
             continue
         table_names.append(name)
     return sorted(table_names)

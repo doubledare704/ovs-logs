@@ -61,6 +61,21 @@ FIELD_ALIASES: dict[str, list[str]] = {
         "log",
         "raw",
     ],
+    "process_name": [
+        "process_name",
+        "process",
+        "proc",
+        "executable",
+        "exe",
+        "image",
+    ],
+    "destination_ip": [
+        "destination_ip",
+        "dest_ip",
+        "dst_ip",
+        "destination",
+        "destination_address",
+    ],
 }
 
 
@@ -84,6 +99,8 @@ TARGET_TYPES: dict[str, str] = {
     "event_type": "VARCHAR",
     "status_code": "INTEGER",
     "raw_message": "VARCHAR",
+    "process_name": "VARCHAR",
+    "destination_ip": "VARCHAR",
 }
 
 

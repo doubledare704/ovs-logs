@@ -35,8 +35,10 @@ NORMALIZED_COLUMNS: tuple[str, ...] = (
     "event_type",
     "status_code",
     "raw_message",
+    "process_name",
+    "destination_ip",
 )
-"""The five canonical columns that the analysis engine and templates expect."""
+"""The canonical columns that the analysis engine and templates expect."""
 
 
 # ---------------------------------------------------------------------------

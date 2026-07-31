@@ -25,7 +25,7 @@ from ovs_logs.config.settings import Settings, settings as _default_settings
 from ovs_logs.core.analysis import AnalysisEngine, IndicatorProcessor
 from ovs_logs.core.analysis.indicators import SuspiciousIndicator, extract_unique_ips
 from ovs_logs.core.database import ALLOWLIST_TABLE, Database, _ensure_allowlist_table
-from ovs_logs.core.llm import LLMSynthesizer, create_llm_provider
+from ovs_logs.core.llm import LLMSynthesizer, create_llm_provider, is_ollama_endpoint
 from ovs_logs.core.persistence import ReportStore
 from ovs_logs.core.report import IncidentReport
 from ovs_logs.core.sql_utils import quote_identifier
@@ -284,8 +284,9 @@ class AnalysisService:
         Returns:
             A ``(report, report_id)`` tuple.
         """
-        api_key = self.config.llm_api_key or os.getenv("LLM_API_KEY")
-        if not api_key:
+        api_key = self.config.llm_api_key or os.getenv("LLM_API_KEY") or ""
+        endpoint = self.config.llm_endpoint or self._settings.llm.api_url
+        if not api_key and not is_ollama_endpoint(endpoint):
             raise ValueError(
                 "LLM synthesis requires an API key (set --llm-api-key, LLM_API_KEY, or configure in the UI sidebar)"
             )
