@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import re
 from collections.abc import Callable
@@ -44,93 +43,6 @@ def _detect_text_format(path: Path) -> str:
     ):
         return "jsonline"
     return "ambiguous"
-
-
-_WEB_TS_RE = re.compile(r"\[(\d{2}/\w{3}/\d{4}:\d{2}:\d{2}:\d{2}\s+[+\-]\d{4})\]")
-_WEB_IP_RE = re.compile(r"^([0-9]{1,3}(?:\.[0-9]{1,3}){3})")
-_WEB_STATUS_RE = re.compile(r'"\s+(\d{3})\s+')
-_WEB_EVENT_RE = re.compile(r'"(\w+)\s+\S+\s+HTTP')
-
-_SYSLOG_TS_RE = re.compile(r"^([A-Z][a-z]{2}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2})")
-_SYSLOG_IP_RE = re.compile(r"(?:from\s+)([0-9]{1,3}(?:\.[0-9]{1,3}){3})")
-_SYSLOG_EVENT_RE = re.compile(r"^[A-Z][a-z]{2}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}\s+\S+\s+([A-Za-z0-9_.-]+)(?:\[\d+\])?:")
-
-_JSON_TS_KEYS = ("ts", "timestamp", "time", "time_iso8601", "time_local")
-_JSON_IP_KEYS = ("src_ip", "source_ip", "ip", "remote_ip", "remote_addr")
-_JSON_STATUS_KEYS = ("status", "status_code", "response")
-_JSON_EVENT_KEYS = ("component", "event_type", "event", "method", "request")
-
-
-def _apply_extractors(text: str, patterns: dict[str, re.Pattern[str]]) -> dict[str, str]:
-    result: dict[str, str] = {}
-    for key, pattern in patterns.items():
-        m = pattern.search(text)
-        result[key] = m.group(1) if m else ""
-    return result
-
-
-def _extract_web(text: str) -> dict[str, str]:
-    return _apply_extractors(
-        text,
-        {
-            "timestamp": _WEB_TS_RE,
-            "source_ip": _WEB_IP_RE,
-            "status_code": _WEB_STATUS_RE,
-            "event_type": _WEB_EVENT_RE,
-        },
-    )
-
-
-def _extract_syslog(text: str) -> dict[str, str]:
-    base = _apply_extractors(
-        text,
-        {
-            "timestamp": _SYSLOG_TS_RE,
-            "source_ip": _SYSLOG_IP_RE,
-            "event_type": _SYSLOG_EVENT_RE,
-        },
-    )
-    base["status_code"] = ""
-    return base
-
-
-def _extract_jsonline(text: str) -> dict[str, str]:
-    try:
-        obj = json.loads(text)
-    except (json.JSONDecodeError, TypeError):
-        return {"timestamp": "", "source_ip": "", "status_code": "", "event_type": ""}
-    if not isinstance(obj, dict):
-        return {"timestamp": "", "source_ip": "", "status_code": "", "event_type": ""}
-
-    def _first(keys: tuple[str, ...]) -> str:
-        for key in keys:
-            if key in obj and obj[key] is not None:
-                return str(obj[key])
-        return ""
-
-    event_type = _first(_JSON_EVENT_KEYS)
-    if event_type and " " in event_type:
-        event_type = event_type.split()[0]
-    return {
-        "timestamp": _first(_JSON_TS_KEYS),
-        "source_ip": _first(_JSON_IP_KEYS),
-        "status_code": _first(_JSON_STATUS_KEYS),
-        "event_type": event_type,
-    }
-
-
-_FORMAT_EXTRACTORS: dict[str, Callable[[str], dict[str, str]]] = {
-    "web": _extract_web,
-    "syslog": _extract_syslog,
-    "jsonline": _extract_jsonline,
-}
-
-
-def _extract_hybrid(text: str, fmt: str) -> dict[str, str]:
-    extractor = _FORMAT_EXTRACTORS.get(fmt)
-    if extractor is None:
-        return {"timestamp": "", "source_ip": "", "status_code": "", "event_type": ""}
-    return extractor(text)
 
 
 def _build_structured_select_clause(fmt: str) -> str:

@@ -46,7 +46,7 @@ def build_result(connection: duckdb.DuckDBPyConnection, table_name: str) -> Load
     return LoadResult(table_name=table_name, row_count=row_count, schema=schema)
 
 
-def _run_evtx_tool(
+def run_evtx_tool(
     cmd: list[str],
     output_path: Path,
     tool_name: str,
@@ -79,7 +79,7 @@ def _run_evtx_tool(
         raise IngestionError(msg)
 
 
-def _load_csv_into_table(
+def load_csv_into_table(
     connection: duckdb.DuckDBPyConnection,
     name: str,
     csv_path: Path,
@@ -92,7 +92,7 @@ def _load_csv_into_table(
     return build_result(connection, name)
 
 
-def _load_json_into_table(
+def load_json_into_table(
     connection: duckdb.DuckDBPyConnection,
     name: str,
     json_path: Path,
@@ -161,15 +161,6 @@ def load_text_log(
     return build_result(connection, name)
 
 
-def _is_xml_node(value: Any) -> bool:
-    """Return True when a dict uses the pyevtx-rs XML-JSON node shape.
-
-    Real ``evtx`` records nest XML attributes under ``#attributes`` and text
-    under ``#text``. Such nodes must be unwrapped rather than recursed into.
-    """
-    return isinstance(value, dict) and ("#text" in value or "#attributes" in value)
-
-
 def _flatten_named_data_list(value: list[Any]) -> dict[str, Any] | None:
     """Collapse an EventData ``Data`` array into ``{Name: text}`` pairs.
 
@@ -190,27 +181,6 @@ def _flatten_named_data_list(value: list[Any]) -> dict[str, Any] | None:
         text = item.get("#text")
         named[attributes["Name"]] = text
     return named
-
-
-def _flatten_xml_node(node: dict[str, Any], parent_key: str) -> dict[str, Any]:
-    """Unwrap a single XML-JSON node into dotted keys.
-
-    ``#text`` collapses to the parent key's value, while ``#attributes``
-    children are hoisted to ``parent_<attr>`` keys. ``@``-prefixed attribute
-    names (an alternate convention) have the prefix stripped. When the node
-    is at the top level (no ``parent_key``), its ``#text`` is preserved under
-    a ``"#text"`` key rather than being silently dropped.
-    """
-    result: dict[str, Any] = {}
-    if "#text" in node:
-        result[parent_key if parent_key else "#text"] = node["#text"]
-    attributes = node.get("#attributes")
-    if isinstance(attributes, dict):
-        for attr_key, attr_value in attributes.items():
-            clean = attr_key[1:] if attr_key.startswith("@") else attr_key
-            next_key = f"{parent_key}_{clean}" if parent_key else clean
-            result[next_key] = attr_value
-    return result
 
 
 def _flatten_event_payload(value: Any, parent_key: str = "") -> dict[str, Any]:
