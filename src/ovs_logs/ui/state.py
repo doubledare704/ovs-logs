@@ -75,6 +75,16 @@ class SessionKeys:
     """list[str]: Names of threat-list files the user has checked in the sidebar."""
 
     # ------------------------------------------------------------------ #
+    # EVTX tool selection
+    # ------------------------------------------------------------------ #
+
+    evtx_tool: str = "evtx_tool"
+    """str: Selected EVTX processing tool ('default', 'hayabusa', etc.)."""
+
+    hayabusa_path: str = "hayabusa_path"
+    """str: Path to the Hayabusa binary, overridden from sidebar."""
+
+    # ------------------------------------------------------------------ #
     # Widget keys (passed as ``key=`` to Streamlit widgets)
     # ------------------------------------------------------------------ #
 
@@ -94,3 +104,5 @@ class SessionKeys:
     widget_allowlist_add_btn: str = "allowlist_add_btn"
     widget_allowlist_delete_prefix: str = "allowlist_delete_"
     """Prefix for per-entry delete buttons; full key is ``allowlist_delete_{id}``."""
+    widget_evtx_tool: str = "evtx_tool"
+    widget_hayabusa_path: str = "hayabusa_path"

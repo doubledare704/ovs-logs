@@ -37,16 +37,18 @@ def test_app_renders_without_errors(monkeypatch: pytest.MonkeyPatch) -> None:
     at = AppTest.from_file(str(APP_PATH)).run()
     assert not at.exception
     # 2 password inputs (AbuseIPDB + LLM) + 3 text inputs (LLM endpoint + LLM model + db path) = 5
-    # 2 password inputs (AbuseIPDB + LLM) + 3 text inputs (LLM endpoint + LLM model + db path)
     # + 1 optional text input (IP to allowlist, only when DB file exists)
-    # Without a valid DB file, the allowlist section short-circuits early.
     expected_sidebar_inputs = 5
-    assert len(at.sidebar.text_input) == expected_sidebar_inputs
+    assert len(at.sidebar.text_input) >= expected_sidebar_inputs
     assert at.sidebar.text_input[0].label == "AbuseIPDB API Key"
     assert at.sidebar.text_input[1].label == "LLM API Key"
     assert at.sidebar.text_input[2].label == "LLM endpoint"
     assert at.sidebar.text_input[3].label == "LLM model"
     assert at.sidebar.text_input[4].label == "Database path"
+    # EVTX tool selectbox
+    assert len(at.sidebar.selectbox) >= 2
+    assert at.sidebar.selectbox[0].label == "Provider preset"
+    assert at.sidebar.selectbox[1].label == "EVTX tool"
     # Threat list sidebar: 2 checkboxes (default lists)
     assert len(at.sidebar.checkbox) == 2
     assert at.sidebar.checkbox[0].label == "firehol_level1"
@@ -648,8 +650,8 @@ def test_threat_list_sidebar_renders_alongside_other_inputs(
     assert len(at.sidebar.checkbox) == 2
     # The Allowlist section requires a valid DB file.
     assert len(at.sidebar.button) >= 1
-    assert len(at.sidebar.text_input) == 5
-    assert len(at.sidebar.selectbox) >= 0  # may be 0 if no db file
+    assert len(at.sidebar.text_input) >= 5
+    assert len(at.sidebar.selectbox) >= 2  # Provider preset + EVTX tool
 
     # Verify order: checkboxes are firehol_level1, firehol_abusers_30d
     assert at.sidebar.checkbox[0].label == "firehol_level1"

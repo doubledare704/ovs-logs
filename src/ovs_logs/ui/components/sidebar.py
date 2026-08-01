@@ -23,6 +23,7 @@ from ovs_logs.core.database import (
     insert_allowlisted_indicator,
     list_allowlisted_indicators,
 )
+from ovs_logs.core.ingestion.adapters import EVTX_TOOL_CHOICES
 from ovs_logs.core.llm import is_ollama_endpoint
 from ovs_logs.core.threat_lists import (
     ensure_cache_dir as tl_ensure_cache_dir,
@@ -238,7 +239,7 @@ def _render_sidebar_threat_lists() -> None:
     _threat_list_download(enabled, threat_cache_dir)
 
 
-def render_sidebar() -> None:
+def render_sidebar() -> None:  # noqa: PLR0915
     """Render the configuration sidebar and persist state in session_state."""
     st.sidebar.title("OVS-Log Configuration")
 
@@ -302,6 +303,32 @@ def render_sidebar() -> None:
         value=st.session_state.get(SK.db_path, _cfg.settings.database.path),
         key=SK.widget_db_path,
         help="Path to the local DuckDB file used for ingestion and analysis.",
+    )
+
+    st.sidebar.subheader("EVTX Processing")
+
+    _EVTX_TOOL_LABELS = {
+        "default": "Default (PyEvtx)",
+        "hayabusa": "Hayabusa (CSV)",
+        "hayabusa-json": "Hayabusa (JSON)",
+        "evtxecmd": "EvtxECmd (CSV)",
+        "evtxecmd-json": "EvtxECmd (JSON)",
+    }
+    _ = st.sidebar.selectbox(
+        "EVTX tool",
+        options=list(EVTX_TOOL_CHOICES),
+        format_func=lambda k: _EVTX_TOOL_LABELS.get(k, k),
+        index=0,
+        key=SK.widget_evtx_tool,
+        help="Tool used to parse EVTX files. Default uses the built-in PyEvtx parser.",
+    )
+
+    _hayabusa_default = _cfg.settings.evtx_tools.hayabusa_path
+    _ = st.sidebar.text_input(
+        "Hayabusa path",
+        value=st.session_state.get(SK.hayabusa_path, _hayabusa_default),
+        key=SK.widget_hayabusa_path,
+        help="Full path to hayabusa.exe. Only used when Hayabusa tool is selected.",
     )
 
     _render_sidebar_threat_lists()

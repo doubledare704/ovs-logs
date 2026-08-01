@@ -7,7 +7,7 @@ import json
 import logging
 import subprocess
 import tempfile
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -54,8 +54,12 @@ def _run_evtx_tool(
     timeout_seconds: int,
 ) -> None:
     """Run an external EVTX tool and validate that it produced output."""
+    bin_path = Path(binary_path)
+    if bin_path.is_absolute() and not bin_path.is_file():
+        raise BinaryNotFoundError(f"{tool_name} binary not found: {binary_path}")
+
     try:
-        subprocess.run(
+        result = subprocess.run(
             cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, timeout=timeout_seconds
         )
     except FileNotFoundError as exc:
@@ -68,7 +72,11 @@ def _run_evtx_tool(
         raise IngestionError(f"{tool_name} timed out after {timeout_seconds}s") from exc
 
     if not output_path.is_file() or output_path.stat().st_size == 0:
-        raise IngestionError(f"{tool_name} produced no output at {output_path}")
+        stderr = result.stderr.strip() if result.stderr else ""
+        msg = f"{tool_name} produced no output at {output_path}"
+        if stderr:
+            msg += f"\n{tool_name} stderr:\n{stderr}"
+        raise IngestionError(msg)
 
 
 def _load_csv_into_table(
@@ -460,3 +468,16 @@ def load_evtx_via_evtxecmd_json(
 
     name = resolve_table_name(log_file, table_name)
     return _run_evtxecmd_json_workflow(log_file, connection, name, settings)
+
+
+EVTX_TOOL_ADAPTERS: dict[str, Callable[..., LoadResult]] = {
+    "default": load_evtx,
+    "hayabusa": load_evtx_via_hayabusa,
+    "hayabusa-json": load_evtx_via_hayabusa_json,
+    "evtxecmd": load_evtx_via_evtxecmd,
+    "evtxecmd-json": load_evtx_via_evtxecmd_json,
+}
+"""Selectable EVTX processing tools mapped to their ingestion adapters."""
+
+EVTX_TOOL_CHOICES: tuple[str, ...] = tuple(EVTX_TOOL_ADAPTERS)
+"""Valid ``--tool`` values and sidebar options, in canonical order."""

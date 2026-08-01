@@ -12,6 +12,8 @@ from ovs_logs.core.errors import BinaryNotFoundError, IngestionError
 from ovs_logs.core.ingestion import adapters
 from ovs_logs.core.ingestion.adapters import (
     EVTX_CSV_FIELDNAMES,
+    EVTX_TOOL_ADAPTERS,
+    EVTX_TOOL_CHOICES,
     LoadResult,
     load_csv,
     load_evtx,
@@ -30,6 +32,13 @@ EXPECTED_CSV_ROW_COUNT = 2
 EXPECTED_JSON_ROW_COUNT = 2
 EXPECTED_LOG_ROW_COUNT = 3
 EVTX_RECORD_ID = 12345
+
+
+def test_evtx_tool_choices_match_adapter_mapping() -> None:
+    """EVTX_TOOL_CHOICES must mirror EVTX_TOOL_ADAPTERS keys (single source of truth)."""
+    assert tuple(EVTX_TOOL_ADAPTERS) == EVTX_TOOL_CHOICES
+    assert set(EVTX_TOOL_ADAPTERS) == {"default", "hayabusa", "hayabusa-json", "evtxecmd", "evtxecmd-json"}
+    assert EVTX_TOOL_ADAPTERS["default"] is load_evtx
 
 
 def test_load_csv(db, tmp_path: Path) -> None:

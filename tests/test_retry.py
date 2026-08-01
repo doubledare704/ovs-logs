@@ -35,8 +35,8 @@ def test_retry_on_transient_then_success(mocker: MockerFixture) -> None:
             raise ConnectionError(msg)
         return "ok"
 
-    with mocker.patch("ovs_logs.core.retry.time.sleep", return_value=None):
-        result = wrapped()
+    mocker.patch("ovs_logs.core.retry.time.sleep", return_value=None)
+    result = wrapped()
 
     assert result == "ok"
     assert call_count == 2
@@ -54,10 +54,8 @@ def test_exhaustion_raises_last_exception(mocker: MockerFixture) -> None:
         call_count += 1
         raise exc
 
-    with (
-        mocker.patch("ovs_logs.core.retry.time.sleep", return_value=None),
-        pytest.raises(OSError, match="third"),
-    ):
+    mocker.patch("ovs_logs.core.retry.time.sleep", return_value=None)
+    with pytest.raises(OSError, match="third"):
         wrapped()
 
     assert call_count == 3
@@ -74,10 +72,8 @@ def test_on_retry_callback_invoked(mocker: MockerFixture) -> None:
     def wrapped() -> str:
         raise TimeoutError("timeout")
 
-    with (
-        mocker.patch("ovs_logs.core.retry.time.sleep", return_value=None),
-        pytest.raises(TimeoutError),
-    ):
+    mocker.patch("ovs_logs.core.retry.time.sleep", return_value=None)
+    with pytest.raises(TimeoutError):
         wrapped()
 
     assert len(calls) == 2
@@ -95,10 +91,8 @@ def test_exponential_backoff_timing(mocker: MockerFixture) -> None:
     def wrapped() -> str:
         raise RuntimeError("fail")
 
-    with (
-        mocker.patch("ovs_logs.core.retry.time.sleep", side_effect=sleeps.append),
-        pytest.raises(RuntimeError),
-    ):
+    mocker.patch("ovs_logs.core.retry.time.sleep", side_effect=sleeps.append)
+    with pytest.raises(RuntimeError):
         wrapped()
 
     assert sleeps == [1.0, 2.0, 4.0]

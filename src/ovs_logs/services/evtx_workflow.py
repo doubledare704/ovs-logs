@@ -80,6 +80,7 @@ def _run_hayabusa_json_workflow(
             "-o",
             str(tmp_path),
             "-w",
+            "-L",
         ]
         _run_evtx_tool(
             cmd, tmp_path, "hayabusa", settings.evtx_tools.hayabusa_path, settings.evtx_tools.timeout_seconds

@@ -16,7 +16,7 @@ from ovs_logs import __version__
 from ovs_logs.config.settings import settings
 from ovs_logs.core.database import Database
 from ovs_logs.core.errors import classify_error, error_category
-from ovs_logs.core.ingestion.adapters import LoadResult
+from ovs_logs.core.ingestion.adapters import EVTX_TOOL_ADAPTERS, EVTX_TOOL_CHOICES, LoadResult
 from ovs_logs.core.normalization import NormalizationEngine
 from ovs_logs.core.persistence import ReportStore
 from ovs_logs.core.report import IncidentReport
@@ -49,9 +49,17 @@ def _perform_ingest(
     file: Path,
     file_type: str | None,
     table: str | None,
+    tool: str | None = None,
 ) -> tuple[LoadResult, bool]:
     log_file = _resolve_log_file(file, file_type)
-    adapter = INGESTION_ADAPTERS.get(log_file.format)
+
+    if tool and log_file.format == "evtx":
+        adapter = EVTX_TOOL_ADAPTERS.get(tool)
+        if adapter is None:
+            raise ValueError(f"Unknown EVTX tool '{tool}'. Choices: {sorted(EVTX_TOOL_ADAPTERS)}")
+    else:
+        adapter = INGESTION_ADAPTERS.get(log_file.format)
+
     if adapter is None:
         raise ValueError(f"No ingestion adapter for format '{log_file.format}'")
 
@@ -97,10 +105,11 @@ def ingest(
     ),
     db: Path = typer.Option(Path(settings.database.path), "--db", help="DuckDB database path"),
     table: str | None = typer.Option(None, "--table", help="Destination raw table name (auto-generated if omitted)"),
+    tool: str | None = typer.Option(None, "--tool", help=f"EVTX processing tool ({', '.join(EVTX_TOOL_CHOICES)})"),
 ) -> None:
     """Ingest a log file into DuckDB and normalize it into the events table."""
     try:
-        load_result, _ = _perform_ingest(db, file, file_type, table)
+        load_result, _ = _perform_ingest(db, file, file_type, table, tool=tool)
         console.print(f"[bold]Loaded[/bold] {load_result.row_count} rows into {load_result.table_name}")
         schema = ", ".join(name for name, _ in load_result.schema)
         console.print(f"[bold]Schema:[/bold] {schema}")
@@ -117,6 +126,7 @@ def process(  # noqa: PLR0913
     ),
     db: Path = typer.Option(Path(settings.database.path), "--db", help="DuckDB database path"),
     table: str | None = typer.Option(None, "--table", help="Destination raw table name (auto-generated if omitted)"),
+    tool: str | None = typer.Option(None, "--tool", help=f"EVTX processing tool ({', '.join(EVTX_TOOL_CHOICES)})"),
     intel: bool = typer.Option(False, "--intel", help="Enable AbuseIPDB enrichment"),
     llm: bool = typer.Option(False, "--llm", help="Enable LLM synthesis"),
     abuseipdb_api_key: str | None = typer.Option(None, "--abuseipdb-api-key", help="AbuseIPDB API key"),
@@ -125,7 +135,7 @@ def process(  # noqa: PLR0913
 ) -> None:
     """Ingest a log file into DuckDB and immediately analyze it."""
     try:
-        load_result, was_normalized = _perform_ingest(db, file, file_type, table)
+        load_result, was_normalized = _perform_ingest(db, file, file_type, table, tool=tool)
         console.print(f"[bold]Loaded[/bold] {load_result.row_count} rows into {load_result.table_name}")
         schema = ", ".join(name for name, _ in load_result.schema)
         console.print(f"[bold]Schema:[/bold] {schema}")

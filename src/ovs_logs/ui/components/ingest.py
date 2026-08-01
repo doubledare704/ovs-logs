@@ -13,7 +13,9 @@ from typing import Any
 import duckdb
 import streamlit as st
 
+from ovs_logs.config.settings import EVTXToolSettings, Settings
 from ovs_logs.core.database import Database
+from ovs_logs.core.ingestion.adapters import EVTX_TOOL_ADAPTERS
 from ovs_logs.core.normalization import NormalizationEngine
 from ovs_logs.core.text_parsing import INGESTION_ADAPTERS
 from ovs_logs.core.validation import validate_log_file
@@ -22,6 +24,22 @@ from ovs_logs.ui.state import SessionKeys
 logger = logging.getLogger(__name__)
 
 SK = SessionKeys()
+
+
+def _apply_evtx_settings() -> None:
+    """Push sidebar EVTX tool settings into the adapter module."""
+    from ovs_logs.core.ingestion import adapters  # noqa: PLC0415
+
+    hayabusa_path = st.session_state.get(SK.hayabusa_path, "")
+    if hayabusa_path:
+        new_settings = Settings(
+            evtx_tools=EVTXToolSettings(
+                hayabusa_path=hayabusa_path,
+                evtxecmd_path=adapters.settings.evtx_tools.evtxecmd_path,
+                timeout_seconds=adapters.settings.evtx_tools.timeout_seconds,
+            )
+        )
+        adapters.settings = new_settings
 
 
 def _run_batch_normalization(
@@ -41,7 +59,7 @@ def _run_batch_normalization(
             ingested_file["normalized_row_count"] = row_count
 
 
-def process_ready_files(db_path: str) -> None:
+def process_ready_files(db_path: str) -> None:  # noqa: PLR0912
     """Ingest all validated files into DuckDB and normalize them.
 
     Updates session state file entries with ingestion results (success or
@@ -58,11 +76,20 @@ def process_ready_files(db_path: str) -> None:
         return
 
     errors: list[str] = []
+    evtx_tool = st.session_state.get(SK.evtx_tool, "default")
+    _apply_evtx_settings()
     with st.spinner("Ingesting files into DuckDB and normalizing..."), Database(db_path) as connection:
         for file_state in ready_files:
             try:
                 log_file = validate_log_file(file_state["temp_path"])
-                adapter = INGESTION_ADAPTERS.get(log_file.format)
+
+                if log_file.format == "evtx" and evtx_tool != "default":
+                    adapter = EVTX_TOOL_ADAPTERS.get(evtx_tool)
+                    if adapter is None:
+                        raise ValueError(f"Unknown EVTX tool '{evtx_tool}'")  # noqa: TRY301
+                else:
+                    adapter = INGESTION_ADAPTERS.get(log_file.format)
+
                 if adapter is None:
                     raise ValueError(f"No ingestion adapter for format '{log_file.format}'")  # noqa: TRY301
 
@@ -74,6 +101,10 @@ def process_ready_files(db_path: str) -> None:
                 file_state["schema"] = load_result.schema
                 file_state["validation_error"] = None
             except (OSError, duckdb.Error, RuntimeError, ValueError) as exc:
+                file_state["status"] = "error"
+                file_state["validation_error"] = str(exc)
+                errors.append(f"{file_state['name']}: {exc}")
+            except Exception as exc:
                 file_state["status"] = "error"
                 file_state["validation_error"] = str(exc)
                 errors.append(f"{file_state['name']}: {exc}")
@@ -89,3 +120,4 @@ def process_ready_files(db_path: str) -> None:
             st.error(error)
     else:
         st.success("Ingestion and normalization finished successfully.")
+        st.rerun()
