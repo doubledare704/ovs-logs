@@ -93,7 +93,7 @@ def process_ready_files(db_path: str) -> None:  # noqa: PLR0912
                 if adapter is None:
                     raise ValueError(f"No ingestion adapter for format '{log_file.format}'")  # noqa: TRY301
 
-                load_result = adapter(log_file, connection)
+                load_result = adapter(log_file, connection, None)
 
                 file_state["status"] = "ingested"
                 file_state["ingest_table"] = load_result.table_name

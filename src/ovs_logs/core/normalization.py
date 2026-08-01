@@ -8,7 +8,7 @@ from dataclasses import dataclass
 
 import duckdb
 
-from ovs_logs.core.ingestion.adapters import LoadResult
+from ovs_logs.core.ingestion.adapters import IngestionResult
 from ovs_logs.core.sql_utils import quote_identifier, timestamp_cast_expression
 
 logger = logging.getLogger(__name__)
@@ -247,7 +247,7 @@ class NormalizationEngine:
         row = connection.execute("SELECT COUNT(*) FROM events").fetchone()
         return row[0] if row is not None else 0
 
-    def normalize_table(self, connection: duckdb.DuckDBPyConnection, load_result: LoadResult) -> NormalizeResult:
+    def normalize_table(self, connection: duckdb.DuckDBPyConnection, load_result: IngestionResult) -> NormalizeResult:
         """Create or replace the unified `events` table from a raw load result."""
         raw_columns = [name for name, _ in load_result.schema]
         sql, mapping = self.build_sql(load_result.table_name, raw_columns)

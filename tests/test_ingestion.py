@@ -1,5 +1,6 @@
 """Tests for the DuckDB ingestion adapters."""
 
+import json
 import subprocess
 from pathlib import Path
 from subprocess import CalledProcessError, TimeoutExpired
@@ -14,7 +15,7 @@ from ovs_logs.core.ingestion.adapters import (
     EVTX_CSV_FIELDNAMES,
     EVTX_TOOL_ADAPTERS,
     EVTX_TOOL_CHOICES,
-    LoadResult,
+    IngestionResult,
     load_csv,
     load_evtx,
     load_evtx_via_evtxecmd,
@@ -48,7 +49,7 @@ def test_load_csv(db, tmp_path: Path) -> None:
     log = validate_log_file(file)
     result = load_csv(log, db, table_name="test_csv")
 
-    assert isinstance(result, LoadResult)
+    assert isinstance(result, IngestionResult)
     assert result.table_name == "test_csv"
     assert result.row_count == EXPECTED_CSV_ROW_COUNT
     assert {"timestamp", "client_ip", "status"}.issubset(schema_columns(result.schema))
@@ -87,36 +88,39 @@ def test_load_evtx_converts_to_csv(db, tmp_path: Path, monkeypatch: pytest.Monke
             self.path = path
 
         def records_json(self):
+            data_json_str = json.dumps(
+                {
+                    "Event": {
+                        "System": {
+                            "Provider": {
+                                "#attributes": {
+                                    "Name": "Microsoft-Windows-Security-Auditing",
+                                    "Guid": "{guid}",
+                                }
+                            },
+                            "EventID": {"#text": 4624, "#attributes": {"Qualifiers": "0"}},
+                            "Version": 2,
+                            "Level": 0,
+                            "Task": 12544,
+                            "TimeCreated": {"#attributes": {"SystemTime": "2024-01-01T00:00:00Z"}},
+                            "Channel": "Security",
+                            "Computer": "HOST.example.com",
+                        },
+                        "EventData": {
+                            "Data": [
+                                {"#attributes": {"Name": "SubjectUserName"}, "#text": "alice"},
+                                {"#attributes": {"Name": "IpAddress"}, "#text": "1.2.3.4"},
+                                {"#attributes": {"Name": "StatusCode"}, "#text": "0"},
+                            ]
+                        },
+                    }
+                }
+            )
             return [
                 {
                     "event_record_id": EVTX_RECORD_ID,
                     "timestamp": "2024-01-01T00:00:00Z",
-                    "data": {
-                        "Event": {
-                            "System": {
-                                "Provider": {
-                                    "#attributes": {
-                                        "Name": "Microsoft-Windows-Security-Auditing",
-                                        "Guid": "{guid}",
-                                    }
-                                },
-                                "EventID": {"#text": 4624, "#attributes": {"Qualifiers": "0"}},
-                                "Version": 2,
-                                "Level": 0,
-                                "Task": 12544,
-                                "TimeCreated": {"#attributes": {"SystemTime": "2024-01-01T00:00:00Z"}},
-                                "Channel": "Security",
-                                "Computer": "HOST.example.com",
-                            },
-                            "EventData": {
-                                "Data": [
-                                    {"#attributes": {"Name": "SubjectUserName"}, "#text": "alice"},
-                                    {"#attributes": {"Name": "IpAddress"}, "#text": "1.2.3.4"},
-                                    {"#attributes": {"Name": "StatusCode"}, "#text": "0"},
-                                ]
-                            },
-                        }
-                    },
+                    "data": data_json_str,
                 }
             ]
 
@@ -174,7 +178,9 @@ def test_extract_evtx_fields_preserves_list_values_as_json_arrays() -> None:
         {"identifier": "1"},
     )
 
-    assert '"EventData_Tags": ["alpha", "beta"]' in row["message"]
+    message = row["message"]
+    assert isinstance(message, str)
+    assert '"EventData_Tags": ["alpha", "beta"]' in message
 
 
 def test_load_evtx_cleans_up_temporary_csv_on_parser_error(db, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

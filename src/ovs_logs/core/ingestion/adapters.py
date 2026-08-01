@@ -1,7 +1,5 @@
 """DuckDB ingestion adapters for supported log formats."""
 
-from __future__ import annotations
-
 import csv
 import json
 import logging
@@ -10,7 +8,6 @@ import tempfile
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 import duckdb
 from evtx import PyEvtxParser
@@ -21,10 +18,15 @@ from ovs_logs.core.errors import BinaryNotFoundError, IngestionError
 from ovs_logs.core.sql_utils import quote_identifier, resolve_table_name
 from ovs_logs.core.validation import LogFile
 
+type FilePath = str | Path
+type DuckDBConn = duckdb.DuckDBPyConnection
+type TableName = str | None
+type EvtxAdapterFunc = Callable[[LogFile, DuckDBConn, TableName], IngestionResult]
 
-@dataclass(frozen=True)
-class LoadResult:
-    """Metadata returned after a successful ingestion."""
+
+@dataclass(frozen=True, slots=True)
+class IngestionResult:
+    """Represents the outcome of a successful log ingestion operation."""
 
     table_name: str
     row_count: int
@@ -36,14 +38,14 @@ class LoadResult:
         return len(self.schema) == 1 and self.schema[0][0] == "line"
 
 
-def build_result(connection: duckdb.DuckDBPyConnection, table_name: str) -> LoadResult:
+def build_result(connection: DuckDBConn, table_name: str) -> IngestionResult:
     """Query the loaded table for row count and schema."""
     quoted_name = quote_identifier(table_name)
     row = connection.execute(f"SELECT COUNT(*) FROM {quoted_name}").fetchone()
     row_count = int(row[0]) if row is not None else 0
     schema_rows = connection.execute(f"DESCRIBE {quoted_name}").fetchall()
     schema = [(row[0], row[1]) for row in schema_rows]
-    return LoadResult(table_name=table_name, row_count=row_count, schema=schema)
+    return IngestionResult(table_name=table_name, row_count=row_count, schema=schema)
 
 
 def run_evtx_tool(
@@ -80,10 +82,10 @@ def run_evtx_tool(
 
 
 def load_csv_into_table(
-    connection: duckdb.DuckDBPyConnection,
+    connection: DuckDBConn,
     name: str,
     csv_path: Path,
-) -> LoadResult:
+) -> IngestionResult:
     quoted_name = quote_identifier(name)
     connection.execute(
         f"CREATE OR REPLACE TABLE {quoted_name} AS SELECT * FROM read_csv_auto(?, header=true, all_varchar=true)",
@@ -93,10 +95,10 @@ def load_csv_into_table(
 
 
 def load_json_into_table(
-    connection: duckdb.DuckDBPyConnection,
+    connection: DuckDBConn,
     name: str,
     json_path: Path,
-) -> LoadResult:
+) -> IngestionResult:
     quoted_name = quote_identifier(name)
     connection.execute(
         f"CREATE OR REPLACE TABLE {quoted_name} AS SELECT * FROM read_json_auto(?)",
@@ -107,9 +109,9 @@ def load_json_into_table(
 
 def load_csv(
     log_file: LogFile,
-    connection: duckdb.DuckDBPyConnection,
-    table_name: str | None = None,
-) -> LoadResult:
+    connection: DuckDBConn,
+    table_name: TableName = None,
+) -> IngestionResult:
     """Load a CSV file into DuckDB using ``read_csv_auto``."""
     name = resolve_table_name(log_file, table_name)
     quoted_name = quote_identifier(name)
@@ -123,9 +125,9 @@ def load_csv(
 
 def load_json(
     log_file: LogFile,
-    connection: duckdb.DuckDBPyConnection,
-    table_name: str | None = None,
-) -> LoadResult:
+    connection: DuckDBConn,
+    table_name: TableName = None,
+) -> IngestionResult:
     """Load a JSON file into DuckDB using ``read_json_auto``."""
     name = resolve_table_name(log_file, table_name)
     quoted_name = quote_identifier(name)
@@ -138,9 +140,9 @@ def load_json(
 
 def load_text_log(
     log_file: LogFile,
-    connection: duckdb.DuckDBPyConnection,
-    table_name: str | None = None,
-) -> LoadResult:
+    connection: DuckDBConn,
+    table_name: TableName = None,
+) -> IngestionResult:
     """Load an unstructured text or log file into a single-column DuckDB table.
 
     DuckDB reads the source file directly into a ``line`` column in parallel C++,
@@ -161,7 +163,7 @@ def load_text_log(
     return build_result(connection, name)
 
 
-def _flatten_named_data_list(value: list[Any]) -> dict[str, Any] | None:
+def _flatten_named_data_list(value: list[object]) -> dict[str, object] | None:
     """Collapse an EventData ``Data`` array into ``{Name: text}`` pairs.
 
     pyevtx-rs renders ``<Data Name="IpAddress">1.2.3.4</Data>`` as
@@ -171,7 +173,7 @@ def _flatten_named_data_list(value: list[Any]) -> dict[str, Any] | None:
     """
     if not value:
         return None
-    named: dict[str, Any] = {}
+    named: dict[str, object] = {}
     for item in value:
         if not isinstance(item, dict):
             return None
@@ -183,7 +185,7 @@ def _flatten_named_data_list(value: list[Any]) -> dict[str, Any] | None:
     return named
 
 
-def _flatten_event_payload(value: Any, parent_key: str = "") -> dict[str, Any]:
+def _flatten_event_payload(value: object, parent_key: str = "") -> dict[str, object]:
     """Recursively flatten a nested mapping into a dotted-key dictionary.
 
     XML-JSON nodes (``#text`` / ``#attributes``) are unwrapped and named
@@ -199,7 +201,7 @@ def _flatten_event_payload(value: Any, parent_key: str = "") -> dict[str, Any]:
         return {parent_key: value} if parent_key else {}
 
     if isinstance(value, dict):
-        flattened: dict[str, Any] = {}
+        flattened: dict[str, object] = {}
         if "#text" in value:
             flattened[parent_key if parent_key else "#text"] = value["#text"]
         attributes = value.get("#attributes")
@@ -219,7 +221,7 @@ def _flatten_event_payload(value: Any, parent_key: str = "") -> dict[str, Any]:
     return {parent_key: value} if parent_key else {}
 
 
-def _first_non_empty(flattened: dict[str, Any], keys: Sequence[str]) -> Any:
+def _first_non_empty(flattened: dict[str, object], keys: Sequence[str]) -> object | None:
     """Return the first non-empty value among ``keys``, or ``None``."""
     return next(
         (flattened[key] for key in keys if key in flattened and flattened[key] not in (None, "")),
@@ -227,7 +229,7 @@ def _first_non_empty(flattened: dict[str, Any], keys: Sequence[str]) -> Any:
     )
 
 
-def _extract_evtx_fields(event_data: dict[str, Any], record: dict[str, Any]) -> dict[str, Any]:
+def _extract_evtx_fields(event_data: dict[str, dict], record: dict[str, object]) -> dict[str, object]:
     """Create a flat row from parsed EVTX data and parser metadata."""
     flattened = _flatten_event_payload(event_data)
 
@@ -262,7 +264,7 @@ def _extract_evtx_fields(event_data: dict[str, Any], record: dict[str, Any]) -> 
 
     message = json.dumps(flattened, ensure_ascii=False, sort_keys=True)
 
-    row: dict[str, Any] = {
+    row: dict[str, object] = {
         "timestamp": timestamp,
         "event": event_id,
         "message": message,
@@ -290,30 +292,24 @@ def _write_evtx_records(
     for record in records:
         if record is None:
             continue
-        payload = record.get("data")
-        if isinstance(payload, str):
-            try:
-                event_data: dict[str, Any] = json.loads(payload)
-            except json.JSONDecodeError as exc:
-                raise RuntimeError(
-                    f"Unable to parse EVTX record {record.get('event_record_id', record.get('identifier'))}"
-                ) from exc
-        elif isinstance(payload, dict):
-            event_data = payload
-        else:
-            event_data = {"raw": payload}
 
-        if "Event" in event_data and set(event_data.keys()) == {"Event"}:
-            event_data = event_data["Event"]
+        payload: str = record.get("data")
+        try:
+            event_data: dict[str, dict] = json.loads(payload)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(
+                f"Unable to parse EVTX record {record.get('event_record_id', record.get('identifier'))}"
+            ) from exc
 
+        event_data = event_data["Event"]
         writer.writerow(_extract_evtx_fields(event_data, record))
 
 
 def load_evtx(
     log_file: LogFile,
-    connection: duckdb.DuckDBPyConnection,
-    table_name: str | None = None,
-) -> LoadResult:
+    connection: DuckDBConn,
+    table_name: TableName = None,
+) -> IngestionResult:
     """Convert an EVTX file into a temporary CSV and load it into DuckDB."""
     name = resolve_table_name(log_file, table_name)
 
@@ -345,7 +341,7 @@ def load_evtx(
     return build_result(connection, name)
 
 
-def iter_evtx_record_summaries(path: Path, max_records: int = 50) -> list[dict[str, Any]]:
+def iter_evtx_record_summaries(path: Path, max_records: int = 50) -> list[dict[str, object]]:
     """Return lightweight per-record summaries for a UI preview.
 
     Each summary contains ``record_id``, ``timestamp``, ``event_id``,
@@ -353,7 +349,7 @@ def iter_evtx_record_summaries(path: Path, max_records: int = 50) -> list[dict[s
     Parser/IO errors propagate to the caller.
     """
     parser = PyEvtxParser(str(path.resolve()))
-    summaries: list[dict[str, Any]] = []
+    summaries: list[dict[str, object]] = []
     for index, record in enumerate(parser.records_json()):
         if index >= max_records:
             break
@@ -384,9 +380,9 @@ def iter_evtx_record_summaries(path: Path, max_records: int = 50) -> list[dict[s
 
 def load_evtx_via_hayabusa(
     log_file: LogFile,
-    connection: duckdb.DuckDBPyConnection,
-    table_name: str | None = None,
-) -> LoadResult:
+    connection: DuckDBConn,
+    table_name: TableName = None,
+) -> IngestionResult:
     """Load an EVTX file via the Hayabusa CLI binary (csv-timeline subcommand).
 
     Hayabusa outputs only events that match its Sigma rules as a CSV timeline.
@@ -401,9 +397,9 @@ def load_evtx_via_hayabusa(
 
 def load_evtx_via_evtxecmd(
     log_file: LogFile,
-    connection: duckdb.DuckDBPyConnection,
-    table_name: str | None = None,
-) -> LoadResult:
+    connection: DuckDBConn,
+    table_name: TableName = None,
+) -> IngestionResult:
     """Load an EVTX file via the EvtxECmd CLI binary (--csv output).
 
     EvtxECmd outputs all events with map-enhanced fields as CSV.
@@ -418,9 +414,9 @@ def load_evtx_via_evtxecmd(
 
 def load_evtx_via_hayabusa_json(
     log_file: LogFile,
-    connection: duckdb.DuckDBPyConnection,
-    table_name: str | None = None,
-) -> LoadResult:
+    connection: DuckDBConn,
+    table_name: TableName = None,
+) -> IngestionResult:
     """Load an EVTX file via Hayabusa JSON timeline output."""
     from ovs_logs.services.evtx_workflow import _run_hayabusa_json_workflow  # noqa: PLC0415
 
@@ -430,9 +426,9 @@ def load_evtx_via_hayabusa_json(
 
 def load_evtx_via_evtxecmd_json(
     log_file: LogFile,
-    connection: duckdb.DuckDBPyConnection,
-    table_name: str | None = None,
-) -> LoadResult:
+    connection: DuckDBConn,
+    table_name: TableName = None,
+) -> IngestionResult:
     """Load an EVTX file via EvtxECmd JSON output."""
     from ovs_logs.services.evtx_workflow import _run_evtxecmd_json_workflow  # noqa: PLC0415
 
@@ -440,7 +436,7 @@ def load_evtx_via_evtxecmd_json(
     return _run_evtxecmd_json_workflow(log_file, connection, name, settings)
 
 
-EVTX_TOOL_ADAPTERS: dict[str, Callable[..., LoadResult]] = {
+EVTX_TOOL_ADAPTERS: dict[str, EvtxAdapterFunc] = {
     "default": load_evtx,
     "hayabusa": load_evtx_via_hayabusa,
     "hayabusa-json": load_evtx_via_hayabusa_json,

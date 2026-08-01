@@ -1,7 +1,7 @@
 """Ingestion adapters for loading raw logs into DuckDB."""
 
 from .adapters import (
-    LoadResult,
+    IngestionResult,
     load_csv,
     load_evtx,
     load_evtx_via_evtxecmd,
@@ -13,7 +13,7 @@ from .adapters import (
 )
 
 __all__ = [
-    "LoadResult",
+    "IngestionResult",
     "load_csv",
     "load_evtx",
     "load_evtx_via_evtxecmd",

@@ -1,17 +1,16 @@
 """Reusable retry decorator with exponential backoff for transient failures."""
 
-from __future__ import annotations
-
 import functools
 import logging
 import time
 from collections.abc import Callable
-from typing import ParamSpec, TypeVar
-
-P = ParamSpec("P")
-R = TypeVar("R")
+from typing import Protocol
 
 logger = logging.getLogger(__name__)
+
+
+class _RetryDecorator(Protocol):
+    def __call__[**P, R](self, func: Callable[P, R]) -> Callable[P, R]: ...
 
 
 def retry(
@@ -19,7 +18,7 @@ def retry(
     backoff_seconds: float = 1.0,
     exceptions: tuple[type[Exception], ...] = (Exception,),
     on_retry: Callable[[Exception, int], None] | None = None,
-) -> Callable[[Callable[P, R]], Callable[P, R]]:
+) -> _RetryDecorator:
     """Decorator that retries the wrapped callable on transient exceptions.
 
     After *max_retries* consecutive failures the last exception is re-raised
@@ -44,7 +43,7 @@ def retry(
             return requests.get(url, timeout=5).content
     """
 
-    def decorator(func: Callable[P, R]) -> Callable[P, R]:
+    def decorator[**P, R](func: Callable[P, R]) -> Callable[P, R]:
         @functools.wraps(func)
         def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
             last_exc: Exception | None = None
@@ -57,6 +56,7 @@ def retry(
                         delay = backoff_seconds * (2**attempt)
                         if on_retry is not None:
                             on_retry(exc, attempt)
+
                         logger.debug(
                             "Retrying %s after attempt %d/%d (delay=%.1fs)",
                             func.__name__,
@@ -65,8 +65,11 @@ def retry(
                             delay,
                         )
                         time.sleep(delay)
-            # All attempts exhausted — re-raise the last exception.
-            raise last_exc  # type: ignore[misc]
+
+            if last_exc is not None:
+                raise last_exc
+
+            raise RuntimeError("Retry loop exhausted without exceptions.")
 
         return wrapper
 

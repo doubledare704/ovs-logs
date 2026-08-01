@@ -150,6 +150,9 @@ class ThreatIntelClient:
         succeed on retry (5xx, 429).  The :meth:`_make_request` wrapper
         (decorated with ``@retry``) handles the backoff and retry logic.
         """
+        if not self.api_key:
+            raise ThreatIntelError("AbuseIPDB API key is required; set ABUSEIPDB_API_KEY")
+
         self.rate_limiter.wait()
         response = requests.get(
             self.endpoint,
@@ -253,6 +256,9 @@ class VirusTotalClient:
         return status_code >= _TRANSIENT_STATUS_MIN or status_code == _RATE_LIMIT_STATUS
 
     def _make_request_impl(self, file_hash: str) -> requests.Response:
+        if not self.api_key:
+            raise ThreatIntelError("VirusTotal API key is required; set VIRUSTOTAL_API_KEY")
+
         self.rate_limiter.wait()
         response = requests.get(
             self.endpoint.format(file_hash=file_hash),

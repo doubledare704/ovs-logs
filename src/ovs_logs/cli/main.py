@@ -16,7 +16,7 @@ from ovs_logs import __version__
 from ovs_logs.config.settings import settings
 from ovs_logs.core.database import Database
 from ovs_logs.core.errors import classify_error, error_category
-from ovs_logs.core.ingestion.adapters import EVTX_TOOL_ADAPTERS, EVTX_TOOL_CHOICES, LoadResult
+from ovs_logs.core.ingestion.adapters import EVTX_TOOL_ADAPTERS, EVTX_TOOL_CHOICES, IngestionResult
 from ovs_logs.core.normalization import NormalizationEngine
 from ovs_logs.core.persistence import ReportStore
 from ovs_logs.core.report import IncidentReport
@@ -50,7 +50,7 @@ def _perform_ingest(
     file_type: str | None,
     table: str | None,
     tool: str | None = None,
-) -> tuple[LoadResult, bool]:
+) -> tuple[IngestionResult, bool]:
     log_file = _resolve_log_file(file, file_type)
 
     if tool and log_file.format == "evtx":
@@ -64,7 +64,7 @@ def _perform_ingest(
         raise ValueError(f"No ingestion adapter for format '{log_file.format}'")
 
     with Database(db) as connection:
-        load_result = adapter(log_file, connection, table_name=table)
+        load_result = adapter(log_file, connection, table)
         if not load_result.is_unstructured:
             tables = [(load_result.table_name, [name for name, _ in load_result.schema])]
             NormalizationEngine().normalize_batch(connection, tables)

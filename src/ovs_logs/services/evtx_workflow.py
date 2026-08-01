@@ -9,7 +9,7 @@ import duckdb
 
 from ovs_logs.config.settings import Settings
 from ovs_logs.core.ingestion.adapters import (
-    LoadResult,
+    IngestionResult,
     load_csv_into_table,
     load_json_into_table,
     run_evtx_tool,
@@ -22,7 +22,7 @@ def _run_hayabusa_workflow(
     connection: duckdb.DuckDBPyConnection,
     table_name: str,
     settings: Settings,
-) -> LoadResult:
+) -> IngestionResult:
     with tempfile.TemporaryDirectory() as tmp_dir:
         tmp_path = Path(tmp_dir) / f"{table_name}.csv"
         cmd = [
@@ -43,7 +43,7 @@ def _run_evtxecmd_workflow(
     connection: duckdb.DuckDBPyConnection,
     table_name: str,
     settings: Settings,
-) -> LoadResult:
+) -> IngestionResult:
     with tempfile.TemporaryDirectory() as tmp_dir:
         output_filename = f"{table_name}.csv"
         cmd = [
@@ -67,7 +67,7 @@ def _run_hayabusa_json_workflow(
     connection: duckdb.DuckDBPyConnection,
     table_name: str,
     settings: Settings,
-) -> LoadResult:
+) -> IngestionResult:
     with tempfile.TemporaryDirectory() as tmp_dir:
         tmp_path = Path(tmp_dir) / f"{table_name}.json"
         cmd = [
@@ -89,7 +89,7 @@ def _run_evtxecmd_json_workflow(
     connection: duckdb.DuckDBPyConnection,
     table_name: str,
     settings: Settings,
-) -> LoadResult:
+) -> IngestionResult:
     with tempfile.TemporaryDirectory() as tmp_dir:
         output_filename = f"{table_name}.json"
         cmd = [

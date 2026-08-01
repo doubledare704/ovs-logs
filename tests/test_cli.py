@@ -1,5 +1,6 @@
 """Tests for the Typer CLI."""
 
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -80,12 +81,39 @@ def test_ingest_evtx_success(tmp_path: Path, monkeypatch) -> None:
             self.path = path
 
         def records_json(self):
+            data_json_str = json.dumps(
+                {
+                    "Event": {
+                        "System": {
+                            "Provider": {
+                                "#attributes": {
+                                    "Name": "Microsoft-Windows-Security-Auditing",
+                                    "Guid": "{guid}",
+                                }
+                            },
+                            "EventID": {"#text": 4624, "#attributes": {"Qualifiers": "0"}},
+                            "Version": 2,
+                            "Level": 0,
+                            "Task": 12544,
+                            "TimeCreated": {"#attributes": {"SystemTime": "2024-01-01T00:00:00Z"}},
+                            "Channel": "Security",
+                            "Computer": "HOST.example.com",
+                        },
+                        "EventData": {
+                            "Data": [
+                                {"#attributes": {"Name": "SubjectUserName"}, "#text": "alice"},
+                                {"#attributes": {"Name": "IpAddress"}, "#text": "1.2.3.4"},
+                                {"#attributes": {"Name": "StatusCode"}, "#text": "0"},
+                            ]
+                        },
+                    }
+                }
+            )
             return [
                 {
                     "identifier": "1",
                     "timestamp": "2024-01-01T00:00:00Z",
-                    "data": '{"System":{"EventID":4624,"TimeCreated":{"SystemTime":"2024-01-01T00:00:00Z"}}'
-                    ',"EventData":{"IpAddress":"1.2.3.4","TargetUserName":"alice"}}',
+                    "data": data_json_str,
                 }
             ]
 

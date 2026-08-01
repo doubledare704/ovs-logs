@@ -11,7 +11,7 @@ import duckdb
 
 from ovs_logs.config.settings import TextParseConfig, settings
 from ovs_logs.core.ingestion.adapters import (
-    LoadResult,
+    IngestionResult,
     build_result,
     load_csv,
     load_evtx,
@@ -22,6 +22,10 @@ from ovs_logs.core.sql_utils import quote_identifier, resolve_table_name
 from ovs_logs.core.validation import LogFile
 
 logger = logging.getLogger(__name__)
+
+type DuckDBConn = duckdb.DuckDBPyConnection
+type TableName = str | None
+type TextLogAdapterFunc = Callable[[LogFile, DuckDBConn, TableName], IngestionResult]
 
 
 def _detect_text_format(path: Path) -> str:
@@ -113,11 +117,11 @@ def _build_jsonline_select_clause() -> str:
 
 def parse_text_log(
     log_file: LogFile,
-    connection: duckdb.DuckDBPyConnection,
-    table_name: str | None = None,
+    connection: DuckDBConn,
+    table_name: TableName = None,
     *,
     config: TextParseConfig | None = None,
-) -> LoadResult:
+) -> IngestionResult:
     """Ingest a text log into DuckDB, with optional structured field extraction.
 
     When ``config.structured`` is true, the function detects the log format
@@ -165,9 +169,9 @@ def parse_text_log(
 
 def ingest_text_log_structured(
     log_file: LogFile,
-    connection: duckdb.DuckDBPyConnection,
-    table_name: str | None = None,
-) -> LoadResult:
+    connection: DuckDBConn,
+    table_name: TableName = None,
+) -> IngestionResult:
     """Ingest a text log with structured parsing, falling back to raw on failure.
 
     Attempts ``parse_text_log`` first. If format detection or structured
@@ -184,7 +188,7 @@ def ingest_text_log_structured(
         return load_text_log(log_file, connection, table_name=name)
 
 
-INGESTION_ADAPTERS: dict[str, Callable[..., LoadResult]] = {
+INGESTION_ADAPTERS: dict[str, TextLogAdapterFunc] = {
     "csv": load_csv,
     "json": load_json,
     "evtx": load_evtx,
