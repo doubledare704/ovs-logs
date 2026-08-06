@@ -4,12 +4,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from streamlit.testing.v1 import AppTest
-
 from ovs_logs.core.timeline import TimelineRow
 from ovs_logs.ui.timeline_view import _build_scatter_chart, _status_color
 
-from .conftest import make_db, selectbox_by_label, text_input_by_label
+from .conftest import launch_app, make_db
 
 APP_PATH = Path(__file__).resolve().parents[1] / "src" / "ovs_logs" / "ui" / "app.py"
 
@@ -31,9 +29,7 @@ def test_timeline_analyzable_table_renders_metrics_and_chart(tmp_path: Path) -> 
             )
         ],
     )
-    at = AppTest.from_file(str(APP_PATH)).run(timeout=10)
-    text_input_by_label(at, "Database path").set_value(str(db)).run(timeout=10)
-    selectbox_by_label(at, "Select a table").set_value("events_like").run(timeout=10)
+    at = launch_app(APP_PATH, db, "events_like", timeout=10)
 
     assert not at.exception
     metric_labels = {m.label for m in at.metric}
@@ -43,9 +39,7 @@ def test_timeline_analyzable_table_renders_metrics_and_chart(tmp_path: Path) -> 
 
 def test_timeline_non_analyzable_table_shows_info(tmp_path: Path) -> None:
     db = make_db(tmp_path, [("reports", "SELECT 'hello' AS note")])
-    at = AppTest.from_file(str(APP_PATH)).run(timeout=10)
-    text_input_by_label(at, "Database path").set_value(str(db)).run(timeout=10)
-    selectbox_by_label(at, "Select a table").set_value("reports").run(timeout=10)
+    at = launch_app(APP_PATH, db, "reports", timeout=10)
 
     assert not at.exception
     assert any("No analyzable fields" in info.value for info in at.info)
@@ -63,9 +57,7 @@ def test_timeline_empty_analyzable_table_shows_info(tmp_path: Path) -> None:
             )
         ],
     )
-    at = AppTest.from_file(str(APP_PATH)).run(timeout=10)
-    text_input_by_label(at, "Database path").set_value(str(db)).run(timeout=10)
-    selectbox_by_label(at, "Select a table").set_value("empty_events").run(timeout=10)
+    at = launch_app(APP_PATH, db, "empty_events", timeout=10)
 
     assert not at.exception
     assert any("No events found" in info.value for info in at.info)
@@ -82,9 +74,7 @@ def test_timeline_malformed_status_code_renders_without_error(tmp_path: Path) ->
             )
         ],
     )
-    at = AppTest.from_file(str(APP_PATH)).run(timeout=10)
-    text_input_by_label(at, "Database path").set_value(str(db)).run(timeout=10)
-    selectbox_by_label(at, "Select a table").set_value("bad_status").run(timeout=10)
+    at = launch_app(APP_PATH, db, "bad_status", timeout=10)
 
     assert not at.exception
     metric_labels = {m.label for m in at.metric}
@@ -144,9 +134,7 @@ def test_recent_events_shows_10_latest(tmp_path: Path) -> None:
         for i in range(12)
     )
     db = make_db(tmp_path, [("many_events", values)])
-    at = AppTest.from_file(str(APP_PATH)).run(timeout=10)
-    text_input_by_label(at, "Database path").set_value(str(db)).run(timeout=10)
-    selectbox_by_label(at, "Select a table").set_value("many_events").run(timeout=10)
+    at = launch_app(APP_PATH, db, "many_events", timeout=10)
 
     assert not at.exception
     # Only 10 expanders should be shown (the _MAX_DETAIL_CARDS limit)
@@ -188,9 +176,7 @@ def test_multi_select_filter_metrics_consistency(tmp_path: Path) -> None:
         "TIMESTAMP '2024-01-01 00:05:00' AS event_timestamp, 'ok4' AS raw_message"
     )
     db = make_db(tmp_path, [("filter_test", values)])
-    at = AppTest.from_file(str(APP_PATH)).run(timeout=10)
-    text_input_by_label(at, "Database path").set_value(str(db)).run(timeout=10)
-    selectbox_by_label(at, "Select a table").set_value("filter_test").run(timeout=10)
+    at = launch_app(APP_PATH, db, "filter_test", timeout=10)
 
     assert not at.exception
 
@@ -227,9 +213,7 @@ def test_clearing_filters_restores_unfiltered_baseline(tmp_path: Path) -> None:
         "TIMESTAMP '2024-01-01 00:03:00' AS event_timestamp, 'ok4' AS raw_message"
     )
     db = make_db(tmp_path, [("clear_test", values)])
-    at = AppTest.from_file(str(APP_PATH)).run(timeout=10)
-    text_input_by_label(at, "Database path").set_value(str(db)).run(timeout=10)
-    selectbox_by_label(at, "Select a table").set_value("clear_test").run(timeout=10)
+    at = launch_app(APP_PATH, db, "clear_test", timeout=10)
 
     assert not at.exception
 

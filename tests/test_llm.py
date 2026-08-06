@@ -85,6 +85,25 @@ def test_prompt_builder_includes_indicators() -> None:
     assert "POST /login 401" in prompt
 
 
+def test_prompt_builder_enumerates_nested_schema_fields() -> None:
+    """The prompt must spell out exact nested keys so unconstrained local models stay on schema."""
+    prompt = PromptBuilder().build([])
+
+    expected_timeline = (
+        "Each timeline entry must contain ONLY these keys: timestamp, description, "
+        "source_ip, event_type, status_code, raw_message"
+    )
+    expected_mitre = (
+        "Each mitre_mapping entry must contain ONLY these keys: technique_id, technique_name, tactic, description"
+    )
+    expected_indicator = (
+        "Each indicator entry must contain ONLY these keys: type, severity (Low/Medium/High), description, evidence"
+    )
+    assert expected_timeline in prompt
+    assert expected_mitre in prompt
+    assert expected_indicator in prompt
+
+
 def test_response_parser_extracts_markdown_json() -> None:
     parser = ResponseParser()
     data = parser.parse(_sample_response())

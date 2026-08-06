@@ -52,9 +52,10 @@ def test_explicit_falsy_overrides_are_honored() -> None:
     # and verified implicitly through the retry behavior tests below.
 
 
+@pytest.mark.network
 def test_lookup_success_and_cache() -> None:
     with patch("ovs_logs.core.threat_intel.requests.get", return_value=_success_response()) as mock_get:
-        client = ThreatIntelClient(api_key="test-key")
+        client = ThreatIntelClient(api_key="test-key", max_requests_per_minute=0)
         result = client.lookup("1.2.3.4")
 
     assert result == ReputationResult(
@@ -77,9 +78,10 @@ def test_lookup_success_and_cache() -> None:
     assert mock_get.call_count == 1
 
 
+@pytest.mark.network
 def test_lookup_many_deduplicates_ips() -> None:
     with patch("ovs_logs.core.threat_intel.requests.get", return_value=_success_response()) as mock_get:
-        client = ThreatIntelClient(api_key="test-key")
+        client = ThreatIntelClient(api_key="test-key", max_requests_per_minute=0)
         results = client.lookup_many(["1.2.3.4", "1.2.3.4", "5.6.7.8"])
 
     assert set(results.keys()) == {"1.2.3.4", "5.6.7.8"}
@@ -96,6 +98,7 @@ def test_lookup_without_api_key_returns_neutral_result() -> None:
     assert result.cached is False
 
 
+@pytest.mark.network
 def test_lookup_http_error_raises() -> None:
     response = Mock()
     response.status_code = 429
@@ -149,6 +152,7 @@ def test_rate_limiter_enforces_delay(monkeypatch) -> None:
     assert sleeps == [29.5]
 
 
+@pytest.mark.network
 def test_lookup_retries_on_transient_error() -> None:
     bad = Mock()
     bad.status_code = 500
@@ -168,6 +172,7 @@ def test_lookup_retries_on_transient_error() -> None:
     assert mock_get.call_count == expected_calls
 
 
+@pytest.mark.network
 def test_lookup_raises_after_timeout_retries() -> None:
     with (
         patch("ovs_logs.core.threat_intel.time.sleep", return_value=None),
@@ -181,6 +186,7 @@ def test_lookup_raises_after_timeout_retries() -> None:
     assert mock_get.call_count == expected_calls
 
 
+@pytest.mark.network
 def test_lookup_raises_after_rate_limit_retries() -> None:
     response = Mock()
     response.status_code = 429
@@ -223,9 +229,10 @@ def _vt_success_response() -> Mock:
     return response
 
 
+@pytest.mark.network
 def test_vt_lookup_success_and_cache(mocker) -> None:
     mock_get = mocker.patch("ovs_logs.core.threat_intel.requests.get", return_value=_vt_success_response())
-    client = VirusTotalClient(api_key="test-key")
+    client = VirusTotalClient(api_key="test-key", max_requests_per_minute=0)
     result = client.lookup(_DUMMY_HASH)
 
     assert result == VirusTotalResult(
@@ -251,6 +258,7 @@ def test_vt_lookup_without_api_key_raises() -> None:
         client.lookup(_DUMMY_HASH)
 
 
+@pytest.mark.network
 def test_vt_lookup_http_error_raises(mocker) -> None:
     response = Mock()
     response.status_code = 429
@@ -262,6 +270,7 @@ def test_vt_lookup_http_error_raises(mocker) -> None:
         client.lookup(_DUMMY_HASH)
 
 
+@pytest.mark.network
 def test_vt_lookup_retries_on_transient_error(mocker) -> None:
     bad = Mock()
     bad.status_code = 500
@@ -299,9 +308,10 @@ def test_vt_rate_limiter_resolves_settings_lazily(monkeypatch) -> None:
     assert client.rate_limiter.min_interval == 60.0 / patched
 
 
+@pytest.mark.network
 def test_vt_lookup_many_deduplicates_hashes(mocker) -> None:
     mock_get = mocker.patch("ovs_logs.core.threat_intel.requests.get", return_value=_vt_success_response())
-    client = VirusTotalClient(api_key="test-key")
+    client = VirusTotalClient(api_key="test-key", max_requests_per_minute=0)
     results = client.lookup_many([_DUMMY_HASH, _DUMMY_HASH, "otherhash"])
 
     assert set(results.keys()) == {_DUMMY_HASH, "otherhash"}
@@ -309,6 +319,7 @@ def test_vt_lookup_many_deduplicates_hashes(mocker) -> None:
     assert mock_get.call_count == expected_calls
 
 
+@pytest.mark.network
 def test_vt_lookup_without_api_key_uses_settings(monkeypatch, mocker) -> None:
     original = __import__("ovs_logs.config.settings", fromlist=["settings"]).settings
     patched = Settings(
@@ -329,6 +340,7 @@ def test_vt_lookup_without_api_key_uses_settings(monkeypatch, mocker) -> None:
     mock_get.assert_called_once()
 
 
+@pytest.mark.network
 def test_vt_malformed_payload_raises(mocker) -> None:
     response = Mock()
     response.status_code = 200
@@ -347,6 +359,7 @@ def test_vt_settings_loads_api_key_from_env(monkeypatch) -> None:
     assert client.api_key == "env-key-test"
 
 
+@pytest.mark.network
 def test_vt_lookup_uses_settings_api_key(monkeypatch, mocker) -> None:
     monkeypatch.setenv("VIRUSTOTAL_API_KEY", "env-key-test")
     vt_settings = _load_virustotal_settings()

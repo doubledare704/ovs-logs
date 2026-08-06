@@ -12,7 +12,7 @@ from typer.testing import CliRunner, Result
 from ovs_logs.cli.main import app
 from ovs_logs.core.database import Database
 
-from .conftest import make_db, make_temp_file
+from .conftest import launch_app, make_db, make_temp_file
 
 APP_PATH = Path(__file__).resolve().parents[1] / "src" / "ovs_logs" / "ui" / "app.py"
 runner = CliRunner()
@@ -45,8 +45,7 @@ def _describe_columns(conn: duckdb.DuckDBPyConnection, table: str) -> dict[str, 
 def _run_ui_ingest(tmp_path: Path, log_file: Path) -> AppTest:
     """Helper to run Streamlit AppTest ingestion."""
     db = make_db(tmp_path, [("alpha", "SELECT 1")])
-    at = AppTest.from_file(str(APP_PATH)).run()
-    at.sidebar.text_input(key="db_path").set_value(str(db)).run()
+    at = launch_app(APP_PATH, db)
 
     content = log_file.read_bytes()
     at.file_uploader(key="log_file_uploader").upload(log_file.name, content).run()

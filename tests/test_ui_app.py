@@ -19,6 +19,7 @@ from ovs_logs.core.persistence import ReportStore
 from .conftest import (
     button_by_label,
     checkbox_by_label,
+    launch_app,
     make_db,
     make_temp_file,
     sample_report,
@@ -36,19 +37,16 @@ def test_app_renders_without_errors(monkeypatch: pytest.MonkeyPatch) -> None:
 
     at = AppTest.from_file(str(APP_PATH)).run()
     assert not at.exception
-    # 2 password inputs (AbuseIPDB + LLM) + 3 text inputs (LLM endpoint + LLM model + db path) = 5
-    # + 1 optional text input (IP to allowlist, only when DB file exists)
-    expected_sidebar_inputs = 5
-    assert len(at.sidebar.text_input) >= expected_sidebar_inputs
-    assert at.sidebar.text_input[0].label == "AbuseIPDB API Key"
-    assert at.sidebar.text_input[1].label == "LLM API Key"
-    assert at.sidebar.text_input[2].label == "LLM endpoint"
-    assert at.sidebar.text_input[3].label == "LLM model"
-    assert at.sidebar.text_input[4].label == "Database path"
-    # EVTX tool selectbox
-    assert len(at.sidebar.selectbox) >= 2
-    assert at.sidebar.selectbox[0].label == "Provider preset"
-    assert at.sidebar.selectbox[1].label == "EVTX tool"
+    # Resolve every core input by label: position is not contractual, and the
+    # optional allowlist input ("IP to allowlist") renders only when a valid DB
+    # file exists, so a hard-coded widget count would be environment-dependent.
+    for label in ("AbuseIPDB API Key", "LLM API Key", "LLM endpoint", "LLM model", "Database path"):
+        assert text_input_by_label(at, label).label == label
+    # EVTX tool + Provider preset selectboxes: resolve by label like the text
+    # inputs above — position is not contractual, and a "Select a table"
+    # selectbox only appears when a valid DB file exists.
+    assert selectbox_by_label(at, "Provider preset").label == "Provider preset"
+    assert selectbox_by_label(at, "EVTX tool").label == "EVTX tool"
     # Threat list sidebar: 2 checkboxes (default lists)
     assert len(at.sidebar.checkbox) == 2
     assert at.sidebar.checkbox[0].label == "firehol_level1"
@@ -92,8 +90,7 @@ def test_db_path_defaults_to_settings(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_missing_db_shows_error(tmp_path: Path) -> None:
     missing = tmp_path / "nope.db"
-    at = AppTest.from_file(str(APP_PATH)).run()
-    text_input_by_label(at, "Database path").set_value(str(missing)).run()
+    at = launch_app(APP_PATH, missing)
     assert any(str(missing) in e.value for e in at.sidebar.error)
 
 
@@ -108,8 +105,7 @@ def test_recent_tables_lists_user_tables_only(tmp_path: Path) -> None:
         ],
     )
 
-    at = AppTest.from_file(str(APP_PATH)).run()
-    text_input_by_label(at, "Database path").set_value(str(db)).run()
+    at = launch_app(APP_PATH, db)
 
     sb = selectbox_by_label(at, "Select a table")
     assert sb.label == "Select a table"
@@ -164,8 +160,7 @@ def test_upload_and_validate_file(tmp_path: Path) -> None:
     db = make_db(tmp_path, [("alpha", "SELECT 1")])
     file_path = make_temp_file(tmp_path, "sample.log", "line1\nline2\n")
 
-    at = AppTest.from_file(str(APP_PATH)).run()
-    text_input_by_label(at, "Database path").set_value(str(db)).run()
+    at = launch_app(APP_PATH, db)
 
     content = file_path.read_bytes()
     at.file_uploader[0].upload(file_path.name, content).run()
@@ -179,8 +174,7 @@ def test_duplicate_upload_is_skipped(tmp_path: Path) -> None:
     db = make_db(tmp_path, [("alpha", "SELECT 1")])
     file_path = make_temp_file(tmp_path, "duplicate.log", "line1\nline2\n")
 
-    at = AppTest.from_file(str(APP_PATH)).run()
-    text_input_by_label(at, "Database path").set_value(str(db)).run()
+    at = launch_app(APP_PATH, db)
 
     content = file_path.read_bytes()
     at.file_uploader[0].upload(file_path.name, content).run()
@@ -195,8 +189,7 @@ def test_raw_preview_displays_preview_text(tmp_path: Path) -> None:
     db = make_db(tmp_path, [("alpha", "SELECT 1")])
     file_path = make_temp_file(tmp_path, "raw.log", "first line\nsecond line\n")
 
-    at = AppTest.from_file(str(APP_PATH)).run()
-    text_input_by_label(at, "Database path").set_value(str(db)).run()
+    at = launch_app(APP_PATH, db)
 
     content = file_path.read_bytes()
     at.file_uploader[0].upload(file_path.name, content).run()
@@ -213,8 +206,7 @@ def test_ingested_table_preview_after_process(tmp_path: Path) -> None:
     db = make_db(tmp_path, [("alpha", "SELECT 1")])
     file_path = make_temp_file(tmp_path, "process.log", "line1\nline2\n")
 
-    at = AppTest.from_file(str(APP_PATH)).run()
-    text_input_by_label(at, "Database path").set_value(str(db)).run()
+    at = launch_app(APP_PATH, db)
 
     content = file_path.read_bytes()
     at.file_uploader[0].upload(file_path.name, content).run()
@@ -230,9 +222,7 @@ def test_ingested_table_preview_after_process(tmp_path: Path) -> None:
 
 def test_selected_table_renders_data_preview(tmp_path: Path) -> None:
     db = make_db(tmp_path, [("alpha", "SELECT 1 AS id, 'x' AS name")])
-    at = AppTest.from_file(str(APP_PATH)).run()
-    text_input_by_label(at, "Database path").set_value(str(db)).run()
-    selectbox_by_label(at, "Select a table").set_value("alpha").run()
+    at = launch_app(APP_PATH, db, "alpha")
     assert any(df.value is not None and len(df.value) > 0 for df in at.dataframe)
 
 
@@ -247,9 +237,7 @@ def test_selected_analyzable_table_renders_timeline(tmp_path: Path) -> None:
             )
         ],
     )
-    at = AppTest.from_file(str(APP_PATH)).run(timeout=10)
-    text_input_by_label(at, "Database path").set_value(str(db)).run(timeout=10)
-    selectbox_by_label(at, "Select a table").set_value("events_like").run(timeout=10)
+    at = launch_app(APP_PATH, db, "events_like", timeout=10)
     assert any(subheader.value == "Attack Timeline" for subheader in at.subheader)
     metric_labels = {m.label for m in at.metric}
     assert {"Total events", "Time span", "Unique source IPs", "Error rate"}.issubset(metric_labels)
@@ -257,9 +245,7 @@ def test_selected_analyzable_table_renders_timeline(tmp_path: Path) -> None:
 
 def test_selected_non_analyzable_table_shows_info(tmp_path: Path) -> None:
     db = make_db(tmp_path, [("reports", "SELECT 'hello' AS note")])
-    at = AppTest.from_file(str(APP_PATH)).run()
-    text_input_by_label(at, "Database path").set_value(str(db)).run()
-    selectbox_by_label(at, "Select a table").set_value("reports").run()
+    at = launch_app(APP_PATH, db, "reports")
     assert any("No analyzable fields" in info.value for info in at.info)
 
 
@@ -274,9 +260,7 @@ def test_selected_table_shows_potential_signals_in_tab1(tmp_path: Path) -> None:
             )
         ],
     )
-    at = AppTest.from_file(str(APP_PATH)).run()
-    text_input_by_label(at, "Database path").set_value(str(db)).run()
-    selectbox_by_label(at, "Select a table").set_value("events_like").run()
+    at = launch_app(APP_PATH, db, "events_like")
 
     has_indicators = any(
         df.value is not None and "Type" in df.value.columns and "Severity" in df.value.columns for df in at.dataframe
@@ -312,8 +296,7 @@ def test_evtx_upload_preview_shows_records(tmp_path: Path, monkeypatch: pytest.M
 
     monkeypatch.setattr(adapters, "PyEvtxParser", FakeParser)
 
-    at = AppTest.from_file(str(APP_PATH)).run()
-    text_input_by_label(at, "Database path").set_value(str(db)).run()
+    at = launch_app(APP_PATH, db)
 
     content = file_path.read_bytes()
     at.file_uploader[0].upload(file_path.name, content).run()
@@ -336,8 +319,7 @@ def test_ingested_web_log_shows_potential_signals(tmp_path: Path) -> None:
         '192.168.1.2 - - [01/Jan/2024:00:01:00 +0000] "POST /login HTTP/1.1" 404 567\n',
     )
 
-    at = AppTest.from_file(str(APP_PATH)).run()
-    text_input_by_label(at, "Database path").set_value(str(db)).run()
+    at = launch_app(APP_PATH, db)
 
     content = access_log.read_bytes()
     at.file_uploader[0].upload(access_log.name, content).run()
@@ -353,8 +335,7 @@ def test_internal_report_table_excluded_from_navigator(tmp_path: Path) -> None:
     with duckdb.connect(str(db)) as conn:
         ReportStore().save_report(conn, sample_report())
 
-    at = AppTest.from_file(str(APP_PATH)).run()
-    text_input_by_label(at, "Database path").set_value(str(db)).run()
+    at = launch_app(APP_PATH, db)
 
     assert "events_2026" in selectbox_by_label(at, "Select a table").options
     assert ReportStore.TABLE_NAME not in selectbox_by_label(at, "Select a table").options
@@ -371,8 +352,7 @@ def test_allowlisted_indicators_excluded_from_navigator(tmp_path: Path) -> None:
             indicator_type="ip",
         )
 
-    at = AppTest.from_file(str(APP_PATH)).run()
-    text_input_by_label(at, "Database path").set_value(str(db)).run()
+    at = launch_app(APP_PATH, db)
 
     options = selectbox_by_label(at, "Select a table").options
     assert "events_2026" in options
@@ -624,9 +604,7 @@ def test_analysis_duckdb_error_shows_st_error(
 
     monkeypatch.setattr(engine.AnalysisEngine, "run_queries", broken_run)
 
-    at = AppTest.from_file(str(APP_PATH)).run()
-    text_input_by_label(at, "Database path").set_value(str(db)).run()
-    selectbox_by_label(at, "Select a table").set_value("events_like").run()
+    at = launch_app(APP_PATH, db, "events_like")
     assert not at.exception
 
     # Should show st.error, not st.info
@@ -650,8 +628,14 @@ def test_threat_list_sidebar_renders_alongside_other_inputs(
     assert len(at.sidebar.checkbox) == 2
     # The Allowlist section requires a valid DB file.
     assert len(at.sidebar.button) >= 1
-    assert len(at.sidebar.text_input) >= 5
-    assert len(at.sidebar.selectbox) >= 2  # Provider preset + EVTX tool
+    # Resolve every core input by label: the optional allowlist input renders
+    # only when a valid DB file exists, so a hard-coded count is flaky.
+    for label in ("AbuseIPDB API Key", "LLM API Key", "LLM endpoint", "LLM model", "Database path"):
+        assert text_input_by_label(at, label).label == label
+    # EVTX tool + Provider preset selectboxes: resolve by label like the inputs
+    # above — the "Select a table" selectbox only appears with a valid DB file.
+    assert selectbox_by_label(at, "Provider preset").label == "Provider preset"
+    assert selectbox_by_label(at, "EVTX tool").label == "EVTX tool"
 
     # Verify order: checkboxes are firehol_level1, firehol_abusers_30d
     assert at.sidebar.checkbox[0].label == "firehol_level1"

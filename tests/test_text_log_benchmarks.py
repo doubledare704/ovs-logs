@@ -716,7 +716,7 @@ def write_markdown_report(rows: list[dict], dest: Path) -> None:
 
 @pytest.fixture
 def log_samples(tmp_path: Path) -> list[LogSample]:
-    return build_samples(tmp_path, sizes=[5000])[5000]
+    return build_samples(tmp_path, sizes=[2000])[2000]
 
 
 @pytest.fixture

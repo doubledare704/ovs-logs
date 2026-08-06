@@ -234,6 +234,12 @@ class PromptBuilder:
             "title, summary, severity (Low/Medium/High), timeline, "
             "mitre_mappings, mitigation (with format, title, content), "
             "indicators, and metadata.",
+            "Each timeline entry must contain ONLY these keys: timestamp, "
+            "description, source_ip, event_type, status_code, raw_message. "
+            "Each mitre_mapping entry must contain ONLY these keys: "
+            "technique_id, technique_name, tactic, description. "
+            "Each indicator entry must contain ONLY these keys: type, "
+            "severity (Low/Medium/High), description, evidence.",
             "Indicators:",
         ]
 

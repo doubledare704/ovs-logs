@@ -420,7 +420,7 @@ def test_process_no_indicators(tmp_path: Path) -> None:
     assert "No suspicious indicators found" in result.output
 
 
-def test_process_with_intel_success(tmp_path: Path) -> None:
+def test_process_with_intel_success(tmp_path: Path, no_threat_intel_pacing) -> None:
     """process --intel ingests, analyzes, and enriches with AbuseIPDB."""
     csv = tmp_path / "events.csv"
     _write_events_csv(csv, rows=5)

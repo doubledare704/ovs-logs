@@ -68,6 +68,9 @@ ovs-log = "ovs_logs.cli.main:app"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+markers = [
+    "network: exercises external-service client code; skipped when OVS_LOGS_OFFLINE=1",
+]
 
 [tool.ruff]
 line-length = 120

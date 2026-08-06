@@ -62,7 +62,7 @@ For `duckdb_regex_native` we validated regex compatibility up-front:
 ## 5. How to run
 
 ```bash
-# 5k-line rapid regression
+# 2k-line rapid regression (smoke correctness for all strategies)
 uv run pytest tests/test_text_log_benchmarks.py
 
 # 20k / 100k large matrix (includes duckdb_regex_native)
