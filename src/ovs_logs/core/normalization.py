@@ -104,6 +104,37 @@ TARGET_TYPES: dict[str, str] = {
 }
 
 
+_SYSTEM_TABLE_PREFIXES: tuple[str, ...] = ("sqlite_", "pg_", "_ovs_")
+_SYSTEM_TABLES: frozenset[str] = frozenset({"allowlisted_indicators", "events"})
+_SYSTEM_SCHEMAS: tuple[str, ...] = ("information_schema", "pg_catalog")
+
+
+def discover_raw_tables(connection: duckdb.DuckDBPyConnection) -> list[tuple[str, list[str]]]:
+    """Return ``(table_name, columns)`` pairs for every non-system table.
+
+    Excludes internal bookkeeping tables (``_ovs_*`` prefix), system schemas,
+    and the allowlist table so callers get only user-visible raw tables that
+    can be re-normalized.
+    """
+    rows = connection.execute(
+        "SELECT table_name FROM information_schema.tables WHERE table_type = 'BASE TABLE'"
+    ).fetchall()
+
+    result: list[tuple[str, list[str]]] = []
+    for (name,) in rows:
+        if any(name.startswith(p) for p in _SYSTEM_TABLE_PREFIXES):
+            continue
+        if name in _SYSTEM_TABLES:
+            continue
+        try:
+            cols = [r[0] for r in connection.execute(f"DESCRIBE {quote_identifier(name)}").fetchall()]
+        except duckdb.Error:
+            logger.debug("Skipping table %s — DESCRIBE failed", name)
+            continue
+        result.append((name, cols))
+    return result
+
+
 @dataclass(frozen=True)
 class NormalizeResult:
     """Result of transforming a raw table into the unified `events` schema."""
@@ -246,6 +277,19 @@ class NormalizationEngine:
         """Return the current row count of the ``events`` table (0 if absent)."""
         row = connection.execute("SELECT COUNT(*) FROM events").fetchone()
         return row[0] if row is not None else 0
+
+    def reset_events(self, connection: duckdb.DuckDBPyConnection) -> None:
+        """Drop the ``events`` table and clear normalization tracking.
+
+        After calling this, the next ``normalize_batch`` will rebuild
+        ``events`` from scratch using the current ``TARGET_TYPES`` schema.
+        This is useful when the normalized schema has changed (e.g. new
+        columns were added) and the existing ``events`` table is stale.
+        """
+        existing = {row[0] for row in connection.execute("SHOW TABLES").fetchall()}
+        if _SOURCE_TRACKING_TABLE in existing:
+            connection.execute(f"DELETE FROM {_TRACKING_TABLE_QUOTED}")
+        connection.execute("DROP TABLE IF EXISTS events")
 
     def normalize_table(self, connection: duckdb.DuckDBPyConnection, load_result: IngestionResult) -> NormalizeResult:
         """Create or replace the unified `events` table from a raw load result."""

@@ -44,12 +44,14 @@ def _resolve_log_file(file: Path, file_type: str | None) -> LogFile:
     )
 
 
-def _perform_ingest(
+def _perform_ingest(  # noqa: PLR0913
     db: Path,
     file: Path,
     file_type: str | None,
     table: str | None,
     tool: str | None = None,
+    *,
+    force_reanalyze: bool = False,
 ) -> tuple[IngestionResult, bool]:
     log_file = _resolve_log_file(file, file_type)
 
@@ -64,10 +66,13 @@ def _perform_ingest(
         raise ValueError(f"No ingestion adapter for format '{log_file.format}'")
 
     with Database(db) as connection:
+        engine = NormalizationEngine()
+        if force_reanalyze:
+            engine.reset_events(connection)
         load_result = adapter(log_file, connection, table)
         if not load_result.is_unstructured:
             tables = [(load_result.table_name, [name for name, _ in load_result.schema])]
-            NormalizationEngine().normalize_batch(connection, tables)
+            engine.normalize_batch(connection, tables)
 
     return load_result, not load_result.is_unstructured
 
@@ -132,10 +137,15 @@ def process(  # noqa: PLR0913
     abuseipdb_api_key: str | None = typer.Option(None, "--abuseipdb-api-key", help="AbuseIPDB API key"),
     llm_api_key: str | None = typer.Option(None, "--llm-api-key", help="LLM API key"),
     output: Path | None = typer.Option(None, "--output", help="Write JSON report to file"),
+    force_reanalyze: bool = typer.Option(
+        False, "--force-reanalyze", help="Drop and rebuild the events table from all raw tables before analysis"
+    ),
 ) -> None:
     """Ingest a log file into DuckDB and immediately analyze it."""
     try:
-        load_result, was_normalized = _perform_ingest(db, file, file_type, table, tool=tool)
+        load_result, was_normalized = _perform_ingest(
+            db, file, file_type, table, tool=tool, force_reanalyze=force_reanalyze
+        )
         console.print(f"[bold]Loaded[/bold] {load_result.row_count} rows into {load_result.table_name}")
         schema = ", ".join(name for name, _ in load_result.schema)
         console.print(f"[bold]Schema:[/bold] {schema}")

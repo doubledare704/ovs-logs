@@ -97,6 +97,7 @@ class SessionKeys:
     widget_selected_table: str = "selected_table"
     widget_log_file_uploader: str = "log_file_uploader"
     widget_process_ingest: str = "process_ingest"
+    widget_force_reanalyze: str = "force_reanalyze"
     widget_update_threat_lists: str = "update_threat_lists"
     widget_threat_list_prefix: str = "threat_list_"
     """Prefix for per-list checkboxes; full key is ``threat_list_{name}``."""

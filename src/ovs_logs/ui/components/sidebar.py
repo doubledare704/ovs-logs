@@ -25,6 +25,7 @@ from ovs_logs.core.database import (
 )
 from ovs_logs.core.ingestion.adapters import EVTX_TOOL_CHOICES
 from ovs_logs.core.llm import is_ollama_endpoint, list_ollama_models
+from ovs_logs.core.normalization import _SYSTEM_SCHEMAS
 from ovs_logs.core.threat_lists import (
     ensure_cache_dir as tl_ensure_cache_dir,
     is_loaded as tl_is_loaded,
@@ -46,11 +47,6 @@ _SYSTEM_TABLE_PREFIXES: tuple[str, ...] = (
 _SYSTEM_TABLES: frozenset[str] = frozenset({ALLOWLIST_TABLE})
 """Exact table names that are internal bookkeeping and must not appear in the
 "Recent Tables" navigator or analysis flows."""
-
-_SYSTEM_SCHEMAS: tuple[str, ...] = (
-    "information_schema",
-    "pg_catalog",
-)
 
 
 @st.cache_data(ttl=5)

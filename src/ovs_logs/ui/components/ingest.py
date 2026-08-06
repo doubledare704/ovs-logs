@@ -16,7 +16,7 @@ import streamlit as st
 from ovs_logs.config.settings import EVTXToolSettings, Settings
 from ovs_logs.core.database import Database
 from ovs_logs.core.ingestion.adapters import EVTX_TOOL_ADAPTERS
-from ovs_logs.core.normalization import NormalizationEngine
+from ovs_logs.core.normalization import NormalizationEngine, discover_raw_tables
 from ovs_logs.core.text_parsing import INGESTION_ADAPTERS
 from ovs_logs.core.validation import validate_log_file
 from ovs_logs.ui.state import SessionKeys
@@ -120,4 +120,47 @@ def process_ready_files(db_path: str) -> None:  # noqa: PLR0912
             st.error(error)
     else:
         st.success("Ingestion and normalization finished successfully.")
+        st.rerun()
+
+
+@st.dialog("Confirm Force Re-analyze")
+def show_force_reanalyze_confirm() -> None:
+    """Display a confirmation modal before rebuilding the events table."""
+    db_path = st.session_state.get(SK.db_path, "")
+    if not db_path:
+        st.error("Set a valid database path in the sidebar first.")
+        return
+
+    st.warning(
+        "This will drop the existing **events** table and rebuild it from "
+        "all raw tables using the current schema. Analysis results will be "
+        "regenerated."
+    )
+
+    try:
+        with Database(db_path) as conn:
+            raw_tables = discover_raw_tables(conn)
+    except (OSError, duckdb.Error) as exc:
+        st.error(f"Failed to inspect database: {exc}")
+        return
+
+    if not raw_tables:
+        st.info("No raw tables found to re-normalize.")
+        return
+
+    st.write("**Raw tables that will be re-normalized:**")
+    for name, cols in raw_tables:
+        st.code(f"{name}  ({', '.join(cols)})", language=None)
+
+    if st.button("Confirm", type="primary", key="force_reanalyze_confirm"):
+        with st.spinner("Rebuilding events table..."):
+            try:
+                with Database(db_path) as conn:
+                    engine = NormalizationEngine()
+                    engine.reset_events(conn)
+                    row_count = engine.normalize_batch(conn, raw_tables)
+                st.success(f"Events table rebuilt with {row_count} rows.")
+            except (OSError, duckdb.Error) as exc:
+                st.error(f"Rebuild failed: {exc}")
+                return
         st.rerun()

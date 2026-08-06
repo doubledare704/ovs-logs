@@ -681,3 +681,29 @@ def test_threat_list_sidebar_renders_alongside_other_inputs(
     assert at.sidebar.checkbox[0].label == "firehol_level1"
     assert at.sidebar.checkbox[1].label == "firehol_abusers_30d"
     assert at.sidebar.button[0].label == "Update threat lists"
+
+
+def test_force_reanalyze_button_exists_in_ingest_tab(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """The Force Re-analyze button must be present in the ingest tab."""
+    monkeypatch.delenv("ABUSEIPDB_API_KEY", raising=False)
+    monkeypatch.delenv("LLM_API_KEY", raising=False)
+
+    db = make_db(
+        tmp_path,
+        [
+            (
+                "raw_web",
+                "SELECT '2024-01-01'::TIMESTAMP AS timestamp, '1.2.3.4' AS client_ip, 200 AS status",
+            )
+        ],
+    )
+
+    at = launch_app(APP_PATH, db)
+    assert not at.exception
+
+    # Find the Force Re-analyze button in the main area (not sidebar)
+    force_buttons = [b for b in at.button if b.label == "Force Re-analyze"]
+    assert len(force_buttons) == 1, f"Expected 1 Force Re-analyze button, got {len(force_buttons)}"

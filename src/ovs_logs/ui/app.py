@@ -19,7 +19,7 @@ from ovs_logs.core.database import Database
 from ovs_logs.core.sql_utils import quote_identifier
 from ovs_logs.core.validation import SUPPORTED_FORMATS
 from ovs_logs.ui.analysis_view import render_analysis_results
-from ovs_logs.ui.components.ingest import process_ready_files
+from ovs_logs.ui.components.ingest import process_ready_files, show_force_reanalyze_confirm
 from ovs_logs.ui.components.sidebar import render_sidebar
 from ovs_logs.ui.components.upload import _format_size, register_uploaded_file, validate_uploaded_file
 from ovs_logs.ui.intel_view import render_intelligence_tab
@@ -207,6 +207,9 @@ def main() -> None:  # noqa: PLR0912, PLR0915
 
         if st.button("Process & Analyze", key=SK.widget_process_ingest):
             process_ready_files(st.session_state.get(SK.db_path, settings.database.path))
+
+        if st.button("Force Re-analyze", key=SK.widget_force_reanalyze):
+            show_force_reanalyze_confirm()
 
         _render_ingested_table_preview()
 

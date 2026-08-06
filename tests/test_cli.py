@@ -420,6 +420,30 @@ def test_process_no_indicators(tmp_path: Path) -> None:
     assert "No suspicious indicators found" in result.output
 
 
+def test_process_with_force_reanalyze(tmp_path: Path) -> None:
+    """process --force-reanalyze drops and rebuilds the events table."""
+    csv = tmp_path / "events.csv"
+    _write_events_csv(csv, rows=5)
+    db = tmp_path / "test.db"
+
+    result = runner.invoke(
+        app,
+        [
+            "process",
+            "--file",
+            str(csv),
+            "--db",
+            str(db),
+            "--table",
+            "raw_events",
+            "--force-reanalyze",
+        ],
+    )
+
+    assert result.exit_code == EXIT_CODE_SUCCESS, result.output
+    assert "Loaded 5 rows" in result.output
+
+
 def test_process_with_intel_success(tmp_path: Path, no_threat_intel_pacing) -> None:
     """process --intel ingests, analyzes, and enriches with AbuseIPDB."""
     csv = tmp_path / "events.csv"

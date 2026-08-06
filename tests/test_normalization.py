@@ -8,7 +8,7 @@ import duckdb
 
 from ovs_logs.core.database import Database
 from ovs_logs.core.ingestion.adapters import load_csv, load_json, load_text_log
-from ovs_logs.core.normalization import NormalizationEngine
+from ovs_logs.core.normalization import NormalizationEngine, discover_raw_tables
 from ovs_logs.core.text_parsing import parse_text_log
 from ovs_logs.core.validation import validate_log_file
 
@@ -235,3 +235,69 @@ def test_normalize_batch_is_idempotent_per_source(db, tmp_path: Path) -> None:
 
     assert first == 1
     assert second == 1  # unchanged: source already merged, no duplicate appended
+
+
+def test_reset_events_drops_events_and_clears_tracking(db, tmp_path: Path) -> None:
+    """reset_events must remove the events table and clear the tracking table."""
+    file = tmp_path / "web.csv"
+    file.write_text("timestamp,client_ip,status\n2024-01-01T00:00:00,1.2.3.4,200\n")
+
+    engine = NormalizationEngine()
+    load = load_csv(validate_log_file(file), db, table_name="raw_web")
+    engine.normalize_batch(db, [("raw_web", [n for n, _ in load.schema])])
+
+    assert db.execute("SELECT COUNT(*) FROM events").fetchone()[0] == 1
+    assert db.execute("SELECT COUNT(*) FROM _ovs_normalized_sources").fetchone()[0] == 1
+
+    engine.reset_events(db)
+
+    tables = {row[0] for row in db.execute("SHOW TABLES").fetchall()}
+    assert "events" not in tables
+    assert db.execute("SELECT COUNT(*) FROM _ovs_normalized_sources").fetchone()[0] == 0
+
+
+def test_normalize_batch_after_reset_rebuilds_with_current_schema(db, tmp_path: Path) -> None:
+    """After reset, normalize_batch must rebuild events with all TARGET_TYPES columns."""
+    file = tmp_path / "web.csv"
+    file.write_text("timestamp,client_ip,status\n2024-01-01T00:00:00,1.2.3.4,200\n")
+
+    engine = NormalizationEngine()
+    load = load_csv(validate_log_file(file), db, table_name="raw_web")
+    columns = [n for n, _ in load.schema]
+
+    engine.normalize_batch(db, [("raw_web", columns)])
+    old_schema = {row[0] for row in db.execute("DESCRIBE events").fetchall()}
+    assert "process_name" in old_schema
+    assert "destination_ip" in old_schema
+
+    engine.reset_events(db)
+    engine.normalize_batch(db, [("raw_web", columns)])
+
+    new_schema = {row[0] for row in db.execute("DESCRIBE events").fetchall()}
+    assert old_schema == new_schema
+    assert db.execute("SELECT COUNT(*) FROM events").fetchone()[0] == 1
+
+
+def test_discover_raw_tables_returns_non_system_tables(db, tmp_path: Path) -> None:
+    """discover_raw_tables must exclude system tables and include user tables."""
+    file = tmp_path / "web.csv"
+    file.write_text("timestamp,client_ip,status\n2024-01-01T00:00:00,1.2.3.4,200\n")
+    load_csv(validate_log_file(file), db, table_name="raw_web")
+
+    raw_tables = discover_raw_tables(db)
+    names = {name for name, _ in raw_tables}
+    assert "raw_web" in names
+    assert "_ovs_normalized_sources" not in names
+
+
+def test_discover_raw_tables_includes_columns(db, tmp_path: Path) -> None:
+    """discover_raw_tables must return the column list for each table."""
+    file = tmp_path / "web.csv"
+    file.write_text("timestamp,client_ip,status\n2024-01-01T00:00:00,1.2.3.4,200\n")
+    load_csv(validate_log_file(file), db, table_name="raw_web")
+
+    raw_tables = discover_raw_tables(db)
+    web_cols = next(cols for name, cols in raw_tables if name == "raw_web")
+    assert "timestamp" in web_cols
+    assert "client_ip" in web_cols
+    assert "status" in web_cols
