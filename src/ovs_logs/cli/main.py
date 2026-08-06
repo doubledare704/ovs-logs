@@ -330,5 +330,51 @@ def export_rule(
         raise typer.Exit(code=classify_error(exc)) from exc
 
 
+@app.command()
+def setup_hayabusa(
+    target_dir: Path = typer.Option(
+        Path("~/.ovs-logs/tools").expanduser(),
+        "--target-dir",
+        help="Directory to install hayabusa binary and rules",
+    ),
+    force: bool = typer.Option(False, "--force", help="Re-download even if already installed"),
+    version: str | None = typer.Option(None, "--version", help="Specific version to install (default: latest)"),
+) -> None:
+    """Download and install Hayabusa for EVTX Sigma-based threat detection."""
+    from ovs_logs.core.downloader import (  # noqa: PLC0415
+        get_hayabusa_version,
+        install_hayabusa,
+    )
+
+    try:
+        result = install_hayabusa(target_dir, version=version, force=force)
+        platform_info = result.platform
+        binary_path = result.binary_path
+
+        console.print(
+            f"[bold]Platform:[/bold] {platform_info.os_name}/{platform_info.arch} (asset: {platform_info.asset_tag})"
+        )
+
+        version_str = get_hayabusa_version(binary_path)
+        console.print("[bold green]Hayabusa installed successfully![/bold green]")
+        console.print(f"[bold]Binary:[/bold] {binary_path}")
+        console.print(f"[bold]Version:[/bold] {version_str}")
+
+        rules_dir = target_dir / "rules"
+        if rules_dir.is_dir():
+            rule_count = sum(1 for _ in rules_dir.rglob("*.yml"))
+            console.print(f"[bold]Rules:[/bold] {rule_count} rule files in {rules_dir}")
+        else:
+            console.print("[yellow]Warning:[/yellow] No rules directory found")
+
+        console.print()
+        console.print("To use with OVS-Log, set the environment variable:")
+        console.print(f"  export HAYABUSA_PATH={binary_path}")
+        console.print(f"  export HAYABUSA_RULES_DIR={rules_dir}")
+    except Exception as exc:
+        _print_error(exc)
+        raise typer.Exit(code=classify_error(exc)) from exc
+
+
 if __name__ == "__main__":
     app()

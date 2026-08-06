@@ -329,8 +329,7 @@ def render_sidebar() -> None:  # noqa: PLR0915
         "default": "Default (PyEvtx)",
         "hayabusa": "Hayabusa (CSV)",
         "hayabusa-json": "Hayabusa (JSON)",
-        "evtxecmd": "EvtxECmd (CSV)",
-        "evtxecmd-json": "EvtxECmd (JSON)",
+        "hybrid": "Hybrid (Raw + Alerts)",
     }
     _ = st.sidebar.selectbox(
         "EVTX tool",

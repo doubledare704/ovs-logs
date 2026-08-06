@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
+from pathlib import Path
 
 
 def _str_env(name: str, default: str) -> str:
@@ -65,8 +66,8 @@ class AnalysisThresholds:
 class EVTXToolSettings:
     """Paths and timeout for external EVTX analysis tools."""
 
-    hayabusa_path: str = "hayabusa"
-    evtxecmd_path: str = "EvtxECmd"
+    hayabusa_path: str = str(Path("~/.ovs-logs/tools/hayabusa").expanduser())
+    hayabusa_rules_dir: str = str(Path("~/.ovs-logs/tools/rules").expanduser())
     timeout_seconds: int = 300
 
 
@@ -130,7 +131,7 @@ def _load_evtxtool_settings() -> EVTXToolSettings:
         raise ValueError(f"EVTX_TOOL_TIMEOUT must be positive, got {timeout_seconds}")
     return EVTXToolSettings(
         hayabusa_path=_str_env("HAYABUSA_PATH", EVTXToolSettings.hayabusa_path),
-        evtxecmd_path=_str_env("EVTXECMD_PATH", EVTXToolSettings.evtxecmd_path),
+        hayabusa_rules_dir=_str_env("HAYABUSA_RULES_DIR", EVTXToolSettings.hayabusa_rules_dir),
         timeout_seconds=timeout_seconds,
     )
 

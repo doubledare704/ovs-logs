@@ -6,20 +6,26 @@ from pathlib import Path
 from subprocess import CalledProcessError, TimeoutExpired
 from typing import Any, Never
 
+import duckdb
 import pytest
 
 from ovs_logs.config.settings import EVTXToolSettings, Settings
 from ovs_logs.core.errors import BinaryNotFoundError, IngestionError
 from ovs_logs.core.ingestion import adapters
 from ovs_logs.core.ingestion.adapters import (
+    _CORRELATION_VIEW_NAME,
     EVTX_CSV_FIELDNAMES,
     EVTX_TOOL_ADAPTERS,
     EVTX_TOOL_CHOICES,
+    HayabusaEngine,
+    HybridIngestionPipeline,
+    HybridIngestionResult,
     IngestionResult,
+    PyEvtxEngine,
+    ingest_evtx_hybrid,
+    is_hayabusa_available,
     load_csv,
     load_evtx,
-    load_evtx_via_evtxecmd,
-    load_evtx_via_evtxecmd_json,
     load_evtx_via_hayabusa,
     load_evtx_via_hayabusa_json,
     load_json,
@@ -38,8 +44,9 @@ EVTX_RECORD_ID = 12345
 def test_evtx_tool_choices_match_adapter_mapping() -> None:
     """EVTX_TOOL_CHOICES must mirror EVTX_TOOL_ADAPTERS keys (single source of truth)."""
     assert tuple(EVTX_TOOL_ADAPTERS) == EVTX_TOOL_CHOICES
-    assert set(EVTX_TOOL_ADAPTERS) == {"default", "hayabusa", "hayabusa-json", "evtxecmd", "evtxecmd-json"}
+    assert set(EVTX_TOOL_ADAPTERS) == {"default", "hayabusa", "hayabusa-json", "hybrid"}
     assert EVTX_TOOL_ADAPTERS["default"] is load_evtx
+    assert EVTX_TOOL_ADAPTERS["hybrid"] is ingest_evtx_hybrid
 
 
 def test_load_csv(db, tmp_path: Path) -> None:
@@ -223,14 +230,12 @@ def _make_evtx_file(tmp_path: Path, name: str = "sample.evtx") -> Path:
 
 def _custom_settings(
     hayabusa_path: str = "hayabusa",
-    evtxecmd_path: str = "EvtxECmd",
     timeout_seconds: int = 300,
 ) -> Settings:
     """Return a Settings with custom EVTX tool paths."""
     return Settings(
         evtx_tools=EVTXToolSettings(
             hayabusa_path=hayabusa_path,
-            evtxecmd_path=evtxecmd_path,
             timeout_seconds=timeout_seconds,
         ),
     )
@@ -340,94 +345,6 @@ def test_load_evtx_via_hayabusa_missing_output(db, tmp_path: Path, monkeypatch: 
         load_evtx_via_hayabusa(log, db)
 
 
-def test_load_evtx_via_evtxecmd(db, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    file = _make_evtx_file(tmp_path)
-    log = validate_log_file(file)
-
-    monkeypatch.setattr(
-        "ovs_logs.core.ingestion.adapters.settings",
-        _custom_settings(evtxecmd_path="fake-evtxecmd"),
-    )
-
-    output_csv = "Timestamp,Computer,EventId,Channel\n2024-01-01T00:00:00,HOST,4624,Security\n"
-
-    def fake_run(cmd, *args, **kwargs):
-        csvf = None
-        csv_dir = None
-        for i, part in enumerate(cmd):
-            if part == "--csvf" and i + 1 < len(cmd):
-                csvf = cmd[i + 1]
-            if part == "--csv" and i + 1 < len(cmd):
-                csv_dir = cmd[i + 1]
-        if csv_dir and csvf:
-            Path(csv_dir, csvf).write_text(output_csv, encoding="utf-8")
-        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
-
-    monkeypatch.setattr(subprocess, "run", fake_run)
-
-    result = load_evtx_via_evtxecmd(log, db, table_name="test_evtxecmd")
-
-    assert result.table_name == "test_evtxecmd"
-    assert result.row_count == 1
-    columns = schema_columns(result.schema)
-    assert "timestamp" in columns
-    assert "computer" in columns
-
-
-def test_load_evtx_via_evtxecmd_binary_not_found(db, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    file = _make_evtx_file(tmp_path)
-    log = validate_log_file(file)
-
-    monkeypatch.setattr(
-        "ovs_logs.core.ingestion.adapters.settings",
-        _custom_settings(evtxecmd_path="nonexistent-evtxecmd"),
-    )
-
-    def fake_run(*args, **kwargs):
-        raise FileNotFoundError("No such file")
-
-    monkeypatch.setattr(subprocess, "run", fake_run)
-
-    with pytest.raises(BinaryNotFoundError, match="EvtxECmd binary not found"):
-        load_evtx_via_evtxecmd(log, db)
-
-
-def test_load_evtx_via_evtxecmd_process_failure(db, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    file = _make_evtx_file(tmp_path)
-    log = validate_log_file(file)
-
-    monkeypatch.setattr(
-        "ovs_logs.core.ingestion.adapters.settings",
-        _custom_settings(evtxecmd_path="fake-evtxecmd"),
-    )
-
-    def fake_run(*args, **kwargs):
-        raise CalledProcessError(returncode=1, cmd=["EvtxECmd"], stderr="error")
-
-    monkeypatch.setattr(subprocess, "run", fake_run)
-
-    with pytest.raises(IngestionError, match="EvtxECmd failed"):
-        load_evtx_via_evtxecmd(log, db)
-
-
-def test_load_evtx_via_evtxecmd_timeout(db, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    file = _make_evtx_file(tmp_path)
-    log = validate_log_file(file)
-
-    monkeypatch.setattr(
-        "ovs_logs.core.ingestion.adapters.settings",
-        _custom_settings(evtxecmd_path="fake-evtxecmd", timeout_seconds=10),
-    )
-
-    def fake_run(*args, **kwargs):
-        raise TimeoutExpired(cmd=["EvtxECmd"], timeout=10)
-
-    monkeypatch.setattr(subprocess, "run", fake_run)
-
-    with pytest.raises(IngestionError, match="EvtxECmd timed out"):
-        load_evtx_via_evtxecmd(log, db)
-
-
 def test_load_evtx_via_hayabusa_permission_error(db, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     file = _make_evtx_file(tmp_path)
     log = validate_log_file(file)
@@ -444,42 +361,6 @@ def test_load_evtx_via_hayabusa_permission_error(db, tmp_path: Path, monkeypatch
 
     with pytest.raises(IngestionError, match="hayabusa is not executable"):
         load_evtx_via_hayabusa(log, db)
-
-
-def test_load_evtx_via_evtxecmd_permission_error(db, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    file = _make_evtx_file(tmp_path)
-    log = validate_log_file(file)
-
-    monkeypatch.setattr(
-        "ovs_logs.core.ingestion.adapters.settings",
-        _custom_settings(evtxecmd_path="non-executable-evtxecmd"),
-    )
-
-    def fake_run(*args, **kwargs):
-        raise PermissionError("Permission denied")
-
-    monkeypatch.setattr(subprocess, "run", fake_run)
-
-    with pytest.raises(IngestionError, match="EvtxECmd is not executable"):
-        load_evtx_via_evtxecmd(log, db)
-
-
-def test_load_evtx_via_evtxecmd_missing_output(db, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    file = _make_evtx_file(tmp_path)
-    log = validate_log_file(file)
-
-    monkeypatch.setattr(
-        "ovs_logs.core.ingestion.adapters.settings",
-        _custom_settings(evtxecmd_path="fake-evtxecmd"),
-    )
-
-    def fake_run(*args, **kwargs):
-        return subprocess.CompletedProcess(args=["EvtxECmd"], returncode=0, stdout="", stderr="")
-
-    monkeypatch.setattr(subprocess, "run", fake_run)
-
-    with pytest.raises(IngestionError, match="EvtxECmd produced no output"):
-        load_evtx_via_evtxecmd(log, db)
 
 
 def test_load_evtx_via_hayabusa_json(db, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -580,101 +461,293 @@ def test_load_evtx_via_hayabusa_json_missing_output(db, tmp_path: Path, monkeypa
         load_evtx_via_hayabusa_json(log, db)
 
 
-def test_load_evtx_via_evtxecmd_json(db, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    file = _make_evtx_file(tmp_path)
-    log = validate_log_file(file)
-    monkeypatch.setattr(
-        "ovs_logs.core.ingestion.adapters.settings",
-        _custom_settings(evtxecmd_path="fake-evtxecmd"),
-    )
+# ---------------------------------------------------------------------------
+# Hybrid pipeline tests
+# ---------------------------------------------------------------------------
 
-    output_json = '{"timestamp":"2024-01-01T00:00:00","computer":"HOST","event_id":"4624","channel":"Security"}\n'
+
+def _make_fake_parser_class():
+    """Return a FakeParser class for monkeypatching PyEvtxParser."""
+
+    class FakeParser:
+        def __init__(self, path: str) -> None:
+            self.path = path
+
+        def records_json(self):
+            data_json_str = json.dumps(
+                {
+                    "Event": {
+                        "System": {
+                            "Provider": {"#attributes": {"Name": "Microsoft-Windows-Security-Auditing"}},
+                            "EventID": {"#text": 4624, "#attributes": {"Qualifiers": "0"}},
+                            "Level": 0,
+                            "Task": 12544,
+                            "TimeCreated": {"#attributes": {"SystemTime": "2024-01-01T00:00:00Z"}},
+                            "Channel": "Security",
+                            "Computer": "HOST.example.com",
+                        },
+                        "EventData": {
+                            "Data": [
+                                {"#attributes": {"Name": "IpAddress"}, "#text": "1.2.3.4"},
+                                {"#attributes": {"Name": "StatusCode"}, "#text": "0"},
+                            ]
+                        },
+                    }
+                }
+            )
+            return [
+                {
+                    "event_record_id": EVTX_RECORD_ID,
+                    "timestamp": "2024-01-01T00:00:00Z",
+                    "data": data_json_str,
+                }
+            ]
+
+    return FakeParser
+
+
+def test_pyevtx_engine_is_always_available() -> None:
+    assert PyEvtxEngine().is_available() is True
+
+
+def test_pyevtx_engine_name() -> None:
+    assert PyEvtxEngine().name == "raw"
+
+
+def test_pyevtx_engine_ingest(db, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(adapters, "PyEvtxParser", _make_fake_parser_class())
+    log = validate_log_file(_make_evtx_file(tmp_path))
+
+    engine = PyEvtxEngine()
+    output = tmp_path / "raw.csv"
+    engine.ingest(log, output)
+
+    assert output.exists()
+    assert output.stat().st_size > 0
+
+
+def test_hayabusa_engine_unavailable_when_binary_missing(tmp_path: Path) -> None:
+    settings = _custom_settings(hayabusa_path=str(tmp_path / "nonexistent"))
+    assert HayabusaEngine(settings.evtx_tools).is_available() is False
+
+
+def test_hayabusa_engine_available_when_binary_exists(tmp_path: Path) -> None:
+    binary = tmp_path / "hayabusa"
+    binary.write_text("#!/bin/sh\n")
+    binary.chmod(0o755)
+    settings = _custom_settings(hayabusa_path=str(binary))
+    assert HayabusaEngine(settings.evtx_tools).is_available() is True
+
+
+def test_hayabusa_engine_name() -> None:
+    assert HayabusaEngine().name == "alerts"
+
+
+def test_is_hayabusa_available_returns_false_for_missing_path(tmp_path: Path) -> None:
+    settings = _custom_settings(hayabusa_path=str(tmp_path / "nope"))
+    assert is_hayabusa_available(settings.evtx_tools) is False
+
+
+def test_is_hayabusa_available_returns_true_for_existing_binary(tmp_path: Path) -> None:
+    binary = tmp_path / "hayabusa"
+    binary.write_text("#!/bin/sh\n")
+    binary.chmod(0o755)
+    settings = _custom_settings(hayabusa_path=str(binary))
+    assert is_hayabusa_available(settings.evtx_tools) is True
+
+
+def test_hybrid_both_engines(db, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(adapters, "PyEvtxParser", _make_fake_parser_class())
+
+    hayabusa_json = '{"Timestamp":"2024-01-01T00:00:00Z","Computer":"HOST","Channel":"Security","RecordID":12345}\n'
 
     def fake_run(cmd: list[str], *args: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
-        jsonf = None
-        json_dir = None
         for i, part in enumerate(cmd):
-            if part == "--jsonf" and i + 1 < len(cmd):
-                jsonf = cmd[i + 1]
-            if part == "--json" and i + 1 < len(cmd):
-                json_dir = cmd[i + 1]
-        if json_dir and jsonf:
-            Path(json_dir, jsonf).write_text(output_json, encoding="utf-8")
+            if part == "-o" and i + 1 < len(cmd):
+                Path(cmd[i + 1]).write_text(hayabusa_json, encoding="utf-8")
+                break
         return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
     monkeypatch.setattr(subprocess, "run", fake_run)
-    result = load_evtx_via_evtxecmd_json(log, db, table_name="test_evtxecmd_json")
 
-    assert result.table_name == "test_evtxecmd_json"
+    binary = tmp_path / "hayabusa"
+    binary.write_text("#!/bin/sh\n")
+    binary.chmod(0o755)
+    monkeypatch.setattr(
+        "ovs_logs.core.ingestion.adapters.settings",
+        _custom_settings(hayabusa_path=str(binary)),
+    )
+
+    log = validate_log_file(_make_evtx_file(tmp_path))
+    result = ingest_evtx_hybrid(log, db, table_name="hybrid_test")
+
+    assert isinstance(result, HybridIngestionResult)
+    assert result.table_name == "hybrid_test_raw"
     assert result.row_count == 1
-    columns = schema_columns(result.schema)
-    assert "timestamp" in columns
-    assert "computer" in columns
+    assert result.hayabusa_executed is True
+    assert result.hayabusa_result is not None
+    assert result.alerts_table_name == "hybrid_test_alerts"
+
+    raw_cols = schema_columns(result.schema)
+    assert {"record_id", "timestamp", "event", "channel", "computer"}.issubset(raw_cols)
+
+    alert_cols = schema_columns(result.hayabusa_result.schema)
+    assert "Timestamp" in alert_cols or "timestamp" in alert_cols
+
+    view_check = db.execute(f'SELECT 1 FROM "{_CORRELATION_VIEW_NAME}" LIMIT 1').fetchone()
+    assert view_check is not None
 
 
-def test_load_evtx_via_evtxecmd_json_binary_not_found(db, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    file = _make_evtx_file(tmp_path)
-    log = validate_log_file(file)
-    monkeypatch.setattr(
-        "ovs_logs.core.ingestion.adapters.settings",
-        _custom_settings(evtxecmd_path="nonexistent-evtxecmd"),
-    )
+def test_hybrid_hayabusa_unavailable_graceful_fallback(
+    db,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(adapters, "PyEvtxParser", _make_fake_parser_class())
+    settings = _custom_settings(hayabusa_path=str(tmp_path / "nonexistent"))
+    monkeypatch.setattr("ovs_logs.core.ingestion.adapters.settings", settings)
 
-    def fake_run(*args: Any, **kwargs: Any) -> Never:
-        raise FileNotFoundError("No such file")
+    log = validate_log_file(_make_evtx_file(tmp_path))
+    result = ingest_evtx_hybrid(log, db, table_name="hybrid_fallback")
 
-    monkeypatch.setattr(subprocess, "run", fake_run)
+    assert isinstance(result, HybridIngestionResult)
+    assert result.table_name == "hybrid_fallback_raw"
+    assert result.row_count == 1
+    assert result.hayabusa_executed is False
+    assert result.hayabusa_result is None
+    assert result.alerts_table_name is None
 
-    with pytest.raises(BinaryNotFoundError, match="EvtxECmd binary not found"):
-        load_evtx_via_evtxecmd_json(log, db)
-
-
-def test_load_evtx_via_evtxecmd_json_process_failure(db, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    file = _make_evtx_file(tmp_path)
-    log = validate_log_file(file)
-    monkeypatch.setattr(
-        "ovs_logs.core.ingestion.adapters.settings",
-        _custom_settings(evtxecmd_path="fake-evtxecmd"),
-    )
-
-    def fake_run(*args: Any, **kwargs: Any) -> Never:
-        raise CalledProcessError(returncode=1, cmd=["EvtxECmd"], stderr="error")
-
-    monkeypatch.setattr(subprocess, "run", fake_run)
-
-    with pytest.raises(IngestionError, match="EvtxECmd failed"):
-        load_evtx_via_evtxecmd_json(log, db)
+    with pytest.raises(duckdb.Error):
+        db.execute(f'SELECT 1 FROM "{_CORRELATION_VIEW_NAME}" LIMIT 1')
 
 
-def test_load_evtx_via_evtxecmd_json_timeout(db, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    file = _make_evtx_file(tmp_path)
-    log = validate_log_file(file)
-    monkeypatch.setattr(
-        "ovs_logs.core.ingestion.adapters.settings",
-        _custom_settings(evtxecmd_path="fake-evtxecmd", timeout_seconds=10),
-    )
+def test_hybrid_hayabusa_fails_still_returns_raw(
+    db,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(adapters, "PyEvtxParser", _make_fake_parser_class())
 
-    def fake_run(*args: Any, **kwargs: Any) -> Never:
-        raise TimeoutExpired(cmd=["EvtxECmd"], timeout=10)
+    def fake_run(*args: Any, **kwargs: Any) -> None:
+        raise CalledProcessError(returncode=1, cmd=["hayabusa"], stderr="error")
 
     monkeypatch.setattr(subprocess, "run", fake_run)
 
-    with pytest.raises(IngestionError, match="EvtxECmd timed out"):
-        load_evtx_via_evtxecmd_json(log, db)
-
-
-def test_load_evtx_via_evtxecmd_json_missing_output(db, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    file = _make_evtx_file(tmp_path)
-    log = validate_log_file(file)
+    binary = tmp_path / "hayabusa"
+    binary.write_text("#!/bin/sh\n")
+    binary.chmod(0o755)
     monkeypatch.setattr(
         "ovs_logs.core.ingestion.adapters.settings",
-        _custom_settings(evtxecmd_path="fake-evtxecmd"),
+        _custom_settings(hayabusa_path=str(binary)),
     )
 
-    def fake_run(*args: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
-        return subprocess.CompletedProcess(args=["EvtxECmd"], returncode=0, stdout="", stderr="")
+    log = validate_log_file(_make_evtx_file(tmp_path))
+    result = ingest_evtx_hybrid(log, db, table_name="hybrid_fail")
+
+    assert isinstance(result, HybridIngestionResult)
+    assert result.table_name == "hybrid_fail_raw"
+    assert result.row_count == 1
+    assert result.hayabusa_executed is False
+    assert result.hayabusa_result is None
+
+
+def test_hybrid_hayabusa_empty_output_skipped(
+    db,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(adapters, "PyEvtxParser", _make_fake_parser_class())
+
+    def fake_run(cmd: list[str], *args: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        for i, part in enumerate(cmd):
+            if part == "-o" and i + 1 < len(cmd):
+                Path(cmd[i + 1]).write_text("", encoding="utf-8")
+                break
+        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
     monkeypatch.setattr(subprocess, "run", fake_run)
 
-    with pytest.raises(IngestionError, match="EvtxECmd produced no output"):
-        load_evtx_via_evtxecmd_json(log, db)
+    binary = tmp_path / "hayabusa"
+    binary.write_text("#!/bin/sh\n")
+    binary.chmod(0o755)
+    monkeypatch.setattr(
+        "ovs_logs.core.ingestion.adapters.settings",
+        _custom_settings(hayabusa_path=str(binary)),
+    )
+
+    log = validate_log_file(_make_evtx_file(tmp_path))
+    result = ingest_evtx_hybrid(log, db, table_name="hybrid_empty")
+
+    assert result.hayabusa_executed is False
+    assert result.alerts_table_name is None
+
+
+def test_hybrid_result_inherits_ingestion_result() -> None:
+    assert issubclass(HybridIngestionResult, IngestionResult)
+
+
+def test_hybrid_custom_engines_pipeline(db, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(adapters, "PyEvtxParser", _make_fake_parser_class())
+
+    class DummyEngine:
+        @property
+        def name(self) -> str:
+            return "alerts"
+
+        def is_available(self) -> bool:
+            return True
+
+        def ingest(self, log_file, output_path: Path) -> None:
+            output_path.write_text('{"col":"val"}\n', encoding="utf-8")
+
+    log = validate_log_file(_make_evtx_file(tmp_path))
+    pipeline = HybridIngestionPipeline(
+        engines=[PyEvtxEngine(), DummyEngine()],
+        connection=db,
+    )
+    result = pipeline.execute(log, "custom_engines")
+
+    assert isinstance(result, HybridIngestionResult)
+    assert result.row_count == 1
+    assert result.hayabusa_executed is True
+
+
+def test_correlation_view_joins_correctly(db, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(adapters, "PyEvtxParser", _make_fake_parser_class())
+
+    hayabusa_json = json.dumps(
+        {
+            "Timestamp": "2024-01-01T00:00:00Z",
+            "Computer": "HOST.example.com",
+            "Channel": "Security",
+            "RecordID": EVTX_RECORD_ID,
+            "AlertName": "Test Detection",
+        }
+    )
+
+    def fake_run(cmd: list[str], *args: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        for i, part in enumerate(cmd):
+            if part == "-o" and i + 1 < len(cmd):
+                Path(cmd[i + 1]).write_text(hayabusa_json + "\n", encoding="utf-8")
+                break
+        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    binary = tmp_path / "hayabusa"
+    binary.write_text("#!/bin/sh\n")
+    binary.chmod(0o755)
+    monkeypatch.setattr(
+        "ovs_logs.core.ingestion.adapters.settings",
+        _custom_settings(hayabusa_path=str(binary)),
+    )
+
+    log = validate_log_file(_make_evtx_file(tmp_path))
+    ingest_evtx_hybrid(log, db, table_name="view_test")
+
+    row = db.execute(f'SELECT * FROM "{_CORRELATION_VIEW_NAME}"').fetchone()
+    assert row is not None
+
+    cols = [desc[0] for desc in db.execute(f'DESCRIBE "{_CORRELATION_VIEW_NAME}"').fetchall()]
+    assert "raw_message" in cols
+    assert "raw_source_ip" in cols

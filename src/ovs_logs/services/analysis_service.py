@@ -215,6 +215,27 @@ class AnalysisService:
         _, report_id = self._synthesize(connection, indicators, threat_intel)
         return report_id
 
+    @staticmethod
+    def correlation_view_name() -> str:
+        """Return the name of the correlated-alerts SQL view."""
+        from ovs_logs.core.ingestion.adapters import _CORRELATION_VIEW_NAME  # noqa: PLC0415
+
+        return _CORRELATION_VIEW_NAME
+
+    def has_correlated_alerts(
+        self,
+        connection: duckdb.DuckDBPyConnection,
+    ) -> bool:
+        """Check whether the ``v_correlated_alerts`` view exists."""
+        from ovs_logs.core.ingestion.adapters import _CORRELATION_VIEW_NAME  # noqa: PLC0415
+
+        try:
+            connection.execute(f"SELECT 1 FROM {quote_identifier(_CORRELATION_VIEW_NAME)} LIMIT 1")
+        except duckdb.Error:
+            return False
+        else:
+            return True
+
     # ------------------------------------------------------------------
     # Internal steps
     # ------------------------------------------------------------------

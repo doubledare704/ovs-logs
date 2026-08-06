@@ -1,18 +1,22 @@
 """DuckDB ingestion adapters for supported log formats."""
 
+from __future__ import annotations
+
 import csv
 import json
 import logging
 import subprocess
 import tempfile
 from collections.abc import Callable, Sequence
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Protocol, runtime_checkable
 
 import duckdb
 from evtx import PyEvtxParser
 
-from ovs_logs.config.settings import settings
+from ovs_logs.config.settings import EVTXToolSettings, settings
 from ovs_logs.core.constants import EVTX_CSV_FIELDNAMES, SINGLE_COLUMN_DELIMITER
 from ovs_logs.core.errors import BinaryNotFoundError, IngestionError
 from ovs_logs.core.sql_utils import quote_identifier, resolve_table_name
@@ -22,6 +26,18 @@ type FilePath = str | Path
 type DuckDBConn = duckdb.DuckDBPyConnection
 type TableName = str | None
 type EvtxAdapterFunc = Callable[[LogFile, DuckDBConn, TableName], IngestionResult]
+
+
+@runtime_checkable
+class EVTXEngine(Protocol):
+    """Structural contract for an EVTX ingestion engine."""
+
+    @property
+    def name(self) -> str: ...
+
+    def is_available(self) -> bool: ...
+
+    def ingest(self, log_file: LogFile, output_path: Path) -> None: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,6 +62,12 @@ def build_result(connection: DuckDBConn, table_name: str) -> IngestionResult:
     schema_rows = connection.execute(f"DESCRIBE {quoted_name}").fetchall()
     schema = [(row[0], row[1]) for row in schema_rows]
     return IngestionResult(table_name=table_name, row_count=row_count, schema=schema)
+
+
+def is_hayabusa_available(evtx_settings: EVTXToolSettings | None = None) -> bool:
+    """Check if the Hayabusa binary exists at the configured path."""
+    s = evtx_settings or settings.evtx_tools
+    return Path(s.hayabusa_path).is_file()
 
 
 def run_evtx_tool(
@@ -305,6 +327,26 @@ def _write_evtx_records(
         writer.writerow(_extract_evtx_fields(event_data, record))
 
 
+def _parse_evtx_to_csv(log_file: LogFile, csv_path: Path) -> None:
+    """Parse EVTX records via PyEvtxParser and write to a CSV file."""
+    with csv_path.open("w", encoding="utf-8", newline="") as tmp:
+        writer = csv.DictWriter(
+            tmp,
+            fieldnames=list(EVTX_CSV_FIELDNAMES),
+            extrasaction="ignore",
+        )
+        writer.writeheader()
+        parser = PyEvtxParser(str(log_file.path.resolve()))
+        try:
+            _write_evtx_records(parser, writer)
+        except RuntimeError as exc:
+            if "Unable to parse EVTX record" in str(exc):
+                raise
+            raise RuntimeError(f"Unable to parse EVTX file {log_file.path}") from exc
+        except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
+            raise RuntimeError(f"Unable to parse EVTX record data: {exc}") from exc
+
+
 def load_evtx(
     log_file: LogFile,
     connection: DuckDBConn,
@@ -312,33 +354,250 @@ def load_evtx(
 ) -> IngestionResult:
     """Convert an EVTX file into a temporary CSV and load it into DuckDB."""
     name = resolve_table_name(log_file, table_name)
-
     with tempfile.TemporaryDirectory() as tmp_dir:
         tmp_path = Path(tmp_dir) / f"{name}.csv"
-        with tmp_path.open("w", encoding="utf-8", newline="") as tmp:
-            writer = csv.DictWriter(
-                tmp,
-                fieldnames=list(EVTX_CSV_FIELDNAMES),
-                extrasaction="ignore",
-            )
-            writer.writeheader()
-
-            parser = PyEvtxParser(str(log_file.path.resolve()))
-            try:
-                _write_evtx_records(parser, writer)
-            except RuntimeError as exc:
-                if "Unable to parse EVTX record" in str(exc):
-                    raise
-                raise RuntimeError(f"Unable to parse EVTX file {log_file.path}") from exc
-            except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
-                raise RuntimeError(f"Unable to parse EVTX record data: {exc}") from exc
-
+        _parse_evtx_to_csv(log_file, tmp_path)
         connection.execute(
             f'CREATE OR REPLACE TABLE "{name}" AS SELECT * FROM read_csv_auto(?)',
             [str(tmp_path)],
         )
-
     return build_result(connection, name)
+
+
+class PyEvtxEngine:
+    """Raw EVTX parsing via PyEvtxParser producing a CSV file."""
+
+    @property
+    def name(self) -> str:
+        return "raw"
+
+    def is_available(self) -> bool:
+        return True
+
+    def ingest(self, log_file: LogFile, output_path: Path) -> None:
+        _parse_evtx_to_csv(log_file, output_path)
+
+
+class HayabusaEngine:
+    """Sigma-rule alert scanning via the Hayabusa CLI binary."""
+
+    def __init__(self, evtx_settings: EVTXToolSettings | None = None) -> None:
+        self._settings = evtx_settings or settings.evtx_tools
+
+    @property
+    def name(self) -> str:
+        return "alerts"
+
+    def is_available(self) -> bool:
+        return Path(self._settings.hayabusa_path).is_file()
+
+    def ingest(self, log_file: LogFile, output_path: Path) -> None:
+        from ovs_logs.services.evtx_workflow import _run_hayabusa_json_to_file  # noqa: PLC0415
+
+        _run_hayabusa_json_to_file(log_file, output_path, self._settings)
+
+
+@dataclass(frozen=True, slots=True)
+class EngineOutput:
+    """Result of a single engine's file-level execution."""
+
+    engine_name: str
+    output_path: Path
+    success: bool
+    error: Exception | None = None
+
+
+_CORRELATION_VIEW_NAME: str = "v_correlated_alerts"
+
+
+def _create_correlation_view(
+    connection: DuckDBConn,
+    raw_table: str,
+    alerts_table: str,
+) -> None:
+    """Create a SQL view joining hayabusa alerts with raw EVTX events."""
+    quoted_raw = quote_identifier(raw_table)
+    quoted_alerts = quote_identifier(alerts_table)
+    quoted_view = quote_identifier(_CORRELATION_VIEW_NAME)
+    connection.execute(
+        f"CREATE OR REPLACE VIEW {quoted_view} AS\n"
+        "SELECT\n"
+        "    a.*,\n"
+        "    r.message    AS raw_message,\n"
+        "    r.source_ip  AS raw_source_ip,\n"
+        "    r.status_code AS raw_status_code,\n"
+        "    r.provider   AS raw_provider,\n"
+        "    r.level      AS raw_level,\n"
+        "    r.task       AS raw_task\n"
+        f"FROM {quoted_alerts} a\n"
+        f"LEFT JOIN {quoted_raw} r\n"
+        "    ON  a.RecordID = r.record_id\n"
+        "    AND a.Channel  = r.channel\n"
+        "    AND a.Computer = r.computer\n"
+        "    AND a.Timestamp = r.timestamp"
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class HybridIngestionResult(IngestionResult):
+    """Result of a hybrid EVTX ingestion (raw events + Hayabusa alerts)."""
+
+    hayabusa_result: IngestionResult | None = None
+    hayabusa_executed: bool = False
+    alerts_table_name: str | None = None
+
+
+class HybridIngestionPipeline:
+    """Orchestrates parallel execution of multiple EVTX ingestion engines.
+
+    Open for extension: accepts any sequence of ``EVTXEngine`` implementations.
+    Closed for modification: pipeline logic does not change when new engines
+    are added.
+    """
+
+    def __init__(
+        self,
+        engines: Sequence[EVTXEngine],
+        connection: DuckDBConn,
+    ) -> None:
+        self._engines = engines
+        self._connection = connection
+
+    def execute(
+        self,
+        log_file: LogFile,
+        base_table_name: str,
+    ) -> HybridIngestionResult:
+        """Run all engines in parallel and load results into DuckDB."""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            outputs = self._run_engines(log_file, Path(tmp_dir))
+            return self._load_into_duckdb(base_table_name, outputs)
+
+    # -- internal --------------------------------------------------------
+
+    def _run_engines(
+        self,
+        log_file: LogFile,
+        tmp_dir: Path,
+    ) -> list[EngineOutput]:
+        """Execute available engines in parallel via ThreadPoolExecutor."""
+        available = [eng for eng in self._engines if eng.is_available()]
+        if not available:
+            return []
+
+        outputs: list[EngineOutput] = []
+        with ThreadPoolExecutor(
+            max_workers=len(available),
+            thread_name_prefix="evtx",
+        ) as pool:
+            future_map = {pool.submit(self._safe_ingest, eng, log_file, tmp_dir): eng for eng in available}
+            for future in as_completed(future_map):
+                outputs.append(future.result())
+        return outputs
+
+    @staticmethod
+    def _safe_ingest(
+        engine: EVTXEngine,
+        log_file: LogFile,
+        tmp_dir: Path,
+    ) -> EngineOutput:
+        """Run a single engine, catching exceptions into EngineOutput."""
+        output_path = tmp_dir / f"{engine.name}.csv"
+        try:
+            engine.ingest(log_file, output_path)
+            return EngineOutput(
+                engine_name=engine.name,
+                output_path=output_path,
+                success=True,
+            )
+        except Exception as exc:
+            logging.warning(
+                "Engine '%s' failed: %s",
+                engine.name,
+                exc,
+            )
+            return EngineOutput(
+                engine_name=engine.name,
+                output_path=output_path,
+                success=False,
+                error=exc,
+            )
+
+    def _load_into_duckdb(
+        self,
+        base_table_name: str,
+        outputs: list[EngineOutput],
+    ) -> HybridIngestionResult:
+        """Load successful engine outputs into DuckDB tables."""
+        raw_output = self._find_output(outputs, "raw")
+        if raw_output is None or not raw_output.success:
+            raise IngestionError("Raw EVTX parsing failed; cannot continue")
+
+        raw_table = f"{base_table_name}_raw"
+        raw_result = load_csv_into_table(
+            self._connection,
+            raw_table,
+            raw_output.output_path,
+        )
+
+        hayabusa_output = self._find_output(outputs, "alerts")
+        hayabusa_result = None
+        alerts_table = None
+        if hayabusa_output is not None and hayabusa_output.success:
+            alerts_table = f"{base_table_name}_alerts"
+            try:
+                quoted = quote_identifier(alerts_table)
+                self._connection.execute(
+                    f"CREATE OR REPLACE TABLE {quoted} AS SELECT * FROM read_json_auto(?)",
+                    [str(hayabusa_output.output_path)],
+                )
+                hayabusa_result = build_result(self._connection, alerts_table)
+            except Exception as exc:
+                logging.warning(
+                    "Failed to load Hayabusa alerts into DuckDB: %s",
+                    exc,
+                )
+                alerts_table = None
+
+        if hayabusa_result is not None and alerts_table is not None:
+            try:
+                _create_correlation_view(self._connection, raw_table, alerts_table)
+            except duckdb.Error:
+                logging.debug("Could not create correlation view (alerts table schema mismatch)")
+
+        return HybridIngestionResult(
+            table_name=raw_table,
+            row_count=raw_result.row_count,
+            schema=raw_result.schema,
+            hayabusa_result=hayabusa_result,
+            hayabusa_executed=hayabusa_result is not None,
+            alerts_table_name=alerts_table,
+        )
+
+    @staticmethod
+    def _find_output(outputs: list[EngineOutput], engine_name: str) -> EngineOutput | None:
+        return next((o for o in outputs if o.engine_name == engine_name), None)
+
+
+def ingest_evtx_hybrid(
+    log_file: LogFile,
+    connection: DuckDBConn,
+    table_name: TableName = None,
+) -> HybridIngestionResult:
+    """Run PyEvtxParser and Hayabusa in parallel for comprehensive EVTX analysis.
+
+    Always produces a ``{base}_raw`` table from PyEvtxParser.  When Hayabusa
+    is installed and accessible, also produces a ``{base}_alerts`` table and
+    a ``v_correlated_alerts`` view.  Failures in Hayabusa are logged and
+    do not prevent the raw ingestion from completing.
+    """
+    base_name = resolve_table_name(log_file, table_name)
+    engines: list[EVTXEngine] = [
+        PyEvtxEngine(),
+        HayabusaEngine(settings.evtx_tools),
+    ]
+    pipeline = HybridIngestionPipeline(engines=engines, connection=connection)
+    return pipeline.execute(log_file, base_name)
 
 
 def iter_evtx_record_summaries(path: Path, max_records: int = 50) -> list[dict[str, object]]:
@@ -395,23 +654,6 @@ def load_evtx_via_hayabusa(
     return _run_hayabusa_workflow(log_file, connection, name, settings)
 
 
-def load_evtx_via_evtxecmd(
-    log_file: LogFile,
-    connection: DuckDBConn,
-    table_name: TableName = None,
-) -> IngestionResult:
-    """Load an EVTX file via the EvtxECmd CLI binary (--csv output).
-
-    EvtxECmd outputs all events with map-enhanced fields as CSV.
-    The delegated service constructs the subprocess command, runs the external
-    binary within a temporary directory, and loads the resulting CSV into DuckDB.
-    """
-    from ovs_logs.services.evtx_workflow import _run_evtxecmd_workflow  # noqa: PLC0415
-
-    name = resolve_table_name(log_file, table_name)
-    return _run_evtxecmd_workflow(log_file, connection, name, settings)
-
-
 def load_evtx_via_hayabusa_json(
     log_file: LogFile,
     connection: DuckDBConn,
@@ -424,24 +666,11 @@ def load_evtx_via_hayabusa_json(
     return _run_hayabusa_json_workflow(log_file, connection, name, settings)
 
 
-def load_evtx_via_evtxecmd_json(
-    log_file: LogFile,
-    connection: DuckDBConn,
-    table_name: TableName = None,
-) -> IngestionResult:
-    """Load an EVTX file via EvtxECmd JSON output."""
-    from ovs_logs.services.evtx_workflow import _run_evtxecmd_json_workflow  # noqa: PLC0415
-
-    name = resolve_table_name(log_file, table_name)
-    return _run_evtxecmd_json_workflow(log_file, connection, name, settings)
-
-
 EVTX_TOOL_ADAPTERS: dict[str, EvtxAdapterFunc] = {
     "default": load_evtx,
     "hayabusa": load_evtx_via_hayabusa,
     "hayabusa-json": load_evtx_via_hayabusa_json,
-    "evtxecmd": load_evtx_via_evtxecmd,
-    "evtxecmd-json": load_evtx_via_evtxecmd_json,
+    "hybrid": ingest_evtx_hybrid,
 }
 """Selectable EVTX processing tools mapped to their ingestion adapters."""
 

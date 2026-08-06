@@ -35,7 +35,7 @@ def _apply_evtx_settings() -> None:
         new_settings = Settings(
             evtx_tools=EVTXToolSettings(
                 hayabusa_path=hayabusa_path,
-                evtxecmd_path=adapters.settings.evtx_tools.evtxecmd_path,
+                hayabusa_rules_dir=adapters.settings.evtx_tools.hayabusa_rules_dir,
                 timeout_seconds=adapters.settings.evtx_tools.timeout_seconds,
             )
         )
