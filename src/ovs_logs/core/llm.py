@@ -12,7 +12,7 @@ from urllib.parse import urlparse
 import requests
 from ollama import Client, ResponseError
 
-from ovs_logs.config.settings import LLMSettings, settings
+from ovs_logs.config.settings import OLLAMA_DEFAULT_ENDPOINT, LLMSettings, settings
 from ovs_logs.core.analysis.indicators import SuspiciousIndicator
 from ovs_logs.core.report import IncidentReport
 from ovs_logs.core.report_schema import REPORT_JSON_SCHEMA
@@ -139,7 +139,7 @@ _ERR_API_KEY_REQUIRED = "LLM API key is required"
 _ERR_ENDPOINT_REQUIRED = "LLM endpoint is required"
 _ERR_MODEL_REQUIRED = "LLM model is required"
 _ERR_CLOUD_BLOCKED = (
-    "Ollama Cloud (ollama.com) is not supported; use a local Ollama endpoint such as http://localhost:11434"
+    f"Ollama Cloud (ollama.com) is not supported; use a local Ollama endpoint such as {OLLAMA_DEFAULT_ENDPOINT}"
 )
 
 
@@ -165,6 +165,21 @@ def is_ollama_endpoint(url: str) -> bool:
     hostname = parsed.hostname or ""
     port = parsed.port
     return port == _OLLAMA_PORT and hostname in ("localhost", "127.0.0.1")
+
+
+def list_ollama_models(endpoint: str = OLLAMA_DEFAULT_ENDPOINT) -> list[str]:
+    """Return sorted model names from a local Ollama server.
+
+    Queries the Ollama API at *endpoint* for installed models.  Returns
+    an empty list when the server is unreachable or returns no models.
+    """
+    try:
+        client = Client(host=endpoint)
+        response = client.list()
+        return sorted(m.model for m in response.models if m.model)
+    except Exception:
+        logger.warning("Could not list Ollama models from %s", endpoint)
+        return []
 
 
 def create_llm_provider(

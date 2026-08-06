@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 
-from ovs_logs.config.settings import settings
+from ovs_logs.config.settings import OLLAMA_DEFAULT_ENDPOINT, settings
 from ovs_logs.core.llm import OllamaProvider, OpenAICompatibleProvider
 from ovs_logs.core.threat_intel import ThreatIntelClient
 from ovs_logs.ui.llm_wiring import (
@@ -24,7 +24,7 @@ def test_build_llm_provider_with_preset_endpoint() -> None:
     }
     provider = build_llm_provider(state)
     assert isinstance(provider, OllamaProvider)
-    assert provider.host == "http://localhost:11434"
+    assert provider.host == OLLAMA_DEFAULT_ENDPOINT
     assert provider.model == "qwen3.5:4b"
 
 

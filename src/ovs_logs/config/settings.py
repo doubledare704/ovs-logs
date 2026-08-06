@@ -151,12 +151,15 @@ class LLMPreset:
 DEFAULT_ENDPOINT_SENTINEL = "__default__"
 """Sentinel value indicating an LLM preset should fall back to ``settings.llm.api_url``."""
 
+OLLAMA_DEFAULT_ENDPOINT: str = "http://localhost:11434"
+"""Default endpoint URL for a local Ollama server."""
+
 
 LLM_PRESETS: dict[str, LLMPreset] = {
     "OpenAI": LLMPreset(name="OpenAI", endpoint=DEFAULT_ENDPOINT_SENTINEL, model="gpt-4o-mini"),
     "Ollama-local": LLMPreset(
         name="Ollama-local",
-        endpoint="http://localhost:11434",
+        endpoint=OLLAMA_DEFAULT_ENDPOINT,
         model="qwen3.5:4b",
     ),
     "Azure": LLMPreset(name="Azure", endpoint="", model=""),

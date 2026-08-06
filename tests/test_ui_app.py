@@ -10,7 +10,7 @@ import pytest
 import requests
 from streamlit.testing.v1 import AppTest
 
-from ovs_logs.config.settings import Settings, settings
+from ovs_logs.config.settings import OLLAMA_DEFAULT_ENDPOINT, Settings, settings
 from ovs_logs.core.analysis import engine
 from ovs_logs.core.database import ALLOWLIST_TABLE, insert_allowlisted_indicator
 from ovs_logs.core.ingestion import adapters
@@ -372,13 +372,17 @@ def test_sidebar_llm_widgets_persist_to_session_state(monkeypatch: pytest.Monkey
 def test_sidebar_llm_preset_clears_dependent_fields(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("ABUSEIPDB_API_KEY", raising=False)
     monkeypatch.delenv("LLM_API_KEY", raising=False)
+    monkeypatch.setattr(
+        "ovs_logs.ui.components.sidebar._list_ollama_models_cached",
+        lambda _endpoint: ["qwen3.5:4b", "llama3:8b"],
+    )
 
     at = AppTest.from_file(str(APP_PATH)).run()
 
-    # Switch preset to Ollama-local
+    # Switch preset to Ollama-local — model is a selectbox with available models
     selectbox_by_label(at, "Provider preset").set_value("Ollama-local").run()
     assert at.session_state["LLM_PRESET"] == "Ollama-local"
-    assert at.session_state["LLM_ENDPOINT"] == "http://localhost:11434"
+    assert at.session_state["LLM_ENDPOINT"] == OLLAMA_DEFAULT_ENDPOINT
     assert at.session_state["LLM_MODEL"] == "qwen3.5:4b"
 
     # Switch preset to Custom — endpoint/model should be empty
@@ -386,6 +390,42 @@ def test_sidebar_llm_preset_clears_dependent_fields(monkeypatch: pytest.MonkeyPa
     assert at.session_state["LLM_PRESET"] == "Custom"
     assert at.session_state["LLM_ENDPOINT"] == ""
     assert at.session_state["LLM_MODEL"] == ""
+
+
+def test_sidebar_ollama_model_selectbox_renders_when_models_available(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When Ollama is reachable, the model field is a selectbox, not a text_input."""
+    monkeypatch.delenv("ABUSEIPDB_API_KEY", raising=False)
+    monkeypatch.delenv("LLM_API_KEY", raising=False)
+    monkeypatch.setattr(
+        "ovs_logs.ui.components.sidebar._list_ollama_models_cached",
+        lambda _endpoint: sorted(["qwen3.5:4b", "llama3:8b"]),
+    )
+
+    at = AppTest.from_file(str(APP_PATH)).run()
+    selectbox_by_label(at, "Provider preset").set_value("Ollama-local").run()
+
+    model_selectbox = selectbox_by_label(at, "LLM model")
+    assert model_selectbox.options == ["llama3:8b", "qwen3.5:4b"]
+
+
+def test_sidebar_ollama_model_fallback_to_text_input_when_unreachable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When Ollama is unreachable, the model field falls back to a text_input."""
+    monkeypatch.delenv("ABUSEIPDB_API_KEY", raising=False)
+    monkeypatch.delenv("LLM_API_KEY", raising=False)
+    monkeypatch.setattr(
+        "ovs_logs.ui.components.sidebar._list_ollama_models_cached",
+        lambda _endpoint: [],
+    )
+
+    at = AppTest.from_file(str(APP_PATH)).run()
+    selectbox_by_label(at, "Provider preset").set_value("Ollama-local").run()
+
+    model_input = text_input_by_label(at, "LLM model")
+    assert model_input.value == "qwen3.5:4b"
 
 
 # ---------------------------------------------------------------------------

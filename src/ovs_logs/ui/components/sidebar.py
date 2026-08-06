@@ -24,7 +24,7 @@ from ovs_logs.core.database import (
     list_allowlisted_indicators,
 )
 from ovs_logs.core.ingestion.adapters import EVTX_TOOL_CHOICES
-from ovs_logs.core.llm import is_ollama_endpoint
+from ovs_logs.core.llm import is_ollama_endpoint, list_ollama_models
 from ovs_logs.core.threat_lists import (
     ensure_cache_dir as tl_ensure_cache_dir,
     is_loaded as tl_is_loaded,
@@ -82,6 +82,12 @@ def _on_llm_preset_change() -> None:
         )
         st.session_state[SK.widget_llm_endpoint] = endpoint_default
         st.session_state[SK.widget_llm_model] = preset_cfg.model or ""
+
+
+@st.cache_data(ttl=30)
+def _list_ollama_models_cached(endpoint: str) -> list[str]:
+    """Cached wrapper around :func:`list_ollama_models`."""
+    return list_ollama_models(endpoint)
 
 
 def _threat_list_freshness_caption(enabled: list[str], cache_dir: str) -> None:
@@ -283,13 +289,29 @@ def render_sidebar() -> None:  # noqa: PLR0915
         "LLM endpoint",
         key=SK.widget_llm_endpoint,
     )
-    llm_model = st.sidebar.text_input(
-        "LLM model",
-        key=SK.widget_llm_model,
-    )
 
     endpoint_value = st.session_state[SK.widget_llm_endpoint]
     _is_ollama = is_ollama_endpoint(endpoint_value)
+
+    if _is_ollama:
+        models = _list_ollama_models_cached(endpoint_value)
+        if models:
+            llm_model = st.sidebar.selectbox(
+                "LLM model",
+                options=models,
+                key=SK.widget_llm_model,
+            )
+        else:
+            st.sidebar.caption("Could not reach Ollama \u2014 type model name manually")
+            llm_model = st.sidebar.text_input(
+                "LLM model",
+                key=SK.widget_llm_model,
+            )
+    else:
+        llm_model = st.sidebar.text_input(
+            "LLM model",
+            key=SK.widget_llm_model,
+        )
     st.session_state[SK.llm_ollama_local] = _is_ollama
 
     st.session_state[SK.llm_preset] = preset

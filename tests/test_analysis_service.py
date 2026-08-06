@@ -8,6 +8,7 @@ import duckdb
 import pytest
 from pytest_mock.plugin import MockerFixture
 
+from ovs_logs.config.settings import OLLAMA_DEFAULT_ENDPOINT
 from ovs_logs.core.analysis.indicators import SuspiciousIndicator
 from ovs_logs.services.analysis_service import AnalysisConfig, AnalysisService
 
@@ -224,7 +225,7 @@ def test_synthesize_report_allows_ollama_without_api_key(
         table="events",
         llm=True,
         llm_api_key=None,
-        llm_endpoint="http://localhost:11434",
+        llm_endpoint=OLLAMA_DEFAULT_ENDPOINT,
         llm_model="qwen3.5:4b",
     )
     service = AnalysisService(config)
@@ -247,4 +248,4 @@ def test_synthesize_report_allows_ollama_without_api_key(
     assert report_id == "report-ollama"
     mock_provider.assert_called_once()
     assert mock_provider.call_args.kwargs["api_key"] == ""
-    assert mock_provider.call_args.kwargs["endpoint"] == "http://localhost:11434"
+    assert mock_provider.call_args.kwargs["endpoint"] == OLLAMA_DEFAULT_ENDPOINT

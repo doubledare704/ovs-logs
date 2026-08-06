@@ -7,7 +7,8 @@ from unittest.mock import MagicMock
 import pytest
 from ollama import ResponseError
 
-from ovs_logs.core.llm import OllamaProvider
+from ovs_logs.config.settings import OLLAMA_DEFAULT_ENDPOINT
+from ovs_logs.core.llm import OllamaProvider, list_ollama_models
 from ovs_logs.core.report_schema import REPORT_JSON_SCHEMA
 
 
@@ -21,7 +22,7 @@ def mock_client(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
 def test_generate_sends_schema_and_temperature(mock_client: MagicMock) -> None:
     mock_client.chat.return_value = {"message": {"content": '{"title": "t"}'}}
 
-    provider = OllamaProvider(api_key="", endpoint="http://localhost:11434", model="qwen3.5:4b")
+    provider = OllamaProvider(api_key="", endpoint=OLLAMA_DEFAULT_ENDPOINT, model="qwen3.5:4b")
     provider.generate("prompt")
 
     assert mock_client.chat.call_count == 1
@@ -37,10 +38,60 @@ def test_generate_falls_back_without_format_on_error(mock_client: MagicMock) -> 
         {"message": {"content": '{"title": "t"}'}},
     ]
 
-    provider = OllamaProvider(api_key="", endpoint="http://localhost:11434", model="qwen3.5:4b")
+    provider = OllamaProvider(api_key="", endpoint=OLLAMA_DEFAULT_ENDPOINT, model="qwen3.5:4b")
     result = provider.generate("prompt")
 
     assert mock_client.chat.call_count == 2
     assert "format" in mock_client.chat.call_args_list[0].kwargs
     assert "format" not in mock_client.chat.call_args_list[1].kwargs
     assert result == '{"title": "t"}'
+
+
+# ---------------------------------------------------------------------------
+# list_ollama_models tests
+# ---------------------------------------------------------------------------
+
+
+def _make_model(name: str) -> MagicMock:
+    """Return a mock Ollama model with the given name."""
+    m = MagicMock()
+    m.model = name
+    return m
+
+
+def test_list_ollama_models_returns_sorted(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = MagicMock()
+    client.list.return_value.models = [
+        _make_model("llama3:8b"),
+        _make_model("qwen3.5:4b"),
+        _make_model("codellama:7b"),
+    ]
+    monkeypatch.setattr("ovs_logs.core.llm.Client", MagicMock(return_value=client))
+
+    result = list_ollama_models(OLLAMA_DEFAULT_ENDPOINT)
+
+    assert result == ["codellama:7b", "llama3:8b", "qwen3.5:4b"]
+
+
+def test_list_ollama_models_returns_empty_on_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = MagicMock()
+    client.list.side_effect = ConnectionError("refused")
+    monkeypatch.setattr("ovs_logs.core.llm.Client", MagicMock(return_value=client))
+
+    result = list_ollama_models(OLLAMA_DEFAULT_ENDPOINT)
+
+    assert result == []
+
+
+def test_list_ollama_models_filters_empty_names(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = MagicMock()
+    client.list.return_value.models = [
+        _make_model("llama3:8b"),
+        _make_model(""),
+        _make_model("qwen3.5:4b"),
+    ]
+    monkeypatch.setattr("ovs_logs.core.llm.Client", MagicMock(return_value=client))
+
+    result = list_ollama_models(OLLAMA_DEFAULT_ENDPOINT)
+
+    assert result == ["llama3:8b", "qwen3.5:4b"]
