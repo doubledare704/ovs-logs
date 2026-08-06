@@ -707,3 +707,19 @@ def test_force_reanalyze_button_exists_in_ingest_tab(
     # Find the Force Re-analyze button in the main area (not sidebar)
     force_buttons = [b for b in at.button if b.label == "Force Re-analyze"]
     assert len(force_buttons) == 1, f"Expected 1 Force Re-analyze button, got {len(force_buttons)}"
+
+
+def test_evtx_tool_defaults_to_hybrid_and_banner_when_hayabusa_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Hybrid must be the default EVTX tool, with a fallback banner when Hayabusa is missing."""
+    monkeypatch.delenv("ABUSEIPDB_API_KEY", raising=False)
+    monkeypatch.delenv("LLM_API_KEY", raising=False)
+
+    at = AppTest.from_file(str(APP_PATH))
+    at.session_state["hayabusa_path"] = str(Path("/nonexistent/hayabusa"))
+    at.run()
+
+    assert not at.exception
+    assert selectbox_by_label(at, "EVTX tool").value == "hybrid"
+    assert any("Hayabusa not detected" in info.value for info in at.sidebar.info)

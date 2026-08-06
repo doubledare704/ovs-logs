@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import io
 import zipfile
 from pathlib import Path
@@ -15,11 +16,14 @@ from ovs_logs.core.downloader import (
     detect_platform,
     extract_zip_bytes,
     fetch_release_meta,
+    find_release_asset,
     get_hayabusa_version,
     install_hayabusa,
     make_executable,
     resolve_asset_url,
+    verify_sha256,
 )
+from ovs_logs.core.errors import IngestionError
 
 
 def _make_zip_archive(entries: dict[str, bytes]) -> bytes:
@@ -33,6 +37,11 @@ def _make_zip_archive(entries: dict[str, bytes]) -> bytes:
 
 def _make_release_meta(assets: list[dict[str, str]], tag: str = "v4.0.0") -> dict:
     return {"tag_name": tag, "assets": assets}
+
+
+def _sha256_digest(data: bytes) -> str:
+    """Return the ``"sha256:<hex>"`` GitHub-style digest for *data*."""
+    return f"sha256:{hashlib.sha256(data).hexdigest()}"
 
 
 class TestDetectPlatform:
@@ -191,6 +200,13 @@ class TestInstallHayabusa:
         [{"name": "hayabusa-4.0.0-mac-aarch64.zip", "browser_download_url": "https://example.com/hayabusa.zip"}]
     )
 
+    def _meta_for_archive(self, archive: bytes) -> dict:
+        meta = dict(self._RELEASE_META)
+        asset = dict(meta["assets"][0])
+        asset["digest"] = _sha256_digest(archive)
+        meta["assets"] = [asset]
+        return meta
+
     def test_fresh_install(self, tmp_path: Path) -> None:
         target = tmp_path / "tools"
         archive = _make_zip_archive(
@@ -202,7 +218,7 @@ class TestInstallHayabusa:
 
         with (
             patch("ovs_logs.core.downloader.detect_platform", return_value=self._PLATFORM),
-            patch("ovs_logs.core.downloader.fetch_release_meta", return_value=self._RELEASE_META),
+            patch("ovs_logs.core.downloader.fetch_release_meta", return_value=self._meta_for_archive(archive)),
             patch("ovs_logs.core.downloader.resolve_asset_url", return_value="https://example.com/hayabusa.zip"),
             patch("ovs_logs.core.downloader.download_bytes", return_value=archive),
         ):
@@ -242,7 +258,7 @@ class TestInstallHayabusa:
         archive = _make_zip_archive({"hayabusa-4.0.0-mac-aarch64": b"new-binary"})
         with (
             patch("ovs_logs.core.downloader.detect_platform", return_value=self._PLATFORM),
-            patch("ovs_logs.core.downloader.fetch_release_meta", return_value=self._RELEASE_META),
+            patch("ovs_logs.core.downloader.fetch_release_meta", return_value=self._meta_for_archive(archive)),
             patch("ovs_logs.core.downloader.resolve_asset_url", return_value="https://example.com/hayabusa.zip"),
             patch("ovs_logs.core.downloader.download_bytes", return_value=archive),
         ):
@@ -250,6 +266,75 @@ class TestInstallHayabusa:
 
         assert isinstance(result, InstallResult)
         assert result.binary_path.read_bytes() == b"new-binary"
+
+    def test_checksum_mismatch_raises(self, tmp_path: Path) -> None:
+        target = tmp_path / "tools"
+        archive = _make_zip_archive({"hayabusa-4.0.0-mac-aarch64": b"fake-binary"})
+        meta = self._meta_for_archive(archive)
+        meta["assets"][0]["digest"] = _sha256_digest(b"different-content")
+
+        with (
+            patch("ovs_logs.core.downloader.detect_platform", return_value=self._PLATFORM),
+            patch("ovs_logs.core.downloader.fetch_release_meta", return_value=meta),
+            patch("ovs_logs.core.downloader.resolve_asset_url", return_value="https://example.com/hayabusa.zip"),
+            patch("ovs_logs.core.downloader.download_bytes", return_value=archive),
+            pytest.raises(IngestionError, match="SHA-256 checksum mismatch"),
+        ):
+            install_hayabusa(target, version="4.0.0")
+
+        assert not (target / "hayabusa").exists()
+
+    def test_missing_digest_raises(self, tmp_path: Path) -> None:
+        target = tmp_path / "tools"
+        archive = _make_zip_archive({"hayabusa-4.0.0-mac-aarch64": b"fake-binary"})
+
+        with (
+            patch("ovs_logs.core.downloader.detect_platform", return_value=self._PLATFORM),
+            patch("ovs_logs.core.downloader.fetch_release_meta", return_value=self._RELEASE_META),
+            patch("ovs_logs.core.downloader.resolve_asset_url", return_value="https://example.com/hayabusa.zip"),
+            patch("ovs_logs.core.downloader.download_bytes", return_value=archive) as mock_download,
+            pytest.raises(IngestionError, match="refusing to install an unverifiable binary"),
+        ):
+            install_hayabusa(target, version="4.0.0")
+
+        mock_download.assert_not_called()
+        assert not (target / "hayabusa").exists()
+
+
+class TestVerifySha256:
+    def test_matches_bare_hex(self) -> None:
+        digest = hashlib.sha256(b"payload").hexdigest()
+        verify_sha256(b"payload", digest)
+
+    def test_matches_prefixed_hex(self) -> None:
+        digest = _sha256_digest(b"payload")
+        verify_sha256(b"payload", digest)
+
+    def test_mismatch_raises(self) -> None:
+        digest = hashlib.sha256(b"payload").hexdigest()
+        with pytest.raises(IngestionError, match="SHA-256 checksum mismatch"):
+            verify_sha256(b"tampered", digest)
+
+    def test_invalid_digest_raises(self) -> None:
+        with pytest.raises(ValueError, match="Invalid SHA-256 digest"):
+            verify_sha256(b"payload", "not-a-digest")
+
+
+class TestFindReleaseAsset:
+    def test_returns_matching_asset_with_digest(self) -> None:
+        meta = _make_release_meta(
+            [
+                {
+                    "name": "hayabusa-4.0.0-mac-aarch64.zip",
+                    "browser_download_url": "https://example.com/mac.zip",
+                    "digest": "sha256:abc123",
+                }
+            ]
+        )
+        platform = PlatformInfo(os_name="darwin", arch="aarch64", asset_tag="mac-aarch64")
+        asset = find_release_asset(meta, platform)
+        assert asset["name"] == "hayabusa-4.0.0-mac-aarch64.zip"
+        assert asset["digest"] == "sha256:abc123"
 
 
 class TestFetchReleaseMeta:

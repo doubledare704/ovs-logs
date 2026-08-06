@@ -9,7 +9,9 @@ Streamlit serves as the presentation layer for high-impact visual proof of conce
 ## 2. Core Screen Elements & Layout Hierarchy
 
 ### 2.1. Hero Configuration Sidebar
-* **API Configuration Section:** Secure fields inputting `AbuseIPDB_API_KEY` (utilizes `st.text_input(type="password")`).
+* **API Configuration Section:** Secure fields inputting `ABUSEIPDB_API_KEY` (utilizes `st.text_input(type="password")`).
+* **LLM Configuration Section:** Provider preset dropdown, endpoint, and model fields wired to the shared `LLMSynthesizer`.
+* **EVTX Processing:** Hybrid mode (raw PyEvtx parsing **and** Hayabusa Sigma detection) is the default. When Hayabusa is not installed, a non-blocking banner explains that ingestion runs in raw event mode. The engine dropdown and Hayabusa path live under the **"Advanced Ingestion Settings"** expander for debugging and benchmarking.
 * **Engine Settings Toggles:**
   * Chunk sizing sliders for processing configuration.
   * Dropdown selector for target formats: `[Sigma Rule, YARA-L, Splunk SPL]`.

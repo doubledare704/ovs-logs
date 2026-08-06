@@ -11,7 +11,7 @@ from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol, runtime_checkable
+from typing import Literal, Protocol, runtime_checkable
 
 import duckdb
 from evtx import PyEvtxParser
@@ -101,6 +101,38 @@ def run_evtx_tool(
         if stderr:
             msg += f"\n{tool_name} stderr:\n{stderr}"
         raise IngestionError(msg)
+
+
+HayabusaFormat = Literal["csv", "json", "jsonl"]
+
+
+def run_hayabusa_cli(
+    log_file: LogFile,
+    output_path: Path,
+    evtx_settings: EVTXToolSettings,
+    format: HayabusaFormat = "json",
+) -> None:
+    """Run the Hayabusa ``dfir-timeline`` subcommand, writing to *output_path*."""
+    cmd = [
+        evtx_settings.hayabusa_path,
+        "dfir-timeline",
+        "-t",
+        format,
+        "-f",
+        str(log_file.path),
+        "-r",
+        evtx_settings.hayabusa_rules_dir,
+        "-o",
+        str(output_path),
+        "-w",
+    ]
+    run_evtx_tool(
+        cmd,
+        output_path,
+        "hayabusa",
+        evtx_settings.hayabusa_path,
+        evtx_settings.timeout_seconds,
+    )
 
 
 def load_csv_into_table(
@@ -392,9 +424,7 @@ class HayabusaEngine:
         return Path(self._settings.hayabusa_path).is_file()
 
     def ingest(self, log_file: LogFile, output_path: Path) -> None:
-        from ovs_logs.services.evtx_workflow import _run_hayabusa_json_to_file  # noqa: PLC0415
-
-        _run_hayabusa_json_to_file(log_file, output_path, self._settings)
+        run_hayabusa_cli(log_file, output_path, self._settings, format="json")
 
 
 @dataclass(frozen=True, slots=True)
@@ -645,13 +675,12 @@ def load_evtx_via_hayabusa(
     """Load an EVTX file via the Hayabusa CLI binary (csv-timeline subcommand).
 
     Hayabusa outputs only events that match its Sigma rules as a CSV timeline.
-    The delegated service constructs the subprocess command, runs the external
-    binary within a temporary directory, and loads the resulting CSV into DuckDB.
     """
-    from ovs_logs.services.evtx_workflow import _run_hayabusa_workflow  # noqa: PLC0415
-
     name = resolve_table_name(log_file, table_name)
-    return _run_hayabusa_workflow(log_file, connection, name, settings)
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tmp_path = Path(tmp_dir) / f"{name}.csv"
+        run_hayabusa_cli(log_file, tmp_path, settings.evtx_tools, format="csv")
+        return load_csv_into_table(connection, name, tmp_path)
 
 
 def load_evtx_via_hayabusa_json(
@@ -660,10 +689,11 @@ def load_evtx_via_hayabusa_json(
     table_name: TableName = None,
 ) -> IngestionResult:
     """Load an EVTX file via Hayabusa JSON timeline output."""
-    from ovs_logs.services.evtx_workflow import _run_hayabusa_json_workflow  # noqa: PLC0415
-
     name = resolve_table_name(log_file, table_name)
-    return _run_hayabusa_json_workflow(log_file, connection, name, settings)
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tmp_path = Path(tmp_dir) / f"{name}.json"
+        run_hayabusa_cli(log_file, tmp_path, settings.evtx_tools, format="json")
+        return load_json_into_table(connection, name, tmp_path)
 
 
 EVTX_TOOL_ADAPTERS: dict[str, EvtxAdapterFunc] = {

@@ -329,24 +329,34 @@ def render_sidebar() -> None:  # noqa: PLR0915
         "default": "Default (PyEvtx)",
         "hayabusa": "Hayabusa (CSV)",
         "hayabusa-json": "Hayabusa (JSON)",
-        "hybrid": "Hybrid (Raw + Alerts)",
+        "hybrid": "Hybrid (Raw + Alerts) — recommended",
     }
-    _ = st.sidebar.selectbox(
-        "EVTX tool",
-        options=list(EVTX_TOOL_CHOICES),
-        format_func=lambda k: _EVTX_TOOL_LABELS.get(k, k),
-        index=0,
-        key=SK.widget_evtx_tool,
-        help="Tool used to parse EVTX files. Default uses the built-in PyEvtx parser.",
-    )
-
     _hayabusa_default = _cfg.settings.evtx_tools.hayabusa_path
-    _ = st.sidebar.text_input(
-        "Hayabusa path",
-        value=st.session_state.get(SK.hayabusa_path, _hayabusa_default),
-        key=SK.widget_hayabusa_path,
-        help="Full path to hayabusa.exe. Only used when Hayabusa tool is selected.",
-    )
+    _active_tool = st.session_state.get(SK.evtx_tool, "hybrid")
+    _hayabusa_session_path = st.session_state.get(SK.hayabusa_path, _hayabusa_default)
+    if _active_tool == "hybrid" and not Path(_hayabusa_session_path).is_file():
+        st.sidebar.info(
+            "Hayabusa not detected — running in raw event mode. "
+            "Run `ovs-log setup-hayabusa` to enable Sigma rule detection."
+        )
+
+    with st.sidebar.expander("Advanced Ingestion Settings"):
+        _ = st.selectbox(
+            "EVTX tool",
+            options=list(EVTX_TOOL_CHOICES),
+            format_func=lambda k: _EVTX_TOOL_LABELS.get(k, k),
+            index=list(EVTX_TOOL_CHOICES).index("hybrid"),
+            key=SK.widget_evtx_tool,
+            help="Tool used to parse EVTX files. Hybrid runs raw PyEvtx parsing "
+            "and Hayabusa Sigma detection in parallel.",
+        )
+
+        _ = st.text_input(
+            "Hayabusa path",
+            value=_hayabusa_session_path,
+            key=SK.widget_hayabusa_path,
+            help="Full path to hayabusa.exe. Only used when a Hayabusa-based tool is selected.",
+        )
 
     _render_sidebar_threat_lists()
     _render_sidebar_allowlist(db_path)

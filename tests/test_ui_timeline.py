@@ -34,7 +34,8 @@ def test_timeline_analyzable_table_renders_metrics_and_chart(tmp_path: Path) -> 
     assert not at.exception
     metric_labels = {m.label for m in at.metric}
     assert {"Total events", "Time span", "Unique source IPs", "Error rate"}.issubset(metric_labels)
-    assert len(at.expander) == 3
+    event_expanders = [e.label for e in at.expander if e.label.startswith("Event ")]
+    assert len(event_expanders) == 3
 
 
 def test_timeline_non_analyzable_table_shows_info(tmp_path: Path) -> None:
@@ -137,8 +138,9 @@ def test_recent_events_shows_10_latest(tmp_path: Path) -> None:
     at = launch_app(APP_PATH, db, "many_events", timeout=10)
 
     assert not at.exception
-    # Only 10 expanders should be shown (the _MAX_DETAIL_CARDS limit)
-    expander_titles = [e.label for e in at.expander]
+    # Only 10 expanders should be shown (the _MAX_DETAIL_CARDS limit).
+    # Filter out the sidebar "Advanced Ingestion Settings" expander.
+    expander_titles = [e.label for e in at.expander if e.label.startswith("Event ")]
     assert len(expander_titles) == 10, f"Expected 10 expanders, got {len(expander_titles)}"
 
     # The latest timestamps (00:11:00 down to 00:02:00) should be shown

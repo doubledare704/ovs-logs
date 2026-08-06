@@ -6,6 +6,7 @@ extraction, and permission setup for Hayabusa.
 
 from __future__ import annotations
 
+import hashlib
 import io
 import logging
 import platform
@@ -20,11 +21,14 @@ from pathlib import Path
 
 import requests
 
+from ovs_logs.core.errors import IngestionError
+
 logger = logging.getLogger(__name__)
 
 HAYABUSA_REPO = "Yamato-Security/hayabusa"
 GITHUB_API_BASE = "https://api.github.com/repos"
 _DEFAULT_TIMEOUT = 120
+_SHA256_HEX_LENGTH = 64
 
 
 @dataclass(frozen=True)
@@ -125,6 +129,41 @@ def _haya_binary_name() -> str:
     return "hayabusa.exe" if sys.platform == "win32" else "hayabusa"
 
 
+def find_release_asset(
+    release_meta: dict[str, object],
+    platform_info: PlatformInfo,
+) -> dict[str, object]:
+    """Find the release asset dict matching the current platform.
+
+    Args:
+        release_meta: Parsed GitHub release JSON.
+        platform_info: Current platform detection result.
+
+    Returns:
+        The matching asset dict (contains ``name``, ``browser_download_url``,
+        and optionally ``digest``).
+
+    Raises:
+        TypeError: If the release metadata structure is invalid.
+        ValueError: If no matching asset is found.
+    """
+    tag_name = release_meta.get("tag_name", "unknown")
+    assets = release_meta.get("assets", [])
+    if not isinstance(assets, list):
+        raise TypeError(f"Invalid release metadata for {tag_name}")
+
+    suffix = f"{platform_info.asset_tag}.zip"
+    for asset in assets:
+        if not isinstance(asset, dict):
+            continue
+        name = asset.get("name", "")
+        url = asset.get("browser_download_url")
+        if isinstance(name, str) and name.endswith(suffix) and "live-response" not in name and isinstance(url, str):
+            return asset
+
+    raise ValueError(f"No matching asset found for {platform_info.asset_tag} in release {tag_name}")
+
+
 def resolve_asset_url(
     release_meta: dict[str, object],
     platform_info: PlatformInfo,
@@ -142,22 +181,33 @@ def resolve_asset_url(
         TypeError: If the release metadata structure is invalid.
         ValueError: If no matching asset is found.
     """
-    tag_name = release_meta.get("tag_name", "unknown")
-    assets = release_meta.get("assets", [])
-    if not isinstance(assets, list):
-        raise TypeError(f"Invalid release metadata for {tag_name}")
+    asset = find_release_asset(release_meta, platform_info)
+    url = asset.get("browser_download_url")
+    if not isinstance(url, str):
+        raise TypeError(f"Invalid download URL for asset {asset.get('name')!r}")
+    return url
 
-    suffix = f"{platform_info.asset_tag}.zip"
-    for asset in assets:
-        if not isinstance(asset, dict):
-            continue
-        name = asset.get("name", "")
-        if isinstance(name, str) and name.endswith(suffix) and "live-response" not in name:
-            url = asset.get("browser_download_url")
-            if isinstance(url, str):
-                return url
 
-    raise ValueError(f"No matching asset found for {platform_info.asset_tag} in release {tag_name}")
+def verify_sha256(data: bytes, expected_digest: str) -> None:
+    """Verify *data* matches an expected SHA-256 digest.
+
+    Accepts a bare hex digest or a ``"sha256:<hex>"``-prefixed value (the
+    format published in GitHub release asset metadata).
+
+    Raises:
+        ValueError: If *expected_digest* is not a valid SHA-256 hex digest.
+        IngestionError: If the computed digest does not match.
+    """
+    digest = expected_digest.removeprefix("sha256:").strip().lower()
+    if len(digest) != _SHA256_HEX_LENGTH or any(c not in "0123456789abcdef" for c in digest):
+        raise ValueError(f"Invalid SHA-256 digest: {expected_digest!r}")
+
+    actual = hashlib.sha256(data).hexdigest()
+    if actual != digest:
+        raise IngestionError(
+            f"SHA-256 checksum mismatch: expected {digest}, got {actual}. "
+            "The downloaded archive may be corrupted or tampered with."
+        )
 
 
 def download_bytes(
@@ -258,12 +308,19 @@ def install_hayabusa(
     target_dir.mkdir(parents=True, exist_ok=True)
 
     release_meta = fetch_release_meta(version=version, timeout=timeout)
-    asset_url = resolve_asset_url(release_meta, platform_info)
+    asset = find_release_asset(release_meta, platform_info)
+    asset_url = str(asset["browser_download_url"])
+    digest = asset.get("digest")
+    if not isinstance(digest, str) or not digest:
+        raise IngestionError(
+            f"No SHA-256 digest published for asset {asset.get('name')!r}; refusing to install an unverifiable binary"
+        )
 
     tag_name = str(release_meta.get("tag_name", "unknown"))
     logger.info("Downloading Hayabusa %s for %s/%s ...", tag_name, platform_info.os_name, platform_info.arch)
 
     archive_data = download_bytes(asset_url, timeout=timeout)
+    verify_sha256(archive_data, digest)
 
     with tempfile.TemporaryDirectory() as tmp_dir:
         extract_zip_bytes(archive_data, Path(tmp_dir))

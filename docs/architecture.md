@@ -19,7 +19,7 @@ This document defines the technical architecture of **OVS-Log** for the MVP. It 
 | Presentation Formatter| Converts analysis results to Markdown / structured dicts (outside core)    | OVD-6         |
 | Threat Intel Client   | Queries AbuseIPDB for IP reputation and caches results locally             | OVD-6         |
 | LLM Provider          | Generates incident timeline, MITRE ATT&CK mapping, and mitigation guidance | OVD-6         |
-| Typer CLI             | `ingest`, `process`, `analyze`, `export-rule`, `version`, and `ui` commands| OVD-7         |
+| Typer CLI             | `ingest`, `process`, `analyze`, `export-rule`, `setup-hayabusa`, `version`, and `ui` commands| OVD-7 |
 | Streamlit UI          | Single-page upload, run, and 3-tab results view                            | OVD-8         |
 | Packaging & Tests     | Entrypoints, automated tests, and BOTS v1 validation                       | OVD-9         |
 
@@ -118,4 +118,7 @@ sequenceDiagram
 - The LLM receives only structured aggregations (top IPs, endpoints, error rates, reputation context), not full raw logs, to minimize token usage and preserve privacy.
 - The CLI and UI share the same `Analyzer` workflow, so a result validated in the dashboard can be reproduced identically from the command line.
 - Threat-intel enrichment is optional; the engine degrades gracefully when the AbuseIPDB API key is missing or the service is unavailable.
+- **EVTX hybrid pipeline is the default**: EVTX ingestion runs raw `PyEvtxParser` parsing and Hayabusa Sigma detection in parallel, so raw event tables (recursive process trees, long-tail analysis) and MITRE/alert data are always available. When Hayabusa is not installed the pipeline degrades gracefully to raw parsing with a non-blocking UI banner. Engine selection is exposed only in the sidebar's "Advanced Ingestion Settings" expander (or the CLI `--tool` flag) for debugging and benchmarking.
+- **Binary supply-chain protection**: `ovs-log setup-hayabusa` verifies the downloaded archive's SHA-256 digest against the digest published in the GitHub release metadata before extracting, and refuses to install releases that publish no digest.
+- **Layering**: low-level EVTX adapters (raw parsing, external CLI invocation) live in `core/ingestion`; the service layer orchestrates them. There are no cross-layer imports from core into services.
 - Presentation formatting (Markdown rendering, LLM bullet lists) lives in the top-level `ovs_logs.presentation` module, **outside** the core layer. The `AnalysisEngine` exposes raw results as plain dicts only—callers (CLI, UI, tests) import `format_context` from `ovs_logs.presentation` or `ovs_logs` when they need rendered output. This keeps core business logic free of presentation concerns.

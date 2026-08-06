@@ -76,7 +76,7 @@ def process_ready_files(db_path: str) -> None:  # noqa: PLR0912
         return
 
     errors: list[str] = []
-    evtx_tool = st.session_state.get(SK.evtx_tool, "default")
+    evtx_tool = st.session_state.get(SK.evtx_tool, "hybrid")
     _apply_evtx_settings()
     with st.spinner("Ingesting files into DuckDB and normalizing..."), Database(db_path) as connection:
         for file_state in ready_files:

@@ -104,6 +104,27 @@ def test_prompt_builder_enumerates_nested_schema_fields() -> None:
     assert expected_indicator in prompt
 
 
+def test_prompt_builder_truncates_long_evidence_and_events() -> None:
+    """PromptBuilder must cap evidence and sample-event sizes to bound token usage."""
+    indicators = [
+        SuspiciousIndicator(
+            type="source_ip_sequence",
+            severity="Medium",
+            description="IP 1.2.3.4 had a suspicious sequence",
+            evidence={"source_ip": "1.2.3.4", "event_sequence": "A" * 5_000},
+        )
+    ]
+    builder = PromptBuilder(max_evidence_chars=100, max_event_chars=50)
+    prompt = builder.build(
+        indicators,
+        sample_events=[{"line": "B" * 5_000}],
+    )
+
+    assert "A" * 5_000 not in prompt
+    assert "B" * 5_000 not in prompt
+    assert "…" in prompt
+
+
 def test_response_parser_extracts_markdown_json() -> None:
     parser = ResponseParser()
     data = parser.parse(_sample_response())

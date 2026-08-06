@@ -21,6 +21,7 @@ The CLI is built using Python's `typer` library to provide human-friendly comman
 | `process` | Combined ingest + analyze: ingest and immediately analyze a log file |
 | `analyze` | Analyze an existing DuckDB table (the `events` table or any raw table) |
 | `export-rule` | Export a mitigation rule from a previously saved report |
+| `setup-hayabusa` | Download, verify, and install the Hayabusa Sigma engine and rules |
 | `version` | Show the OVS-Log version |
 | `ui` | Launch the OVS-Log Streamlit dashboard |
 
@@ -31,7 +32,7 @@ Prepares, parses, and commits raw file streams directly into local DuckDB column
 **Usage:**
 
 ```bash
-ovs-log ingest --file <path_to_logs> [--type csv|json|txt|log|evtx] [--db <path>] [--table <name>]
+ovs-log ingest --file <path_to_logs> [--type csv|json|txt|log|evtx] [--db <path>] [--table <name>] [--tool default|hayabusa|hayabusa-json|hybrid]
 ```
 
 **Options:**
@@ -40,12 +41,13 @@ ovs-log ingest --file <path_to_logs> [--type csv|json|txt|log|evtx] [--db <path>
 - `--type` (optional): Override file type detection. Supported values: `csv`, `json`, `txt`, `log`, `evtx`.
 - `--db` (optional): DuckDB database path (defaults to `.ovs_logs/ovs_logs.db`).
 - `--table` (optional): Destination raw table name (auto-generated if omitted).
+- `--tool` (optional): EVTX processing engine for `--type evtx` files. `hybrid` runs raw PyEvtx parsing **and** Hayabusa Sigma detection in parallel; `hayabusa` / `hayabusa-json` use the Hayabusa CLI directly; `default` uses PyEvtx only. When omitted, EVTX files use the raw PyEvtx parser.
 
 **Behind the scenes:** The file is validated and routed to the appropriate ingestion adapter:
 
 - CSV files → `read_csv_auto` with `all_varchar=true`
 - JSON files → `read_json_auto`
-- EVTX files → `PyEvtxParser` → temporary CSV → DuckDB
+- EVTX files → `PyEvtxParser` → temporary CSV → DuckDB (or the selected `--tool` pipeline)
 - Text/log files → `read_csv` single-column with `line` column
 
 After raw ingestion, the `NormalizationEngine` maps raw columns to the unified `events` schema (`event_timestamp`, `source_ip`, `event_type`, `status_code`, `raw_message`) using flexible alias matching.
@@ -59,6 +61,7 @@ Ingests a log file and immediately runs the full analysis pipeline — extractio
 ```bash
 ovs-log process --file <path_to_logs> [--type csv|json|txt|log|evtx]
                 [--db <path>] [--table <name>]
+                [--tool default|hayabusa|hayabusa-json|hybrid]
                 [--intel] [--llm]
                 [--abuseipdb-api-key <key>] [--llm-api-key <key>]
                 [--output <path>]
@@ -70,6 +73,7 @@ ovs-log process --file <path_to_logs> [--type csv|json|txt|log|evtx]
 - `--type` (optional): Override file type detection.
 - `--db` (optional): DuckDB database path.
 - `--table` (optional): Destination raw table name.
+- `--tool` (optional): EVTX processing engine (see `ovs-log ingest`).
 - `--intel` (flag): Enable AbuseIPDB IP reputation enrichment.
 - `--llm` (flag): Enable LLM synthesis of an incident report.
 - `--abuseipdb-api-key` (optional): AbuseIPDB API key (also read from `ABUSEIPDB_API_KEY` env var).
@@ -139,7 +143,25 @@ ovs-log export-rule --report-id <uuid> --output <path>
 - `--format` (optional): Expected rule format (default: `sigma`). Any string is accepted; it is not an enforced closed-set CLI choice. The value is compared against the stored mitigation's format and rejected only on mismatch. Currently supported formats are `sigma`, `yara-l`, and `spl`.
 - `--db` (optional): DuckDB database path.
 
-### 2.5. Command: `ovs-log version`
+### 2.5. Command: `ovs-log setup-hayabusa`
+
+Downloads the Hayabusa Sigma engine for the current platform from the official GitHub release, verifies its **SHA-256 checksum** against the digest published in the release metadata, and installs the binary and `rules/` directory into a target directory.
+
+**Usage:**
+
+```bash
+ovs-log setup-hayabusa [--target-dir <path>] [--force] [--version <tag>]
+```
+
+**Options:**
+
+- `--target-dir` (optional): Install directory (default: `~/.ovs-logs/tools`).
+- `--force` (flag): Re-download even if the binary already exists.
+- `--version` (optional): Specific version tag to install (default: latest).
+
+Installation **fails** if the archive's SHA-256 digest does not match the published digest (protecting against corrupted or tampered downloads), or if the release asset does not publish a digest at all.
+
+### 2.6. Command: `ovs-log version`
 
 Displays the installed OVS-Log version.
 
@@ -149,7 +171,7 @@ Displays the installed OVS-Log version.
 ovs-log version
 ```
 
-### 2.6. Command: `ovs-log ui`
+### 2.7. Command: `ovs-log ui`
 
 Launches the OVS-Log Streamlit dashboard.
 

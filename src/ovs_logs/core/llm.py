@@ -234,8 +234,22 @@ def create_llm_provider(
 class PromptBuilder:
     """Builds a prompt that asks the LLM for a structured incident report."""
 
-    def __init__(self, max_sample_events: int = 10) -> None:
+    def __init__(
+        self,
+        max_sample_events: int = 10,
+        max_evidence_chars: int = 500,
+        max_event_chars: int = 1_000,
+    ) -> None:
         self.max_sample_events = max_sample_events
+        self.max_evidence_chars = max_evidence_chars
+        self.max_event_chars = max_event_chars
+
+    @staticmethod
+    def _truncate(text: str, max_chars: int) -> str:
+        """Truncate *text* to *max_chars* characters, appending an ellipsis."""
+        if len(text) <= max_chars:
+            return text
+        return text[: max_chars - 1] + "…"
 
     def build(
         self,
@@ -260,7 +274,8 @@ class PromptBuilder:
 
         for indicator in indicators:
             sections.append(f"- [{indicator.severity}] {indicator.type}: {indicator.description}")
-            sections.append(f"  Evidence: {json.dumps(indicator.evidence, default=str)}")
+            evidence = self._truncate(json.dumps(indicator.evidence, default=str), self.max_evidence_chars)
+            sections.append(f"  Evidence: {evidence}")
 
         if threat_intel:
             sections.append("Threat intelligence:")
@@ -272,7 +287,7 @@ class PromptBuilder:
         if sample_events:
             sections.append("Sample raw events:")
             for event in sample_events[: self.max_sample_events]:
-                sections.append(json.dumps(event))
+                sections.append(self._truncate(json.dumps(event), self.max_event_chars))
 
         return "\n\n".join(sections)
 
