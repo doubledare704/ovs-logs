@@ -25,6 +25,7 @@ from ovs_logs.core.database import (
 )
 from ovs_logs.core.ingestion.adapters import EVTX_TOOL_CHOICES
 from ovs_logs.core.llm import is_ollama_endpoint, list_ollama_models
+from ovs_logs.core.models import AllowlistedIndicator
 from ovs_logs.core.normalization import _SYSTEM_SCHEMAS
 from ovs_logs.core.threat_lists import (
     ensure_cache_dir as tl_ensure_cache_dir,
@@ -171,12 +172,14 @@ def _render_sidebar_allowlist(db_path: str | None) -> None:  # noqa: PLR0912 UI 
                 st.sidebar.warning("Enter a valid IP address.")
             else:
                 try:
-                    with duckdb.connect(database=str(db_path)) as conn:
+                    with duckdb.connect(database=db_path) as conn:
                         insert_allowlisted_indicator(
                             conn,
-                            indicator_id=str(uuid.uuid4()),
-                            indicator=canonical_ip,
-                            indicator_type="ip",
+                            indicator=AllowlistedIndicator(
+                                indicator_id=str(uuid.uuid4()),
+                                indicator=canonical_ip,
+                                indicator_type="ip",
+                            ),
                         )
                     st.sidebar.success(f"Added {canonical_ip} to allowlist.")
                     st.rerun()
@@ -187,7 +190,7 @@ def _render_sidebar_allowlist(db_path: str | None) -> None:  # noqa: PLR0912 UI 
 
     # --- Existing allowlist entries ---
     try:
-        with duckdb.connect(database=str(db_path)) as conn:
+        with duckdb.connect(database=db_path) as conn:
             entries = list_allowlisted_indicators(conn, indicator_type="ip")
     except (OSError, duckdb.Error) as exc:
         st.sidebar.error(f"Failed to load allowlist: {exc}")
@@ -203,7 +206,7 @@ def _render_sidebar_allowlist(db_path: str | None) -> None:  # noqa: PLR0912 UI 
         delete_key = f"{SK.widget_allowlist_delete_prefix}{entry['id']}"
         if col2.button("✕", key=delete_key, help=f"Remove {entry['indicator']} from allowlist"):
             try:
-                with duckdb.connect(database=str(db_path)) as conn:
+                with duckdb.connect(database=db_path) as conn:
                     delete_allowlisted_indicator(conn, entry["id"])
                 st.rerun()
             except (OSError, duckdb.Error) as exc:

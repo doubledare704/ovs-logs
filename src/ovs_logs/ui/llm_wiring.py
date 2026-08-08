@@ -1,9 +1,8 @@
 """Wiring helpers that bridge Streamlit session_state to core LLM / threat-intel construction."""
 
-from __future__ import annotations
-
 from ovs_logs.config.settings import DEFAULT_ENDPOINT_SENTINEL, LLM_PRESETS, settings
 from ovs_logs.core.llm import LLMProvider, create_llm_provider
+from ovs_logs.core.models import ThreatIntelClientOptions
 from ovs_logs.core.threat_intel import ThreatIntelClient
 
 
@@ -66,4 +65,4 @@ def build_threat_intel_client(session_state: dict) -> ThreatIntelClient | None:
     api_key = session_state.get("ABUSEIPDB_API_KEY", "")
     if not api_key:
         return None
-    return ThreatIntelClient(api_key=api_key)
+    return ThreatIntelClient(options=ThreatIntelClientOptions(api_key=api_key))

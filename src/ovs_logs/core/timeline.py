@@ -45,6 +45,16 @@ class TimelineRow:
     raw_message: str | None
 
 
+@dataclass(frozen=True)
+class TimelineQueryOptions:
+    """Filter options for the timeline query."""
+
+    limit: int = DEFAULT_TIMELINE_LIMIT
+    source_ip: str | list[str] | None = None
+    min_status: int | None = None
+    event_type: str | list[str] | None = None
+
+
 def _format_duration(span: timedelta) -> str:
     """Render a ``timedelta`` as a compact string, dropping zero components."""
     total_seconds = int(span.total_seconds())
@@ -146,18 +156,14 @@ def _build_rows_query(sql: str, limit: int) -> str:
         'SELECT "event_timestamp", "source_ip", "event_type", "status_code", "raw_message" '
         f"FROM ({sql}) AS _rows "
         'ORDER BY "event_timestamp" ASC NULLS LAST '
-        f"LIMIT {int(limit)}"
+        f"LIMIT {limit}"
     )
 
 
-def build_timeline(  # noqa: PLR0913
+def build_timeline(
     connection: duckdb.DuckDBPyConnection,
     table_name: str = "events",
-    *,
-    limit: int = DEFAULT_TIMELINE_LIMIT,
-    source_ip: str | list[str] | None = None,
-    min_status: int | None = None,
-    event_type: str | list[str] | None = None,
+    options: TimelineQueryOptions | None = None,
 ) -> tuple[TimelineMetrics, list[TimelineRow]]:
     """Compute timeline metrics and event rows for ``table_name``.
 
@@ -168,18 +174,14 @@ def build_timeline(  # noqa: PLR0913
     Args:
         connection: An active DuckDB connection.
         table_name: DuckDB table to query (defaults to ``events``).
-        limit: Maximum number of event rows returned. Metrics are always computed
-            over the full table.
-        source_ip: If set, only include events from this IP. Accepts a single
-            string or a list of strings for multi-select.
-        min_status: If set, only include events with ``status_code >= min_status``.
-        event_type: If set, only include events with this ``event_type``. Accepts
-            a single string or a list of strings for multi-select.
+        options: Optional :class:`TimelineQueryOptions` instance to filter the
+            timeline query.
 
     Returns:
         A ``(TimelineMetrics, list[TimelineRow])`` tuple. ``duckdb.Error`` is
         allowed to propagate so the caller can degrade gracefully.
     """
+    options = options or TimelineQueryOptions()
     if table_name == "events":
         wrapped = "SELECT * FROM events"
     else:
@@ -187,9 +189,9 @@ def build_timeline(  # noqa: PLR0913
 
     wrapped, params = _wrap_with_filters(
         wrapped,
-        source_ip=source_ip,
-        min_status=min_status,
-        event_type=event_type,
+        source_ip=options.source_ip,
+        min_status=options.min_status,
+        event_type=options.event_type,
     )
 
     metrics_row = connection.execute(_build_metrics_query(wrapped), params).fetchone()
@@ -214,7 +216,7 @@ def build_timeline(  # noqa: PLR0913
         error_rate_pct=error_rate_pct,
     )
 
-    cursor = connection.execute(_build_rows_query(wrapped, limit), params)
+    cursor = connection.execute(_build_rows_query(wrapped, options.limit), params)
     rows = [
         TimelineRow(
             timestamp=timestamp,

@@ -1,7 +1,5 @@
 """Typer-based command-line interface for OVS-Log."""
 
-from __future__ import annotations
-
 import json
 import subprocess
 import sys
@@ -17,6 +15,7 @@ from ovs_logs.config.settings import settings
 from ovs_logs.core.database import Database
 from ovs_logs.core.errors import classify_error, error_category
 from ovs_logs.core.ingestion.adapters import EVTX_TOOL_ADAPTERS, EVTX_TOOL_CHOICES, IngestionResult
+from ovs_logs.core.models import IngestOptions
 from ovs_logs.core.normalization import NormalizationEngine
 from ovs_logs.core.persistence import ReportStore
 from ovs_logs.core.report import IncidentReport
@@ -44,32 +43,24 @@ def _resolve_log_file(file: Path, file_type: str | None) -> LogFile:
     )
 
 
-def _perform_ingest(  # noqa: PLR0913
-    db: Path,
-    file: Path,
-    file_type: str | None,
-    table: str | None,
-    tool: str | None = None,
-    *,
-    force_reanalyze: bool = False,
-) -> tuple[IngestionResult, bool]:
-    log_file = _resolve_log_file(file, file_type)
+def _perform_ingest(options: IngestOptions) -> tuple[IngestionResult, bool]:
+    log_file = _resolve_log_file(options.file, options.file_type)
 
-    if tool and log_file.format == "evtx":
-        adapter = EVTX_TOOL_ADAPTERS.get(tool)
+    if options.tool and log_file.format == "evtx":
+        adapter = EVTX_TOOL_ADAPTERS.get(options.tool)
         if adapter is None:
-            raise ValueError(f"Unknown EVTX tool '{tool}'. Choices: {sorted(EVTX_TOOL_ADAPTERS)}")
+            raise ValueError(f"Unknown EVTX tool '{options.tool}'. Choices: {sorted(EVTX_TOOL_ADAPTERS)}")
     else:
         adapter = INGESTION_ADAPTERS.get(log_file.format)
 
     if adapter is None:
         raise ValueError(f"No ingestion adapter for format '{log_file.format}'")
 
-    with Database(db) as connection:
+    with Database(options.db) as connection:
         engine = NormalizationEngine()
-        if force_reanalyze:
+        if options.force_reanalyze:
             engine.reset_events(connection)
-        load_result = adapter(log_file, connection, table)
+        load_result = adapter(log_file, connection, options.table)
         if not load_result.is_unstructured:
             tables = [(load_result.table_name, [name for name, _ in load_result.schema])]
             engine.normalize_batch(connection, tables)
@@ -114,7 +105,7 @@ def ingest(
 ) -> None:
     """Ingest a log file into DuckDB and normalize it into the events table."""
     try:
-        load_result, _ = _perform_ingest(db, file, file_type, table, tool=tool)
+        load_result, _ = _perform_ingest(IngestOptions(db=db, file=file, file_type=file_type, table=table, tool=tool))
         console.print(f"[bold]Loaded[/bold] {load_result.row_count} rows into {load_result.table_name}")
         schema = ", ".join(name for name, _ in load_result.schema)
         console.print(f"[bold]Schema:[/bold] {schema}")
@@ -144,7 +135,9 @@ def process(  # noqa: PLR0913
     """Ingest a log file into DuckDB and immediately analyze it."""
     try:
         load_result, was_normalized = _perform_ingest(
-            db, file, file_type, table, tool=tool, force_reanalyze=force_reanalyze
+            IngestOptions(
+                db=db, file=file, file_type=file_type, table=table, tool=tool, force_reanalyze=force_reanalyze
+            )
         )
         console.print(f"[bold]Loaded[/bold] {load_result.row_count} rows into {load_result.table_name}")
         schema = ", ".join(name for name, _ in load_result.schema)

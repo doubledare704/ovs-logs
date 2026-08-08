@@ -8,6 +8,7 @@ import pytest
 
 from ovs_logs.core.database import Database
 from ovs_logs.core.timeline import (
+    TimelineQueryOptions,
     TimelineRow,
     build_timeline,
     list_timeline_filter_options,
@@ -150,7 +151,7 @@ def test_row_truncation() -> None:
                 [f"2024-01-01 00:{i:02d}:00", f"10.0.0.{i}"],
             )
 
-        metrics, rows = build_timeline(conn, limit=10)
+        metrics, rows = build_timeline(conn, options=TimelineQueryOptions(limit=10))
 
     assert len(rows) == 10
     assert metrics.total_events == 25
@@ -167,7 +168,7 @@ def test_filter_by_source_ip() -> None:
             ") AS t(event_timestamp, source_ip, event_type, status_code, raw_message)"
         )
 
-        metrics, rows = build_timeline(conn, source_ip="1.2.3.4")
+        metrics, rows = build_timeline(conn, options=TimelineQueryOptions(source_ip="1.2.3.4"))
 
     assert metrics.total_events == 2
     assert len(rows) == 2
@@ -184,7 +185,7 @@ def test_filter_by_min_status() -> None:
             ") AS t(event_timestamp, source_ip, event_type, status_code, raw_message)"
         )
 
-        metrics, rows = build_timeline(conn, min_status=400)
+        metrics, rows = build_timeline(conn, options=TimelineQueryOptions(min_status=400))
 
     assert metrics.total_events == 2
     assert len(rows) == 2
@@ -201,7 +202,7 @@ def test_filter_by_event_type() -> None:
             ") AS t(event_timestamp, source_ip, event_type, status_code, raw_message)"
         )
 
-        metrics, rows = build_timeline(conn, event_type="POST")
+        metrics, rows = build_timeline(conn, options=TimelineQueryOptions(event_type="POST"))
 
     assert metrics.total_events == 1
     assert len(rows) == 1
@@ -218,7 +219,10 @@ def test_filter_combined() -> None:
             ") AS t(event_timestamp, source_ip, event_type, status_code, raw_message)"
         )
 
-        metrics, rows = build_timeline(conn, source_ip="1.2.3.4", min_status=400)
+        metrics, rows = build_timeline(
+            conn,
+            options=TimelineQueryOptions(source_ip="1.2.3.4", min_status=400),
+        )
 
     assert metrics.total_events == 1
     assert len(rows) == 1
@@ -234,7 +238,7 @@ def test_filter_no_match() -> None:
             ") AS t(event_timestamp, source_ip, event_type, status_code, raw_message)"
         )
 
-        metrics, rows = build_timeline(conn, source_ip="9.9.9.9")
+        metrics, rows = build_timeline(conn, options=TimelineQueryOptions(source_ip="9.9.9.9"))
 
     assert metrics.total_events == 0
     assert len(rows) == 0
@@ -250,7 +254,7 @@ def test_filter_by_multiple_source_ips() -> None:
             ") AS t(event_timestamp, source_ip, event_type, status_code, raw_message)"
         )
 
-        metrics, rows = build_timeline(conn, source_ip=["1.2.3.4", "5.6.7.8"])
+        metrics, rows = build_timeline(conn, options=TimelineQueryOptions(source_ip=["1.2.3.4", "5.6.7.8"]))
 
     assert metrics.total_events == 2
     assert len(rows) == 2
@@ -266,7 +270,7 @@ def test_filter_by_multiple_event_types() -> None:
             ") AS t(event_timestamp, source_ip, event_type, status_code, raw_message)"
         )
 
-        metrics, rows = build_timeline(conn, event_type=["GET", "PUT"])
+        metrics, rows = build_timeline(conn, options=TimelineQueryOptions(event_type=["GET", "PUT"]))
 
     assert metrics.total_events == 2
     assert len(rows) == 2
@@ -281,7 +285,7 @@ def test_filter_by_empty_list_behaves_like_none() -> None:
             ") AS t(event_timestamp, source_ip, event_type, status_code, raw_message)"
         )
 
-        metrics, rows = build_timeline(conn, source_ip=[], event_type=[])
+        metrics, rows = build_timeline(conn, options=TimelineQueryOptions(source_ip=[], event_type=[]))
 
     assert metrics.total_events == 2
     assert len(rows) == 2
@@ -299,9 +303,11 @@ def test_filter_combined_multi_select() -> None:
 
         metrics, rows = build_timeline(
             conn,
-            source_ip=["1.2.3.4", "9.9.9.9"],
-            min_status=400,
-            event_type=["PUT"],
+            options=TimelineQueryOptions(
+                source_ip=["1.2.3.4", "9.9.9.9"],
+                min_status=400,
+                event_type=["PUT"],
+            ),
         )
 
     assert metrics.total_events == 1

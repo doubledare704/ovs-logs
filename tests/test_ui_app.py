@@ -1,7 +1,5 @@
 """Tests for the OVS-Log Streamlit dashboard (src/ovs_logs/ui/app.py)."""
 
-from __future__ import annotations
-
 from pathlib import Path
 from unittest.mock import Mock
 
@@ -14,6 +12,7 @@ from ovs_logs.config.settings import OLLAMA_DEFAULT_ENDPOINT, Settings, settings
 from ovs_logs.core.analysis import engine
 from ovs_logs.core.database import ALLOWLIST_TABLE, insert_allowlisted_indicator
 from ovs_logs.core.ingestion import adapters
+from ovs_logs.core.models import AllowlistedIndicator
 from ovs_logs.core.persistence import ReportStore
 
 from .conftest import (
@@ -347,9 +346,11 @@ def test_allowlisted_indicators_excluded_from_navigator(tmp_path: Path) -> None:
     with duckdb.connect(str(db)) as conn:
         insert_allowlisted_indicator(
             conn,
-            indicator_id="test-id",
-            indicator="10.0.0.1",
-            indicator_type="ip",
+            indicator=AllowlistedIndicator(
+                indicator_id="test-id",
+                indicator="10.0.0.1",
+                indicator_type="ip",
+            ),
         )
 
     at = launch_app(APP_PATH, db)

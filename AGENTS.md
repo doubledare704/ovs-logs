@@ -31,7 +31,6 @@ Maintain a strict separation of concerns between layers:
 
 - **Python Version:** Target Python 3.12+.
 - **Formatting:** Adhere to PEP 8. Use 4 spaces for indentation.
-- **Type Hinting:** Mandatory for all function signatures and public class members. Use `from __future__ import annotations` for forward references.
 - **Docstrings:** Use Google-style or ReStructuredText docstrings for all modules, classes, and public functions.
 - **Error Handling:** Use specific exception types. Avoid broad `except Exception:` blocks unless logging and re-raising.
 - **Data Structures:** Prefer `dataclasses` (with `frozen=True` where possible) for simple data containers.

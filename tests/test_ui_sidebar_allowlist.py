@@ -7,8 +7,6 @@ Verifies that the "Allowlist" section in the sidebar renders correctly:
 - Integration with the database
 """
 
-from __future__ import annotations
-
 import uuid
 from pathlib import Path
 
@@ -18,6 +16,7 @@ from ovs_logs.core.database import (
     insert_allowlisted_indicator,
     list_allowlisted_indicators,
 )
+from ovs_logs.core.models import AllowlistedIndicator
 
 from .conftest import launch_app, make_db, text_input_by_label
 
@@ -61,9 +60,11 @@ def test_allowlist_add_duplicate_shows_warning(tmp_path: Path) -> None:
     with duckdb.connect(str(db)) as conn:
         insert_allowlisted_indicator(
             conn,
-            indicator_id=str(uuid.uuid4()),
-            indicator="10.0.0.50",
-            indicator_type="ip",
+            indicator=AllowlistedIndicator(
+                indicator_id=str(uuid.uuid4()),
+                indicator="10.0.0.50",
+                indicator_type="ip",
+            ),
         )
 
     at = launch_app(APP_PATH, db)
@@ -87,9 +88,11 @@ def test_allowlist_delete_ip_direct_db(tmp_path: Path) -> None:
     with duckdb.connect(str(db)) as conn:
         insert_allowlisted_indicator(
             conn,
-            indicator_id=entry_id,
-            indicator="10.0.0.99",
-            indicator_type="ip",
+            indicator=AllowlistedIndicator(
+                indicator_id=entry_id,
+                indicator="10.0.0.99",
+                indicator_type="ip",
+            ),
         )
         assert any(e["indicator"] == "10.0.0.99" for e in list_allowlisted_indicators(conn))
 
@@ -112,9 +115,11 @@ def test_allowlist_multiple_entries_in_db(tmp_path: Path) -> None:
         for i in range(3):
             insert_allowlisted_indicator(
                 conn,
-                indicator_id=str(uuid.uuid4()),
-                indicator=f"10.0.0.{i + 1}",
-                indicator_type="ip",
+                indicator=AllowlistedIndicator(
+                    indicator_id=str(uuid.uuid4()),
+                    indicator=f"10.0.0.{i + 1}",
+                    indicator_type="ip",
+                ),
             )
 
     at = launch_app(APP_PATH, db)

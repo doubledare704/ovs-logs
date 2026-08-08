@@ -6,8 +6,6 @@ independently.  This module orchestrates them and renders the four main
 tabs (Ingest & Signals, Attack Timeline, Intelligence, Mitigation).
 """
 
-from __future__ import annotations
-
 import logging
 
 import duckdb
@@ -24,6 +22,7 @@ from ovs_logs.ui.components.sidebar import render_sidebar
 from ovs_logs.ui.components.upload import _format_size, register_uploaded_file, validate_uploaded_file
 from ovs_logs.ui.intel_view import render_intelligence_tab
 from ovs_logs.ui.mitigation_view import render_mitigation_tab
+from ovs_logs.ui.preview import serialize_preview_rows
 from ovs_logs.ui.state import SessionKeys
 from ovs_logs.ui.timeline_view import render_timeline_card
 
@@ -116,7 +115,7 @@ def _render_selected_table(connection: duckdb.DuckDBPyConnection, table_name: st
         st.info(f"Table '{table_name}' has no rows.")
         return
 
-    st.dataframe([dict(zip(columns, row, strict=True)) for row in rows], hide_index=True)
+    st.dataframe(serialize_preview_rows(rows, columns), hide_index=True)
 
 
 def _render_ingested_table_preview() -> None:
@@ -157,7 +156,7 @@ def _render_ingested_table_preview() -> None:
                         cursor = connection.execute(sql)
                         rows = cursor.fetchall()
                         columns = [desc[0] for desc in cursor.description]
-                        preview_rows = [dict(zip(columns, row, strict=True)) for row in rows]
+                        preview_rows = serialize_preview_rows(rows, columns)
                         if preview_rows:
                             st.dataframe(preview_rows)
                         else:

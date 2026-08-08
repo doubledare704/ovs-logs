@@ -1,15 +1,13 @@
 """Structured text-log parsing for DuckDB ingestion."""
 
-from __future__ import annotations
-
 import logging
 import re
-from collections.abc import Callable
 from pathlib import Path
 
 import duckdb
 
 from ovs_logs.config.settings import TextParseConfig, settings
+from ovs_logs.core.common import DuckDBConn, TableName, TextLogAdapterFunc
 from ovs_logs.core.ingestion.adapters import (
     IngestionResult,
     build_result,
@@ -22,10 +20,6 @@ from ovs_logs.core.sql_utils import quote_identifier, resolve_table_name
 from ovs_logs.core.validation import LogFile
 
 logger = logging.getLogger(__name__)
-
-type DuckDBConn = duckdb.DuckDBPyConnection
-type TableName = str | None
-type TextLogAdapterFunc = Callable[[LogFile, DuckDBConn, TableName], IngestionResult]
 
 
 def _detect_text_format(path: Path) -> str:

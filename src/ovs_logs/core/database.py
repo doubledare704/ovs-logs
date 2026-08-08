@@ -1,9 +1,5 @@
 """Local DuckDB connection management for OVS-Log."""
 
-from __future__ import annotations
-
-import datetime
-import json
 import logging
 from pathlib import Path
 from typing import Any
@@ -12,6 +8,8 @@ import duckdb
 
 from ovs_logs.config import settings as _cfg
 from ovs_logs.config.settings import Settings
+from ovs_logs.core.common import DuckDBConn
+from ovs_logs.core.models import AllowlistedIndicator
 from ovs_logs.core.sql_utils import quote_identifier
 
 logger = logging.getLogger(__name__)
@@ -40,10 +38,10 @@ class Database:
             cfg = db_settings or _cfg.settings
             path = Path(cfg.database.path)
         self._path = path
-        self._connection: duckdb.DuckDBPyConnection | None = None
+        self._connection: DuckDBConn | None = None
         self._managed_by_enter: bool = False
 
-    def __enter__(self) -> duckdb.DuckDBPyConnection:
+    def __enter__(self) -> DuckDBConn:
         # Only mark as managed if no external connection exists — a manual
         # connect() call before entering the context means the caller owns
         # the lifecycle and __exit__ must not close it.
@@ -60,7 +58,7 @@ class Database:
     def path(self) -> str | Path:
         return self._path
 
-    def connect(self) -> duckdb.DuckDBPyConnection:
+    def connect(self) -> DuckDBConn:
         """Open (or reuse) a DuckDB connection.
 
         Calling this method manually outside a ``with`` block is supported.
@@ -96,7 +94,7 @@ class Database:
 # ---------------------------------------------------------------------------
 
 
-def _ensure_allowlist_table(connection: duckdb.DuckDBPyConnection) -> None:
+def _ensure_allowlist_table(connection: DuckDBConn) -> None:
     """Create the ``allowlisted_indicators`` table if it does not exist."""
     table = quote_identifier(ALLOWLIST_TABLE)
     connection.execute(
@@ -115,16 +113,7 @@ def _ensure_allowlist_table(connection: duckdb.DuckDBPyConnection) -> None:
     logger.info("Ensured %s table exists", ALLOWLIST_TABLE)
 
 
-def insert_allowlisted_indicator(  # noqa: PLR0913
-    connection: duckdb.DuckDBPyConnection,
-    *,
-    indicator_id: str,
-    indicator: str,
-    indicator_type: str,
-    description: str | None = None,
-    metadata: dict[str, Any] | None = None,
-    created_at: datetime.datetime | None = None,
-) -> None:
+def insert_allowlisted_indicator(connection: DuckDBConn, *, indicator: AllowlistedIndicator) -> None:
     """Insert a row into ``allowlisted_indicators``.
 
     Parameters are keyword-only to avoid positional confusion.
@@ -133,23 +122,22 @@ def insert_allowlisted_indicator(  # noqa: PLR0913
     table = quote_identifier(ALLOWLIST_TABLE)
     connection.execute(
         f"""
-        INSERT INTO {table} ("id", "indicator", "indicator_type", "description", "metadata", "created_at")
-        VALUES (?, ?, ?, ?, ?, ?)
+        INSERT INTO {table} ("id", "indicator", "indicator_type", "description", "metadata")
+        VALUES (?, ?, ?, ?, ?)
         """,
         [
-            indicator_id,
-            indicator,
-            indicator_type,
-            description,
-            json.dumps(metadata) if metadata is not None else None,
-            created_at if created_at is not None else datetime.datetime.now(datetime.UTC),
+            indicator.indicator_id,
+            indicator.indicator,
+            indicator.indicator_type,
+            indicator.description,
+            indicator.json_metadata,
         ],
     )
-    logger.debug("Inserted allowlisted indicator %s (%s)", indicator, indicator_type)
+    logger.debug("Inserted allowlisted indicator %s (%s)", indicator, indicator.indicator_type)
 
 
 def delete_allowlisted_indicator(
-    connection: duckdb.DuckDBPyConnection,
+    connection: DuckDBConn,
     indicator_id: str,
 ) -> None:
     """Delete an allowlist entry by its ID.
@@ -166,7 +154,7 @@ def delete_allowlisted_indicator(
 
 
 def list_allowlisted_indicators(
-    connection: duckdb.DuckDBPyConnection,
+    connection: DuckDBConn,
     *,
     indicator_type: str | None = None,
 ) -> list[dict[str, Any]]:
@@ -198,7 +186,7 @@ def list_allowlisted_indicators(
 
 
 def is_allowlisted(
-    connection: duckdb.DuckDBPyConnection,
+    connection: DuckDBConn,
     indicator: str,
     indicator_type: str | None = None,
 ) -> bool:

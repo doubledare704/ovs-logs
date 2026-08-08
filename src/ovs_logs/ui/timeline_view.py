@@ -14,7 +14,13 @@ import duckdb
 import plotly.graph_objects as go
 import streamlit as st
 
-from ovs_logs.core.timeline import TimelineMetrics, TimelineRow, build_timeline, list_timeline_filter_options
+from ovs_logs.core.timeline import (
+    TimelineMetrics,
+    TimelineQueryOptions,
+    TimelineRow,
+    build_timeline,
+    list_timeline_filter_options,
+)
 from ovs_logs.ui.analysis_view import has_analyzable_columns
 
 logger = logging.getLogger(__name__)
@@ -239,9 +245,11 @@ def _get_timeline_data(
         return build_timeline(
             connection,
             table_name,
-            source_ip=source_ip,
-            min_status=min_status,
-            event_type=event_type,
+            options=TimelineQueryOptions(
+                source_ip=source_ip,
+                min_status=min_status,
+                event_type=event_type,
+            ),
         )
     except duckdb.Error:
         logger.exception("Failed to build timeline for table %s", table_name)

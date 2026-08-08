@@ -12,8 +12,8 @@ from ovs_logs.core.llm import (
     PromptBuilder,
     ResponseParser,
 )
+from ovs_logs.core.models import ReputationResult
 from ovs_logs.core.report import IncidentReport
-from ovs_logs.core.threat_intel import ReputationResult
 
 
 class FakeLLMProvider(LLMProvider):

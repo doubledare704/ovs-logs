@@ -14,10 +14,10 @@ from ollama import Client, ResponseError
 
 from ovs_logs.config.settings import OLLAMA_DEFAULT_ENDPOINT, LLMSettings, settings
 from ovs_logs.core.analysis.indicators import SuspiciousIndicator
+from ovs_logs.core.models import ReputationResult
 from ovs_logs.core.report import IncidentReport
 from ovs_logs.core.report_schema import REPORT_JSON_SCHEMA
 from ovs_logs.core.retry import retry
-from ovs_logs.core.threat_intel import ReputationResult
 
 logger = logging.getLogger(__name__)
 

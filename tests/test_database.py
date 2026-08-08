@@ -16,6 +16,7 @@ from ovs_logs.core.database import (
     insert_allowlisted_indicator,
     is_allowlisted,
 )
+from ovs_logs.core.models import AllowlistedIndicator
 
 # ---------------------------------------------------------------------------
 # In-memory sessions
@@ -272,11 +273,13 @@ class TestAllowlistedIndicators:
             _ensure_allowlist_table(conn)
             insert_allowlisted_indicator(
                 conn,
-                indicator_id="test-uuid",
-                indicator="10.0.0.1",
-                indicator_type="ip",
-                description="Internal DNS server",
-                metadata={"source": "admin"},
+                indicator=AllowlistedIndicator(
+                    indicator_id="test-uuid",
+                    indicator="10.0.0.1",
+                    indicator_type="ip",
+                    description="Internal DNS server",
+                    metadata={"source": "admin"},
+                ),
             )
             table = ALLOWLIST_TABLE
             row = conn.execute(
@@ -293,10 +296,7 @@ class TestAllowlistedIndicators:
         with Database(":memory:") as conn:
             _ensure_allowlist_table(conn)
             insert_allowlisted_indicator(
-                conn,
-                indicator_id="uuid-1",
-                indicator="1.2.3.4",
-                indicator_type="ip",
+                conn, indicator=AllowlistedIndicator(indicator_id="uuid-1", indicator="1.2.3.4", indicator_type="ip")
             )
             assert is_allowlisted(conn, "1.2.3.4") is True
             assert is_allowlisted(conn, "1.2.3.4", "ip") is True
@@ -313,9 +313,11 @@ class TestAllowlistedIndicators:
             _ensure_allowlist_table(conn)
             insert_allowlisted_indicator(
                 conn,
-                indicator_id="uuid-2",
-                indicator="10.0.0.1",
-                indicator_type="ip",
+                indicator=AllowlistedIndicator(
+                    indicator_id="uuid-2",
+                    indicator="10.0.0.1",
+                    indicator_type="ip",
+                ),
             )
             assert is_allowlisted(conn, "10.0.0.1", "hostname") is False
             assert is_allowlisted(conn, "10.0.0.1", "ip") is True
@@ -326,9 +328,11 @@ class TestAllowlistedIndicators:
             _ensure_allowlist_table(conn)
             insert_allowlisted_indicator(
                 conn,
-                indicator_id="uuid-3",
-                indicator="192.168.1.1",
-                indicator_type="ip",
+                indicator=AllowlistedIndicator(
+                    indicator_id="uuid-3",
+                    indicator="192.168.1.1",
+                    indicator_type="ip",
+                ),
             )
             row = conn.execute(
                 f'SELECT "created_at" FROM "{ALLOWLIST_TABLE}" WHERE "id" = ?',
@@ -343,16 +347,20 @@ class TestAllowlistedIndicators:
             _ensure_allowlist_table(conn)
             insert_allowlisted_indicator(
                 conn,
-                indicator_id="uuid-4",
-                indicator="10.0.0.2",
-                indicator_type="ip",
+                indicator=AllowlistedIndicator(
+                    indicator_id="uuid-4",
+                    indicator="10.0.0.2",
+                    indicator_type="ip",
+                ),
             )
             with pytest.raises(duckdb.IntegrityError):
                 insert_allowlisted_indicator(
                     conn,
-                    indicator_id="uuid-5",
-                    indicator="10.0.0.2",
-                    indicator_type="ip",
+                    indicator=AllowlistedIndicator(
+                        indicator_id="uuid-5",
+                        indicator="10.0.0.2",
+                        indicator_type="ip",
+                    ),
                 )
 
     def test_same_indicator_different_type_succeeds(self) -> None:
@@ -361,15 +369,19 @@ class TestAllowlistedIndicators:
             _ensure_allowlist_table(conn)
             insert_allowlisted_indicator(
                 conn,
-                indicator_id="uuid-6",
-                indicator="10.0.0.3",
-                indicator_type="ip",
+                indicator=AllowlistedIndicator(
+                    indicator_id="uuid-6",
+                    indicator="10.0.0.3",
+                    indicator_type="ip",
+                ),
             )
             insert_allowlisted_indicator(
                 conn,
-                indicator_id="uuid-7",
-                indicator="10.0.0.3",
-                indicator_type="hostname",
+                indicator=AllowlistedIndicator(
+                    indicator_id="uuid-7",
+                    indicator="10.0.0.3",
+                    indicator_type="hostname",
+                ),
             )
             assert is_allowlisted(conn, "10.0.0.3", "ip") is True
             assert is_allowlisted(conn, "10.0.0.3", "hostname") is True

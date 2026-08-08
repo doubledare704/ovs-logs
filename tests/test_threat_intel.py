@@ -6,13 +6,12 @@ import pytest
 import requests
 
 from ovs_logs.config.settings import AbuseIPDBSettings, Settings, VirusTotalSettings, _load_virustotal_settings
+from ovs_logs.core.errors import ThreatIntelError
+from ovs_logs.core.models import ReputationResult, ThreatIntelClientOptions, VirusTotalClientOptions, VirusTotalResult
 from ovs_logs.core.threat_intel import (
     RateLimiter,
-    ReputationResult,
     ThreatIntelClient,
-    ThreatIntelError,
     VirusTotalClient,
-    VirusTotalResult,
 )
 
 
@@ -36,12 +35,14 @@ def _success_response() -> Mock:
 def test_explicit_falsy_overrides_are_honored() -> None:
     """Explicit falsy values (0, "") must override settings defaults, not be discarded."""
     client = ThreatIntelClient(
-        api_key="test-key",
-        endpoint="",
-        timeout=0,
-        max_retries=0,
-        backoff_seconds=0,
-        max_requests_per_minute=0,
+        options=ThreatIntelClientOptions(
+            api_key="test-key",
+            endpoint="",
+            timeout=0,
+            max_retries=0,
+            backoff_seconds=0,
+            max_requests_per_minute=0,
+        ),
     )
 
     assert client.endpoint == ""
@@ -55,7 +56,7 @@ def test_explicit_falsy_overrides_are_honored() -> None:
 @pytest.mark.network
 def test_lookup_success_and_cache() -> None:
     with patch("ovs_logs.core.threat_intel.requests.get", return_value=_success_response()) as mock_get:
-        client = ThreatIntelClient(api_key="test-key", max_requests_per_minute=0)
+        client = ThreatIntelClient(options=ThreatIntelClientOptions(api_key="test-key", max_requests_per_minute=0))
         result = client.lookup("1.2.3.4")
 
     assert result == ReputationResult(
@@ -81,7 +82,7 @@ def test_lookup_success_and_cache() -> None:
 @pytest.mark.network
 def test_lookup_many_deduplicates_ips() -> None:
     with patch("ovs_logs.core.threat_intel.requests.get", return_value=_success_response()) as mock_get:
-        client = ThreatIntelClient(api_key="test-key", max_requests_per_minute=0)
+        client = ThreatIntelClient(options=ThreatIntelClientOptions(api_key="test-key", max_requests_per_minute=0))
         results = client.lookup_many(["1.2.3.4", "1.2.3.4", "5.6.7.8"])
 
     assert set(results.keys()) == {"1.2.3.4", "5.6.7.8"}
@@ -90,7 +91,7 @@ def test_lookup_many_deduplicates_ips() -> None:
 
 
 def test_lookup_without_api_key_returns_neutral_result() -> None:
-    client = ThreatIntelClient(api_key=None)
+    client = ThreatIntelClient(options=ThreatIntelClientOptions(api_key=None))
     result = client.lookup("1.2.3.4")
 
     assert result.abuse_confidence_score == 0
@@ -105,7 +106,7 @@ def test_lookup_http_error_raises() -> None:
     response.text = "Too Many Requests"
 
     with patch("ovs_logs.core.threat_intel.requests.get", return_value=response):
-        client = ThreatIntelClient(api_key="test-key", max_retries=0)
+        client = ThreatIntelClient(options=ThreatIntelClientOptions(api_key="test-key", max_retries=0))
         with pytest.raises(ThreatIntelError, match="AbuseIPDB lookup failed"):
             client.lookup("1.2.3.4")
 
@@ -163,7 +164,7 @@ def test_lookup_retries_on_transient_error() -> None:
         patch("ovs_logs.core.threat_intel.time.sleep", return_value=None),
         patch("ovs_logs.core.threat_intel.requests.get", side_effect=[bad, good]) as mock_get,
     ):
-        client = ThreatIntelClient(api_key="test-key", max_retries=1)
+        client = ThreatIntelClient(options=ThreatIntelClientOptions(api_key="test-key", max_retries=1))
         result = client.lookup("1.2.3.4")
 
     expected_score = 75
@@ -178,7 +179,7 @@ def test_lookup_raises_after_timeout_retries() -> None:
         patch("ovs_logs.core.threat_intel.time.sleep", return_value=None),
         patch("ovs_logs.core.threat_intel.requests.get", side_effect=requests.Timeout("timeout")) as mock_get,
     ):
-        client = ThreatIntelClient(api_key="test-key", max_retries=1)
+        client = ThreatIntelClient(options=ThreatIntelClientOptions(api_key="test-key", max_retries=1))
         with pytest.raises(ThreatIntelError, match="timed out"):
             client.lookup("1.2.3.4")
 
@@ -196,7 +197,7 @@ def test_lookup_raises_after_rate_limit_retries() -> None:
         patch("ovs_logs.core.threat_intel.time.sleep", return_value=None),
         patch("ovs_logs.core.threat_intel.requests.get", return_value=response) as mock_get,
     ):
-        client = ThreatIntelClient(api_key="test-key", max_retries=1)
+        client = ThreatIntelClient(options=ThreatIntelClientOptions(api_key="test-key", max_retries=1))
         with pytest.raises(ThreatIntelError, match="HTTP 429"):
             client.lookup("1.2.3.4")
 
@@ -232,7 +233,7 @@ def _vt_success_response() -> Mock:
 @pytest.mark.network
 def test_vt_lookup_success_and_cache(mocker) -> None:
     mock_get = mocker.patch("ovs_logs.core.threat_intel.requests.get", return_value=_vt_success_response())
-    client = VirusTotalClient(api_key="test-key", max_requests_per_minute=0)
+    client = VirusTotalClient(options=VirusTotalClientOptions(api_key="test-key", max_requests_per_minute=0))
     result = client.lookup(_DUMMY_HASH)
 
     assert result == VirusTotalResult(
@@ -253,7 +254,7 @@ def test_vt_lookup_success_and_cache(mocker) -> None:
 
 
 def test_vt_lookup_without_api_key_raises() -> None:
-    client = VirusTotalClient(api_key=None)
+    client = VirusTotalClient(options=VirusTotalClientOptions(api_key=None))
     with pytest.raises(ThreatIntelError, match="API key is required"):
         client.lookup(_DUMMY_HASH)
 
@@ -265,7 +266,7 @@ def test_vt_lookup_http_error_raises(mocker) -> None:
     response.text = "Too Many Requests"
 
     mocker.patch("ovs_logs.core.threat_intel.requests.get", return_value=response)
-    client = VirusTotalClient(api_key="test-key", max_retries=0)
+    client = VirusTotalClient(options=VirusTotalClientOptions(api_key="test-key", max_retries=0))
     with pytest.raises(ThreatIntelError, match="VirusTotal lookup failed"):
         client.lookup(_DUMMY_HASH)
 
@@ -279,7 +280,7 @@ def test_vt_lookup_retries_on_transient_error(mocker) -> None:
 
     mocker.patch("ovs_logs.core.threat_intel.time.sleep", return_value=None)
     mock_get = mocker.patch("ovs_logs.core.threat_intel.requests.get", side_effect=[bad, good])
-    client = VirusTotalClient(api_key="test-key", max_retries=1)
+    client = VirusTotalClient(options=VirusTotalClientOptions(api_key="test-key", max_retries=1))
     result = client.lookup(_DUMMY_HASH)
 
     expected_ratio = 5.0 / 20.0
@@ -303,7 +304,7 @@ def test_vt_rate_limiter_resolves_settings_lazily(monkeypatch) -> None:
     )
     monkeypatch.setattr("ovs_logs.core.threat_intel.settings", patched_settings)
 
-    client = VirusTotalClient(api_key="test-key")
+    client = VirusTotalClient(options=VirusTotalClientOptions(api_key="test-key"))
 
     assert client.rate_limiter.min_interval == 60.0 / patched
 
@@ -311,7 +312,7 @@ def test_vt_rate_limiter_resolves_settings_lazily(monkeypatch) -> None:
 @pytest.mark.network
 def test_vt_lookup_many_deduplicates_hashes(mocker) -> None:
     mock_get = mocker.patch("ovs_logs.core.threat_intel.requests.get", return_value=_vt_success_response())
-    client = VirusTotalClient(api_key="test-key", max_requests_per_minute=0)
+    client = VirusTotalClient(options=VirusTotalClientOptions(api_key="test-key", max_requests_per_minute=0))
     results = client.lookup_many([_DUMMY_HASH, _DUMMY_HASH, "otherhash"])
 
     assert set(results.keys()) == {_DUMMY_HASH, "otherhash"}
@@ -334,7 +335,7 @@ def test_vt_lookup_without_api_key_uses_settings(monkeypatch, mocker) -> None:
     )
     monkeypatch.setattr("ovs_logs.core.threat_intel.settings", patched)
     mock_get = mocker.patch("ovs_logs.core.threat_intel.requests.get", return_value=_vt_success_response())
-    client = VirusTotalClient()
+    client = VirusTotalClient(options=VirusTotalClientOptions())
     result = client.lookup(_DUMMY_HASH)
     assert result.malicious == 5
     mock_get.assert_called_once()
@@ -346,7 +347,7 @@ def test_vt_malformed_payload_raises(mocker) -> None:
     response.status_code = 200
     response.json.return_value = {}
     mocker.patch("ovs_logs.core.threat_intel.requests.get", return_value=response)
-    client = VirusTotalClient(api_key="test-key", max_retries=0)
+    client = VirusTotalClient(options=VirusTotalClientOptions(api_key="test-key", max_retries=0))
     with pytest.raises(ThreatIntelError, match="missing 'data'"):
         client.lookup(_DUMMY_HASH)
 
@@ -355,7 +356,7 @@ def test_vt_settings_loads_api_key_from_env(monkeypatch) -> None:
     monkeypatch.setenv("VIRUSTOTAL_API_KEY", "env-key-test")
     vt_settings = _load_virustotal_settings()
     assert vt_settings.api_key == "env-key-test"
-    client = VirusTotalClient(virustotal_settings=vt_settings)
+    client = VirusTotalClient(options=VirusTotalClientOptions(virustotal_settings=vt_settings))
     assert client.api_key == "env-key-test"
 
 
@@ -364,7 +365,7 @@ def test_vt_lookup_uses_settings_api_key(monkeypatch, mocker) -> None:
     monkeypatch.setenv("VIRUSTOTAL_API_KEY", "env-key-test")
     vt_settings = _load_virustotal_settings()
     mock_get = mocker.patch("ovs_logs.core.threat_intel.requests.get", return_value=_vt_success_response())
-    client = VirusTotalClient(api_key=None, virustotal_settings=vt_settings)
+    client = VirusTotalClient(options=VirusTotalClientOptions(api_key=None, virustotal_settings=vt_settings))
     result = client.lookup(_DUMMY_HASH)
     assert result.malicious == 5
     mock_get.assert_called_once()

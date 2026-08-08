@@ -4,8 +4,6 @@ Provides a single ``classify_error`` function that both the CLI and UI can
 use to map exceptions to consistent exit codes and user-facing messages.
 """
 
-from __future__ import annotations
-
 import logging
 
 logger = logging.getLogger(__name__)
@@ -67,3 +65,11 @@ def error_category(exc: Exception) -> str:
     or ``"Unexpected error"``.
     """
     return _classify(exc)[1]
+
+
+class ThreatIntelError(Exception):
+    """Raised when a threat-intel lookup fails."""
+
+
+class ThreatIntelTransientError(ThreatIntelError):
+    """Raised for transient HTTP errors (5xx, 429) that may succeed on retry."""

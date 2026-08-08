@@ -1,60 +1,20 @@
 """Threat intelligence clients for IP and file-hash lookups via AbuseIPDB and VirusTotal."""
 
-from __future__ import annotations
-
 import dataclasses
 import logging
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from http import HTTPStatus
 from typing import Any
 
 import requests
 
-from ovs_logs.config.settings import AbuseIPDBSettings, VirusTotalSettings, settings
+from ovs_logs.config.settings import settings
+from ovs_logs.core.errors import ThreatIntelError, ThreatIntelTransientError
+from ovs_logs.core.models import ReputationResult, ThreatIntelClientOptions, VirusTotalClientOptions, VirusTotalResult
 from ovs_logs.core.retry import retry
 
 logger = logging.getLogger(__name__)
-
-
-class ThreatIntelError(Exception):
-    """Raised when a threat-intel lookup fails."""
-
-
-class ThreatIntelTransientError(ThreatIntelError):
-    """Raised for transient HTTP errors (5xx, 429) that may succeed on retry."""
-
-
-_TRANSIENT_STATUS_MIN = 500
-_RATE_LIMIT_STATUS = 429
-_SUCCESS_STATUS = 200
-
-
-@dataclass(frozen=True)
-class ReputationResult:
-    """Normalized IP reputation data from AbuseIPDB."""
-
-    ip: str
-    abuse_confidence_score: int = 0
-    country_code: str | None = None
-    isp: str | None = None
-    domain: str | None = None
-    total_reports: int = 0
-    last_reported_at: str | None = None
-    cached: bool = False
-
-
-@dataclass(frozen=True)
-class VirusTotalResult:
-    """Normalized file-hash threat data from VirusTotal API v3."""
-
-    hash: str
-    malicious: int = 0
-    suspicious: int = 0
-    undetected: int = 0
-    harmless: int = 0
-    detection_ratio: float = 0.0
-    cached: bool = False
 
 
 class RateLimiter:
@@ -89,24 +49,19 @@ class RateLimiter:
 class ThreatIntelClient:
     """Client for querying AbuseIPDB IP reputation data with caching, rate limiting, and retries."""
 
-    def __init__(  # noqa: PLR0913
-        self,
-        api_key: str | None = None,
-        endpoint: str | None = None,
-        timeout: int | None = None,
-        max_requests_per_minute: int | None = None,
-        max_retries: int | None = None,
-        backoff_seconds: int | None = None,
-        *,
-        abuseipdb_settings: AbuseIPDBSettings | None = None,
-    ) -> None:
-        cfg = abuseipdb_settings or settings.abuseipdb
-        self.api_key = api_key
-        self.endpoint = endpoint if endpoint is not None else cfg.api_url
-        self.timeout = timeout if timeout is not None else cfg.timeout
-        retries = max_retries if max_retries is not None else cfg.max_retries
-        backoff = backoff_seconds if backoff_seconds is not None else cfg.backoff_seconds
-        rate_limit = max_requests_per_minute if max_requests_per_minute is not None else cfg.max_requests_per_minute
+    def __init__(self, *, options: ThreatIntelClientOptions | None = None) -> None:
+        options = options or ThreatIntelClientOptions()
+        cfg = options.abuseipdb_settings or settings.abuseipdb
+        self.api_key = options.api_key
+        self.endpoint = options.endpoint if options.endpoint is not None else cfg.api_url
+        self.timeout = options.timeout if options.timeout is not None else cfg.timeout
+        retries = options.max_retries if options.max_retries is not None else cfg.max_retries
+        backoff = options.backoff_seconds if options.backoff_seconds is not None else cfg.backoff_seconds
+        rate_limit = (
+            options.max_requests_per_minute
+            if options.max_requests_per_minute is not None
+            else cfg.max_requests_per_minute
+        )
         self.rate_limiter = RateLimiter(max_requests_per_minute=rate_limit)
         self._make_request = retry(
             max_retries=retries,
@@ -141,7 +96,7 @@ class ThreatIntelClient:
         )
 
     def _is_transient(self, status_code: int) -> bool:
-        return status_code >= _TRANSIENT_STATUS_MIN or status_code == _RATE_LIMIT_STATUS
+        return status_code >= HTTPStatus.INTERNAL_SERVER_ERROR or status_code == HTTPStatus.TOO_MANY_REQUESTS
 
     def _make_request_impl(self, ip: str) -> requests.Response:
         """Make a single rate-limited HTTP request.
@@ -184,7 +139,7 @@ class ThreatIntelClient:
         except requests.RequestException as exc:
             raise ThreatIntelError(f"AbuseIPDB lookup for {ip} failed: {exc}") from exc
 
-        if response.status_code == _SUCCESS_STATUS:
+        if response.status_code == HTTPStatus.OK:
             data = response.json().get("data", {})
             result = self._build_result(ip, data)
             self._cache[ip] = result
@@ -201,24 +156,19 @@ class ThreatIntelClient:
 class VirusTotalClient:
     """Client for querying VirusTotal API v3 file-hash threat intelligence."""
 
-    def __init__(  # noqa: PLR0913
-        self,
-        api_key: str | None = None,
-        endpoint: str | None = None,
-        timeout: int | None = None,
-        max_requests_per_minute: int | None = None,
-        max_retries: int | None = None,
-        backoff_seconds: int | None = None,
-        *,
-        virustotal_settings: VirusTotalSettings | None = None,
-    ) -> None:
-        cfg = virustotal_settings or settings.virustotal
-        self.api_key = api_key if api_key is not None else cfg.api_key
-        self.endpoint = endpoint if endpoint is not None else cfg.api_url
-        self.timeout = timeout if timeout is not None else cfg.timeout
-        retries = max_retries if max_retries is not None else cfg.max_retries
-        backoff = backoff_seconds if backoff_seconds is not None else cfg.backoff_seconds
-        rate_limit = max_requests_per_minute if max_requests_per_minute is not None else cfg.max_requests_per_minute
+    def __init__(self, *, options: VirusTotalClientOptions | None = None) -> None:
+        options = options or VirusTotalClientOptions()
+        cfg = options.virustotal_settings or settings.virustotal
+        self.api_key = options.api_key if options.api_key is not None else cfg.api_key
+        self.endpoint = options.endpoint if options.endpoint is not None else cfg.api_url
+        self.timeout = options.timeout if options.timeout is not None else cfg.timeout
+        retries = options.max_retries if options.max_retries is not None else cfg.max_retries
+        backoff = options.backoff_seconds if options.backoff_seconds is not None else cfg.backoff_seconds
+        rate_limit = (
+            options.max_requests_per_minute
+            if options.max_requests_per_minute is not None
+            else cfg.max_requests_per_minute
+        )
         self.rate_limiter = RateLimiter(max_requests_per_minute=rate_limit)
         self._make_request = retry(
             max_retries=retries,
@@ -253,7 +203,7 @@ class VirusTotalClient:
         )
 
     def _is_transient(self, status_code: int) -> bool:
-        return status_code >= _TRANSIENT_STATUS_MIN or status_code == _RATE_LIMIT_STATUS
+        return status_code >= HTTPStatus.INTERNAL_SERVER_ERROR or status_code == HTTPStatus.TOO_MANY_REQUESTS
 
     def _make_request_impl(self, file_hash: str) -> requests.Response:
         if not self.api_key:
@@ -289,7 +239,7 @@ class VirusTotalClient:
         except requests.RequestException as exc:
             raise ThreatIntelError(f"VirusTotal lookup for {file_hash} failed: {exc}") from exc
 
-        if response.status_code == _SUCCESS_STATUS:
+        if response.status_code == HTTPStatus.OK:
             try:
                 payload = response.json()
             except ValueError as exc:

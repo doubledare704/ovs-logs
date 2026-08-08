@@ -11,8 +11,6 @@ Both the CLI (``cli/main.py``) and UI (``ui/``) call this service instead of
 importing core components directly, keeping the presentation layer thin.
 """
 
-from __future__ import annotations
-
 import logging
 import os
 from dataclasses import dataclass
@@ -25,11 +23,13 @@ from ovs_logs.config.settings import Settings, settings as _default_settings
 from ovs_logs.core.analysis import AnalysisEngine, IndicatorProcessor
 from ovs_logs.core.analysis.indicators import SuspiciousIndicator, extract_unique_ips
 from ovs_logs.core.database import ALLOWLIST_TABLE, Database, _ensure_allowlist_table
+from ovs_logs.core.errors import ThreatIntelError
 from ovs_logs.core.llm import LLMSynthesizer, create_llm_provider, is_ollama_endpoint
+from ovs_logs.core.models import ThreatIntelClientOptions
 from ovs_logs.core.persistence import ReportStore
 from ovs_logs.core.report import IncidentReport
 from ovs_logs.core.sql_utils import quote_identifier
-from ovs_logs.core.threat_intel import ThreatIntelClient, ThreatIntelError
+from ovs_logs.core.threat_intel import ThreatIntelClient
 
 logger = logging.getLogger(__name__)
 
@@ -286,8 +286,10 @@ class AnalysisService:
             return None
         try:
             client = ThreatIntelClient(
-                api_key=api_key,
-                abuseipdb_settings=self._settings.abuseipdb,
+                options=ThreatIntelClientOptions(
+                    api_key=api_key,
+                    abuseipdb_settings=self._settings.abuseipdb,
+                ),
             )
             return client.lookup_many(ips)
         except ThreatIntelError:
