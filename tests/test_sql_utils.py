@@ -6,13 +6,13 @@ from pathlib import Path
 
 import pytest
 
+from ovs_logs.core.models import LogFile
 from ovs_logs.core.sql_utils import (
     quote_identifier,
     resolve_table_name,
     sanitize_table_name,
     timestamp_cast_expression,
 )
-from ovs_logs.core.validation import LogFile
 
 # ---------------------------------------------------------------------------
 # quote_identifier

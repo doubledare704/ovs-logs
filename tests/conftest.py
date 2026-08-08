@@ -18,6 +18,7 @@ from streamlit.testing.v1.element_tree import Button, Checkbox, Selectbox, TextI
 
 from ovs_logs.config.settings import AbuseIPDBSettings, settings
 from ovs_logs.core.analysis.indicators import SuspiciousIndicator
+from ovs_logs.core.common import DuckDBConn
 from ovs_logs.core.database import Database
 from ovs_logs.core.report import (
     IncidentReport,
@@ -46,7 +47,7 @@ def _skip_network_tests_offline(request: pytest.FixtureRequest) -> Iterator[None
 
 
 @pytest.fixture
-def db() -> Iterator[duckdb.DuckDBPyConnection]:
+def db() -> Iterator[DuckDBConn]:
     """In-memory DuckDB instance for adapter, analysis, and normalization tests."""
     with Database(":memory:") as conn:
         yield conn

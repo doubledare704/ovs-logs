@@ -1,10 +1,9 @@
 """Log file validation and format detection for OVS-Log."""
 
-from __future__ import annotations
-
 import os
-from dataclasses import dataclass
 from pathlib import Path
+
+from .models import LogFile
 
 SUPPORTED_FORMATS = {"csv", "json", "txt", "log", "evtx"}
 
@@ -15,15 +14,6 @@ FORMAT_ALIASES = {
     ".log": "log",
     ".evtx": "evtx",
 }
-
-
-@dataclass(frozen=True)
-class LogFile:
-    """Descriptor for a validated input log file."""
-
-    path: Path
-    format: str
-    needs_conversion: bool
 
 
 def detect_format(path: Path) -> str:

@@ -59,18 +59,7 @@ For `duckdb_regex_native` we validated regex compatibility up-front:
 
 `write_sample` reuses an existing non-empty file at `{name}_{line_count}.log`, so 100k-line files are generated once per pytest session rather than per-strategy-per-test.
 
-## 5. How to run
-
-```bash
-# 2k-line rapid regression (smoke correctness for all strategies)
-uv run pytest tests/test_text_log_benchmarks.py
-
-# 20k / 100k large matrix (includes duckdb_regex_native)
-OVD68_LARGE_BENCHMARKS=1 uv run pytest tests/test_text_log_benchmarks.py
-```
-
-Running under `pytest -n 3` (xdist) with `OVD68_LARGE_BENCHMARKS` unset is safe — the large test is skipped.
-Set `OVD68_LARGE_BENCHMARKS=1` only when you intend to exercise the extended matrix.
+## 5. Reproduce at larger line counts and record actual scaling ratios.
 
 ## 6. Sample results (5,000-line, Apple Silicon)
 

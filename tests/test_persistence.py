@@ -1,7 +1,5 @@
 """Tests for ``ReportStore.get_all_reports``."""
 
-from __future__ import annotations
-
 import json
 import logging
 import threading
@@ -10,18 +8,19 @@ from pathlib import Path
 import duckdb
 import pytest
 
+from ovs_logs.core.common import DuckDBConn
 from ovs_logs.core.persistence import ReportStore
 from ovs_logs.core.sql_utils import quote_identifier
 
 from .conftest import sample_report
 
 
-def test_get_all_reports_empty(db: duckdb.DuckDBPyConnection) -> None:
+def test_get_all_reports_empty(db: DuckDBConn) -> None:
     store = ReportStore()
     assert store.get_all_reports(db) == []
 
 
-def test_get_all_reports_orders_by_created_at_desc(db: duckdb.DuckDBPyConnection) -> None:
+def test_get_all_reports_orders_by_created_at_desc(db: DuckDBConn) -> None:
     store = ReportStore()
     store._ensure_table(db)
     payload = json.dumps(sample_report().to_dict(), ensure_ascii=False, default=str)
@@ -37,9 +36,7 @@ def test_get_all_reports_orders_by_created_at_desc(db: duckdb.DuckDBPyConnection
     assert all("report" in r and "created_at" in r for r in results)
 
 
-def test_get_all_reports_skips_corrupted_and_logs_warning(
-    db: duckdb.DuckDBPyConnection, caplog: pytest.LogCaptureFixture
-) -> None:
+def test_get_all_reports_skips_corrupted_and_logs_warning(db: DuckDBConn, caplog: pytest.LogCaptureFixture) -> None:
     store = ReportStore()
     store._ensure_table(db)
     good_payload = json.dumps(sample_report().to_dict(), ensure_ascii=False, default=str)
@@ -57,9 +54,7 @@ def test_get_all_reports_skips_corrupted_and_logs_warning(
     assert any("corrupted" in record.message.lower() for record in caplog.records)
 
 
-def test_get_all_reports_skips_missing_field_and_logs_warning(
-    db: duckdb.DuckDBPyConnection, caplog: pytest.LogCaptureFixture
-) -> None:
+def test_get_all_reports_skips_missing_field_and_logs_warning(db: DuckDBConn, caplog: pytest.LogCaptureFixture) -> None:
     store = ReportStore()
     store._ensure_table(db)
     good_payload = json.dumps(sample_report().to_dict(), ensure_ascii=False, default=str)
@@ -84,7 +79,7 @@ def test_get_all_reports_skips_missing_field_and_logs_warning(
     assert any("corrupted" in record.message.lower() for record in caplog.records)
 
 
-def test_migration_renames_legacy_table(db: duckdb.DuckDBPyConnection) -> None:
+def test_migration_renames_legacy_table(db: DuckDBConn) -> None:
     store = ReportStore()
     db.execute(
         'CREATE TABLE "incident_reports" (report_id VARCHAR PRIMARY KEY, created_at TIMESTAMP, report_json VARCHAR)'
@@ -146,7 +141,7 @@ def test_concurrent_save_report_is_safe(tmp_path: Path) -> None:
     assert stored_ids == set(report_ids)
 
 
-def test_save_report_stores_source_table(db: duckdb.DuckDBPyConnection) -> None:
+def test_save_report_stores_source_table(db: DuckDBConn) -> None:
     store = ReportStore()
     report_id = store.save_report(db, sample_report(), source_table="events")
     row = db.execute(
@@ -157,7 +152,7 @@ def test_save_report_stores_source_table(db: duckdb.DuckDBPyConnection) -> None:
     assert row[0] == "events"
 
 
-def test_get_all_reports_filters_by_source_table(db: duckdb.DuckDBPyConnection) -> None:
+def test_get_all_reports_filters_by_source_table(db: DuckDBConn) -> None:
     store = ReportStore()
     store._ensure_table(db)
     payload = json.dumps(sample_report().to_dict(), ensure_ascii=False, default=str)
@@ -174,7 +169,7 @@ def test_get_all_reports_filters_by_source_table(db: duckdb.DuckDBPyConnection) 
     assert [r["report_id"] for r in results_b] == ["r_b"]
 
 
-def test_get_all_reports_null_fallback(db: duckdb.DuckDBPyConnection) -> None:
+def test_get_all_reports_null_fallback(db: DuckDBConn) -> None:
     store = ReportStore()
     store._ensure_table(db)
     payload = json.dumps(sample_report().to_dict(), ensure_ascii=False, default=str)
@@ -189,7 +184,7 @@ def test_get_all_reports_null_fallback(db: duckdb.DuckDBPyConnection) -> None:
     assert [r["report_id"] for r in results] == ["r_legacy"]
 
 
-def test_migrate_adds_source_table_column(db: duckdb.DuckDBPyConnection) -> None:
+def test_migrate_adds_source_table_column(db: DuckDBConn) -> None:
     # Simulate an old 3-column table (no source_table)
     db.execute(
         f'CREATE TABLE "{ReportStore.TABLE_NAME}" '
@@ -215,7 +210,7 @@ def test_migrate_adds_source_table_column(db: duckdb.DuckDBPyConnection) -> None
     assert "source_table" in cols
 
 
-def test_save_report_via_legacy_shape_still_works(db: duckdb.DuckDBPyConnection) -> None:
+def test_save_report_via_legacy_shape_still_works(db: DuckDBConn) -> None:
     # First run migration to add column
     db.execute(
         f'CREATE TABLE "{ReportStore.TABLE_NAME}" '

@@ -91,7 +91,6 @@ sequenceDiagram
     A->>L: prompt with structured context
     L-->>A: incident report (timeline, MITRE, mitigation)
     A-->>C: raw results
-    C->>P: format_context(raw_results)
     P-->>C: Markdown / structured context
     C-->>U: 3-tab UI or exported file
 ```
@@ -121,4 +120,3 @@ sequenceDiagram
 - **EVTX hybrid pipeline is the default**: EVTX ingestion runs raw `PyEvtxParser` parsing and Hayabusa Sigma detection in parallel, so raw event tables (recursive process trees, long-tail analysis) and MITRE/alert data are always available. When Hayabusa is not installed the pipeline degrades gracefully to raw parsing with a non-blocking UI banner. Engine selection is exposed only in the sidebar's "Advanced Ingestion Settings" expander (or the CLI `--tool` flag) for debugging and benchmarking.
 - **Binary supply-chain protection**: `ovs-log setup-hayabusa` verifies the downloaded archive's SHA-256 digest against the digest published in the GitHub release metadata before extracting, and refuses to install releases that publish no digest.
 - **Layering**: low-level EVTX adapters (raw parsing, external CLI invocation) live in `core/ingestion`; the service layer orchestrates them. There are no cross-layer imports from core into services.
-- Presentation formatting (Markdown rendering, LLM bullet lists) lives in the top-level `ovs_logs.presentation` module, **outside** the core layer. The `AnalysisEngine` exposes raw results as plain dicts only—callers (CLI, UI, tests) import `format_context` from `ovs_logs.presentation` or `ovs_logs` when they need rendered output. This keeps core business logic free of presentation concerns.

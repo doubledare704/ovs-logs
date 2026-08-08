@@ -2,14 +2,13 @@
 
 from pathlib import Path
 
-import duckdb
 import pytest
 
 from ovs_logs.core.analysis.engine import AnalysisEngine
+from ovs_logs.core.common import DuckDBConn
 from ovs_logs.core.ingestion.adapters import load_csv
 from ovs_logs.core.normalization import NormalizationEngine
 from ovs_logs.core.validation import validate_log_file
-from ovs_logs.presentation import FormattedContext, FormatterConfig, format_context
 
 TOP_TALKERS_COUNT = 2
 TOP_TALKER_1_COUNT = 3
@@ -25,7 +24,7 @@ TEMPORAL_BUCKET_1_COUNT = 1
 
 
 @pytest.fixture
-def analysis_engine(db: duckdb.DuckDBPyConnection, tmp_path: Path) -> AnalysisEngine:
+def analysis_engine(db: DuckDBConn, tmp_path: Path) -> AnalysisEngine:
     """Populate an `events` table and return an AnalysisEngine."""
     csv_file = tmp_path / "events.csv"
     csv_file.write_text(
@@ -117,7 +116,7 @@ def test_error_spikes_raw_varchar_status_code(db) -> None:
     assert any(row["status_code"] == ERROR_STATUS_500 for row in errors)
 
 
-def test_long_tail_analysis(db: duckdb.DuckDBPyConnection) -> None:
+def test_long_tail_analysis(db: DuckDBConn) -> None:
     """Long-tail analysis returns only rare process_name + destination_ip pairs."""
     db.execute(
         "CREATE TABLE events AS "
@@ -280,7 +279,7 @@ def test_aliased_query_handles_mixed_case_columns(db) -> None:
 
 def test_source_ip_sequence(
     analysis_engine: AnalysisEngine,
-    db: duckdb.DuckDBPyConnection,
+    db: DuckDBConn,
 ) -> None:
     results = analysis_engine.run_queries(
         db,
@@ -298,7 +297,7 @@ def test_source_ip_sequence(
 
 def test_source_ip_sequence_respects_limit(
     analysis_engine: AnalysisEngine,
-    db: duckdb.DuckDBPyConnection,
+    db: DuckDBConn,
 ) -> None:
     results = analysis_engine.run_queries(
         db,
@@ -310,7 +309,7 @@ def test_source_ip_sequence_respects_limit(
 
 
 def test_source_ip_sequence_excludes_null_event_type(
-    db: duckdb.DuckDBPyConnection,
+    db: DuckDBConn,
 ) -> None:
     """NULL event_type rows should be excluded from sequence and count."""
     db.execute(
@@ -331,7 +330,7 @@ def test_source_ip_sequence_excludes_null_event_type(
 
 
 def test_source_ip_sequence_tied_counts_ordered_deterministically(
-    db: duckdb.DuckDBPyConnection,
+    db: DuckDBConn,
 ) -> None:
     """IPs with equal event_count should be ordered by source_ip ASC."""
     db.execute(
@@ -359,7 +358,7 @@ def test_source_ip_sequence_tied_counts_ordered_deterministically(
 
 
 def test_source_ip_sequence_equal_timestamps_duplicate_messages_ordered_stably(
-    db: duckdb.DuckDBPyConnection,
+    db: DuckDBConn,
 ) -> None:
     """STRING_AGG must remain deterministic when timestamps and messages tie."""
     db.execute(
@@ -385,7 +384,7 @@ def test_source_ip_sequence_equal_timestamps_duplicate_messages_ordered_stably(
 
 
 def test_source_ip_sequence_per_ip_cap(
-    db: duckdb.DuckDBPyConnection,
+    db: DuckDBConn,
 ) -> None:
     """max_events_per_ip caps the rows per source_ip before aggregation."""
     db.execute(
@@ -413,7 +412,7 @@ def test_source_ip_sequence_per_ip_cap(
 
 
 def test_source_ip_sequence_all_rows_exceed_cap(
-    db: duckdb.DuckDBPyConnection,
+    db: DuckDBConn,
 ) -> None:
     """When max_events_per_ip is below min_events, no IPs are returned."""
     db.execute(
@@ -431,76 +430,3 @@ def test_source_ip_sequence_all_rows_exceed_cap(
         template_names=["source_ip_sequence"],
     )
     assert "source_ip_sequence" not in results or len(results["source_ip_sequence"]) == 0
-
-
-def test_format_context_returns_dataclass() -> None:
-    """format_context returns a FormattedContext with non-empty markdown and structured dict."""
-    results = {"test": [{"col1": "val1"}]}
-    ctx = format_context(results, FormatterConfig())
-    assert isinstance(ctx, FormattedContext)
-    assert isinstance(ctx.markdown, str)
-    assert ctx.markdown != ""
-    assert isinstance(ctx.structured, dict)
-
-
-def test_format_context_structured_shape() -> None:
-    """Structured output preserves title, summary, tables, and LLM bullets."""
-    results = {"test": [{"col1": "val1"}]}
-    ctx = format_context(results, FormatterConfig())
-    s = ctx.structured
-    assert s["title"] == "Analysis Results"
-    assert s["summary"]["templates_executed"] == 1
-    assert s["summary"]["total_findings"] == 1
-    assert s["tables"]["test"] == [{"col1": "val1"}]
-    assert s["llm_bullets"] == ["[test] col1=val1"]
-
-
-def test_format_context_markdown_structure() -> None:
-    """Markdown output includes heading, summary, table, and LLM context sections."""
-    results = {"Anomalies": [{"source_ip": "1.2.3.4", "event_count": 5}]}
-    md = format_context(results, FormatterConfig()).markdown
-    assert md.startswith("# Analysis Results")
-    assert "## Summary" in md
-    assert "## Anomalies" in md
-    assert "| source_ip | event_count |" in md
-    assert "|---|---|" in md
-    assert "| 1.2.3.4 | 5 |" in md
-    assert "## Context for LLM" in md
-    assert "- [Anomalies] source_ip=1.2.3.4, event_count=5" in md
-
-
-def test_format_context_markdown_empty_results() -> None:
-    """Empty results render as 'No findings' with empty tables and bullets."""
-    md = format_context({}, FormatterConfig()).markdown
-    assert md == "# Analysis Results\n\nNo findings."
-
-    s = format_context({}, FormatterConfig()).structured
-    assert s["tables"] == {}
-    assert s["llm_bullets"] == []
-
-
-def test_format_context_truncates_long_values() -> None:
-    """Cell values exceeding max_cell_width are truncated with ellipsis."""
-    long_val = "a" * 100
-    results = {"test": [{"col1": long_val, "col2": None}]}
-    md = format_context(results, FormatterConfig(max_cell_width=10)).markdown
-    assert "aaa" in md
-    assert "..." in md
-    assert "\u2014" in md
-
-
-def test_format_context_llm_bullets() -> None:
-    """LLM bullets include all rendered key=value pairs per row."""
-    results = {"t1": [{"col1": "v1"}], "t2": [{"col1": "v2"}, {"col1": "v3"}]}
-    ctx = format_context(results, FormatterConfig())
-    assert ctx.structured["llm_bullets"] == ["[t1] col1=v1", "[t2] col1=v2", "[t2] col1=v3"]
-
-
-def test_format_context_empty_template_list() -> None:
-    """Empty template results (template -> []) should produce 'No findings'."""
-    md = format_context({"template": []}, FormatterConfig()).markdown
-    assert md == "# Analysis Results\n\nNo findings."
-
-    s = format_context({"template": []}, FormatterConfig()).structured
-    assert s["tables"] == {"template": []}
-    assert s["llm_bullets"] == []

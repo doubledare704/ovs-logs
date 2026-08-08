@@ -1,13 +1,12 @@
 """Normalize raw DuckDB tables into a unified `events` schema."""
 
-from __future__ import annotations
-
 import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
 
 import duckdb
 
+from ovs_logs.core.common import DuckDBConn
 from ovs_logs.core.ingestion.adapters import IngestionResult
 from ovs_logs.core.sql_utils import quote_identifier, timestamp_cast_expression
 
@@ -109,7 +108,7 @@ _SYSTEM_TABLES: frozenset[str] = frozenset({"allowlisted_indicators", "events"})
 _SYSTEM_SCHEMAS: tuple[str, ...] = ("information_schema", "pg_catalog")
 
 
-def discover_raw_tables(connection: duckdb.DuckDBPyConnection) -> list[tuple[str, list[str]]]:
+def discover_raw_tables(connection: DuckDBConn) -> list[tuple[str, list[str]]]:
     """Return ``(table_name, columns)`` pairs for every non-system table.
 
     Excludes internal bookkeeping tables (``_ovs_*`` prefix), system schemas,
@@ -207,7 +206,7 @@ class NormalizationEngine:
 
     def normalize_batch(
         self,
-        connection: duckdb.DuckDBPyConnection,
+        connection: DuckDBConn,
         tables: Sequence[tuple[str, Sequence[str]]],
     ) -> int:
         """Normalize multiple raw tables into the unified ``events`` table.
@@ -273,12 +272,12 @@ class NormalizationEngine:
         return self._events_row_count(connection)
 
     @staticmethod
-    def _events_row_count(connection: duckdb.DuckDBPyConnection) -> int:
+    def _events_row_count(connection: DuckDBConn) -> int:
         """Return the current row count of the ``events`` table (0 if absent)."""
         row = connection.execute("SELECT COUNT(*) FROM events").fetchone()
         return row[0] if row is not None else 0
 
-    def reset_events(self, connection: duckdb.DuckDBPyConnection) -> None:
+    def reset_events(self, connection: DuckDBConn) -> None:
         """Drop the ``events`` table and clear normalization tracking.
 
         After calling this, the next ``normalize_batch`` will rebuild
@@ -291,7 +290,7 @@ class NormalizationEngine:
             connection.execute(f"DELETE FROM {_TRACKING_TABLE_QUOTED}")
         connection.execute("DROP TABLE IF EXISTS events")
 
-    def normalize_table(self, connection: duckdb.DuckDBPyConnection, load_result: IngestionResult) -> NormalizeResult:
+    def normalize_table(self, connection: DuckDBConn, load_result: IngestionResult) -> NormalizeResult:
         """Create or replace the unified `events` table from a raw load result."""
         raw_columns = [name for name, _ in load_result.schema]
         sql, mapping = self.build_sql(load_result.table_name, raw_columns)

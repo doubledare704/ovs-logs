@@ -6,15 +6,12 @@ alias-wrapping the ``AnalysisEngine`` uses so it works on both the normalized
 ``events`` table and raw sidebar tables.
 """
 
-from __future__ import annotations
-
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
-import duckdb
-
 from ovs_logs.core.analysis.engine import build_aliased_query
+from ovs_logs.core.common import DuckDBConn
 
 logger = logging.getLogger(__name__)
 
@@ -161,7 +158,7 @@ def _build_rows_query(sql: str, limit: int) -> str:
 
 
 def build_timeline(
-    connection: duckdb.DuckDBPyConnection,
+    connection: DuckDBConn,
     table_name: str = "events",
     options: TimelineQueryOptions | None = None,
 ) -> tuple[TimelineMetrics, list[TimelineRow]]:
@@ -232,7 +229,7 @@ def build_timeline(
 
 
 def list_timeline_filter_options(
-    connection: duckdb.DuckDBPyConnection,
+    connection: DuckDBConn,
     table_name: str = "events",
 ) -> tuple[list[tuple[str, int]], list[str]]:
     """Return IP-frequency pairs and distinct event types for filter widgets.

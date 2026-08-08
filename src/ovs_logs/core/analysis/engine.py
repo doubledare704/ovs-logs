@@ -15,6 +15,9 @@ from .templates import TEMPLATES, SQLTemplate
 logger = logging.getLogger(__name__)
 
 
+type DuckDBConn = duckdb.DuckDBPyConnection
+
+
 def _find_matched_alias(target: str, lower_columns: set[str]) -> str | None:
     """Find the first alias for the target field that exists in lower_columns."""
     for alias in FIELD_ALIASES.get(target, []):
@@ -80,7 +83,7 @@ def _build_expression_for_target(
     return f'NULL::{_column_dtype(target)} AS "{target}"'
 
 
-def build_aliased_query(sql: str, table_name: str, connection: duckdb.DuckDBPyConnection) -> str:
+def build_aliased_query(sql: str, table_name: str, connection: DuckDBConn) -> str:
     """Wrap the target table so normalized aliases resolve on raw tables.
 
     When querying a raw table that uses ``timestamp`` instead of
@@ -118,7 +121,7 @@ class AnalysisEngine:
 
     def run_queries(
         self,
-        connection: duckdb.DuckDBPyConnection,
+        connection: DuckDBConn,
         table_name: str = "events",
         thresholds: dict[str, dict[str, int]] | None = None,
         template_names: list[str] | None = None,

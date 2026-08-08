@@ -4,7 +4,8 @@ from pathlib import Path
 
 import pytest
 
-from ovs_logs.core.validation import LogFile, validate_log_file
+from ovs_logs.core.models import LogFile
+from ovs_logs.core.validation import validate_log_file
 
 
 def test_valid_csv(tmp_path: Path) -> None:

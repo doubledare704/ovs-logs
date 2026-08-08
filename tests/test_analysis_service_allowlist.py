@@ -12,14 +12,14 @@ import logging
 from pathlib import Path
 from unittest.mock import patch
 
-import duckdb
 import pytest
 from pytest_mock.plugin import MockerFixture
 
 from ovs_logs.core.analysis.indicators import SuspiciousIndicator
+from ovs_logs.core.common import DuckDBConn
 from ovs_logs.core.database import insert_allowlisted_indicator, is_allowlisted
-from ovs_logs.core.models import AllowlistedIndicator
-from ovs_logs.services.analysis_service import AnalysisConfig, AnalysisService
+from ovs_logs.core.models import AllowlistedIndicator, AnalysisConfig
+from ovs_logs.services.analysis_service import AnalysisService
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -86,7 +86,7 @@ def _make_source_ip_sequence(source_ip: str) -> SuspiciousIndicator:
     )
 
 
-def _config(db: duckdb.DuckDBPyConnection) -> AnalysisConfig:
+def _config(db: DuckDBConn) -> AnalysisConfig:
     """Return a minimal ``AnalysisConfig`` pointing at an in-memory database."""
     return AnalysisConfig(
         db_path=Path(":memory:"),
@@ -94,7 +94,7 @@ def _config(db: duckdb.DuckDBPyConnection) -> AnalysisConfig:
     )
 
 
-def _service(db: duckdb.DuckDBPyConnection) -> AnalysisService:
+def _service(db: DuckDBConn) -> AnalysisService:
     """Return an ``AnalysisService`` with ``_run_analysis`` patched."""
     return AnalysisService(_config(db))
 
@@ -107,7 +107,7 @@ def _service(db: duckdb.DuckDBPyConnection) -> AnalysisService:
 class TestAllowlistFiltering:
     """Tests for the ``_filter_allowlisted`` method via ``run_analysis``."""
 
-    def test_allowlisted_ip_filtered_from_indicators(self, db: duckdb.DuckDBPyConnection) -> None:
+    def test_allowlisted_ip_filtered_from_indicators(self, db: DuckDBConn) -> None:
         """Indicator with an allowlisted source_ip must be removed."""
         insert_allowlisted_indicator(
             db, indicator=AllowlistedIndicator(indicator_id="uuid-ft-1", indicator="1.2.3.4", indicator_type="ip")
@@ -127,7 +127,7 @@ class TestAllowlistFiltering:
         assert len(result) == 1
         assert result[0].evidence.get("source_ip") == "5.6.7.8"
 
-    def test_non_allowlisted_ip_preserved(self, db: duckdb.DuckDBPyConnection) -> None:
+    def test_non_allowlisted_ip_preserved(self, db: DuckDBConn) -> None:
         """Non-allowlisted IPs must remain in the result."""
         insert_allowlisted_indicator(
             db, indicator=AllowlistedIndicator(indicator_id="uuid-fnp-1", indicator="10.0.0.1", indicator_type="ip")
@@ -147,7 +147,7 @@ class TestAllowlistFiltering:
         ips = {ind.evidence.get("source_ip") for ind in result}
         assert ips == {"192.168.1.1", "10.0.0.2"}
 
-    def test_long_tail_destination_ip_filtered(self, db: duckdb.DuckDBPyConnection) -> None:
+    def test_long_tail_destination_ip_filtered(self, db: DuckDBConn) -> None:
         """Long-tail indicators should be matched on ``destination_ip``."""
         insert_allowlisted_indicator(
             db, indicator=AllowlistedIndicator(indicator_id="uuid-lt-1", indicator="8.8.8.8", indicator_type="ip")
@@ -166,7 +166,7 @@ class TestAllowlistFiltering:
         assert len(result) == 1
         assert result[0].evidence.get("destination_ip") == "1.1.1.1"
 
-    def test_empty_allowlist_returns_all_indicators(self, db: duckdb.DuckDBPyConnection) -> None:
+    def test_empty_allowlist_returns_all_indicators(self, db: DuckDBConn) -> None:
         """When the allowlist table is empty, no indicators are dropped."""
         service = _service(db)
         mock_indicators = [
@@ -181,7 +181,7 @@ class TestAllowlistFiltering:
         assert result is not None
         assert len(result) == 3
 
-    def test_non_ip_indicators_pass_through(self, db: duckdb.DuckDBPyConnection) -> None:
+    def test_non_ip_indicators_pass_through(self, db: DuckDBConn) -> None:
         """Indicators without IP fields (e.g. ``event_distribution``) must not be filtered."""
         insert_allowlisted_indicator(
             db, indicator=AllowlistedIndicator(indicator_id="uuid-ni-1", indicator="1.2.3.4", indicator_type="ip")
@@ -200,7 +200,7 @@ class TestAllowlistFiltering:
         assert len(result) == 1
         assert result[0].type == "event_distribution"
 
-    def test_filter_logs_dropped_count(self, db: duckdb.DuckDBPyConnection, caplog: pytest.LogCaptureFixture) -> None:
+    def test_filter_logs_dropped_count(self, db: DuckDBConn, caplog: pytest.LogCaptureFixture) -> None:
         """Debug log must contain the count of dropped indicators."""
         insert_allowlisted_indicator(
             db, indicator=AllowlistedIndicator(indicator_id="uuid-log-1", indicator="1.2.3.4", indicator_type="ip")
@@ -226,7 +226,7 @@ class TestAllowlistFiltering:
         assert result[0].evidence.get("source_ip") == "9.9.9.9"
         assert "Dropped 2 allowlisted indicators from 3 total" in caplog.text
 
-    def test_none_indicators_returns_none(self, db: duckdb.DuckDBPyConnection) -> None:
+    def test_none_indicators_returns_none(self, db: DuckDBConn) -> None:
         """When ``_run_analysis`` returns ``None``, ``run_analysis`` must also return ``None``."""
         service = _service(db)
 
@@ -235,7 +235,7 @@ class TestAllowlistFiltering:
 
         assert result is None
 
-    def test_pipeline_filters_allowlisted(self, db: duckdb.DuckDBPyConnection) -> None:
+    def test_pipeline_filters_allowlisted(self, db: DuckDBConn) -> None:
         """The ``_pipeline`` method must also apply allowlist filtering."""
         insert_allowlisted_indicator(
             db, indicator=AllowlistedIndicator(indicator_id="uuid-pl-1", indicator="1.2.3.4", indicator_type="ip")
@@ -255,9 +255,7 @@ class TestAllowlistFiltering:
         assert indicators[0].evidence.get("source_ip") == "5.6.7.8"
         assert report is None  # --llm not enabled
 
-    def test_pipeline_all_filtered_skips_llm_synthesis(
-        self, db: duckdb.DuckDBPyConnection, mocker: MockerFixture
-    ) -> None:
+    def test_pipeline_all_filtered_skips_llm_synthesis(self, db: DuckDBConn, mocker: MockerFixture) -> None:
         """When every indicator is allowlisted, ``_synthesize`` must not be called."""
         insert_allowlisted_indicator(
             db, indicator=AllowlistedIndicator(indicator_id="uuid-all-1", indicator="1.2.3.4", indicator_type="ip")
@@ -288,7 +286,7 @@ class TestAllowlistFiltering:
         assert report is None
         synth_mock.assert_not_called()
 
-    def test_source_ip_sequence_allowlisted_filtered(self, db: duckdb.DuckDBPyConnection) -> None:
+    def test_source_ip_sequence_allowlisted_filtered(self, db: DuckDBConn) -> None:
         """A ``source_ip_sequence`` indicator with an allowlisted source_ip must be dropped."""
         insert_allowlisted_indicator(
             db, indicator=AllowlistedIndicator(indicator_id="uuid-sip-1", indicator="10.0.0.1", indicator_type="ip")
@@ -308,7 +306,7 @@ class TestAllowlistFiltering:
         assert result[0].evidence.get("source_ip") == "192.168.1.1"
         assert result[0].type == "source_ip_sequence"
 
-    def test_source_ip_sequence_non_allowlisted_preserved(self, db: duckdb.DuckDBPyConnection) -> None:
+    def test_source_ip_sequence_non_allowlisted_preserved(self, db: DuckDBConn) -> None:
         """A ``source_ip_sequence`` indicator whose IP is not allowlisted must be kept."""
         service = _service(db)
         mock_indicators = [_make_source_ip_sequence("192.168.1.1")]

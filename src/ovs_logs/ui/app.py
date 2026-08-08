@@ -12,6 +12,7 @@ import duckdb
 import streamlit as st
 
 from ovs_logs.config.settings import settings
+from ovs_logs.core.common import DuckDBConn
 from ovs_logs.core.constants import LARGE_FILE_BYTES
 from ovs_logs.core.database import Database
 from ovs_logs.core.sql_utils import quote_identifier
@@ -100,7 +101,7 @@ def _render_upload_status_summary() -> None:
     st.info("Upload status: " + ", ".join(summary_parts))
 
 
-def _render_selected_table(connection: duckdb.DuckDBPyConnection, table_name: str) -> None:
+def _render_selected_table(connection: DuckDBConn, table_name: str) -> None:
     """Render a data preview (up to 100 rows) of the chosen table."""
     try:
         quoted = quote_identifier(table_name)

@@ -6,14 +6,13 @@ event detail cards below the chart. Degrades gracefully for non-analyzable or
 empty tables and query errors.
 """
 
-from __future__ import annotations
-
 import logging
 
 import duckdb
 import plotly.graph_objects as go
 import streamlit as st
 
+from ovs_logs.core.common import DuckDBConn
 from ovs_logs.core.timeline import (
     TimelineMetrics,
     TimelineQueryOptions,
@@ -230,7 +229,7 @@ def _render_chart_and_cards(
 
 
 def _get_timeline_data(
-    connection: duckdb.DuckDBPyConnection,
+    connection: DuckDBConn,
     table_name: str,
     source_ip: list[str] | str | None = None,
     min_status: int | None = None,
@@ -258,7 +257,7 @@ def _get_timeline_data(
 
 
 def render_timeline_card(
-    connection: duckdb.DuckDBPyConnection,
+    connection: DuckDBConn,
     table_name: str,
 ) -> None:
     """Render the Attack Timeline: metric tiles, scatter chart, filters, detail cards.

@@ -16,9 +16,11 @@ import streamlit as st
 
 from ovs_logs.config.settings import settings
 from ovs_logs.core.analysis.indicators import SuspiciousIndicator
+from ovs_logs.core.common import DuckDBConn
+from ovs_logs.core.models import AnalysisConfig
 from ovs_logs.core.persistence import ReportStore
 from ovs_logs.core.report import IncidentReport, MitreMapping
-from ovs_logs.services import AnalysisConfig, AnalysisService
+from ovs_logs.services import AnalysisService
 from ovs_logs.ui.analysis_view import compute_indicators, render_analysis_results
 from ovs_logs.ui.llm_wiring import LLMConfig
 from ovs_logs.ui.report_display import report_date_label, severity_label
@@ -44,7 +46,7 @@ def _render_mitre_table(mappings: list[MitreMapping]) -> None:
 
 
 def _generate_and_save_report(
-    connection: duckdb.DuckDBPyConnection,
+    connection: DuckDBConn,
     table_name: str,
     indicators: list[SuspiciousIndicator],
     *,
@@ -77,7 +79,7 @@ def _generate_and_save_report(
     st.success(f"Report saved ({report_id})")
 
 
-def render_intelligence_tab(connection: duckdb.DuckDBPyConnection, table_name: str) -> None:
+def render_intelligence_tab(connection: DuckDBConn, table_name: str) -> None:
     """Render the Intelligence tab for ``table_name``.
 
     Shows suspicious indicators (best-effort) and any saved incident reports

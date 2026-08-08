@@ -15,13 +15,13 @@ from ovs_logs.config.settings import settings
 from ovs_logs.core.database import Database
 from ovs_logs.core.errors import classify_error, error_category
 from ovs_logs.core.ingestion.adapters import EVTX_TOOL_ADAPTERS, EVTX_TOOL_CHOICES, IngestionResult
-from ovs_logs.core.models import IngestOptions
+from ovs_logs.core.models import AnalysisConfig, IngestOptions, LogFile
 from ovs_logs.core.normalization import NormalizationEngine
 from ovs_logs.core.persistence import ReportStore
 from ovs_logs.core.report import IncidentReport
 from ovs_logs.core.text_parsing import INGESTION_ADAPTERS
-from ovs_logs.core.validation import SUPPORTED_FORMATS, LogFile, validate_log_file
-from ovs_logs.services import AnalysisConfig, AnalysisService
+from ovs_logs.core.validation import SUPPORTED_FORMATS, validate_log_file
+from ovs_logs.services import AnalysisService
 
 app = typer.Typer(help="OVS-Log: local AI-powered log tracer and DFIR assistant")
 console = Console()

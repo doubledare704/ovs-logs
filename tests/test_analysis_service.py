@@ -4,13 +4,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import duckdb
 import pytest
 from pytest_mock.plugin import MockerFixture
 
 from ovs_logs.config.settings import OLLAMA_DEFAULT_ENDPOINT
 from ovs_logs.core.analysis.indicators import SuspiciousIndicator
-from ovs_logs.services.analysis_service import AnalysisConfig, AnalysisService
+from ovs_logs.core.common import DuckDBConn
+from ovs_logs.core.models import AnalysisConfig
+from ovs_logs.services.analysis_service import AnalysisService
 
 
 def test_analysis_config_defaults(tmp_path: Path) -> None:
@@ -54,7 +55,7 @@ def test_analysis_config_custom_values(tmp_path: Path) -> None:
     assert config.output == output
 
 
-def test_run_with_explicit_connection_reuses_it(db: duckdb.DuckDBPyConnection, mocker: MockerFixture) -> None:
+def test_run_with_explicit_connection_reuses_it(db: DuckDBConn, mocker: MockerFixture) -> None:
     """When a connection is passed, run() reuses it without opening a new one."""
     mock_db = mocker.patch("ovs_logs.services.analysis_service.Database")
     config = AnalysisConfig(db_path=Path(":memory:"), table="events")
@@ -74,7 +75,7 @@ def test_run_without_connection_opens_and_closes_db(tmp_path: Path, mocker: Mock
     config = AnalysisConfig(db_path=db_path, table="events")
     service = AnalysisService(config)
 
-    mock_conn = mocker.MagicMock(spec=duckdb.DuckDBPyConnection)
+    mock_conn = mocker.MagicMock(spec=DuckDBConn)
     mock_db = mocker.MagicMock()
     mock_db.__enter__.return_value = mock_conn
     mock_db.__exit__.return_value = None
@@ -91,7 +92,7 @@ def test_run_without_connection_opens_and_closes_db(tmp_path: Path, mocker: Mock
 
 
 def test_run_analysis_returns_empty_list_when_no_analyzable_columns(
-    db: duckdb.DuckDBPyConnection,
+    db: DuckDBConn,
     mocker: MockerFixture,
 ) -> None:
     """run_analysis returns empty list when the analysis engine finds no data."""
@@ -120,7 +121,7 @@ def test_run_analysis_returns_empty_list_when_no_analyzable_columns(
 
 
 def test_run_analysis_returns_indicators_when_finding_results(
-    db: duckdb.DuckDBPyConnection,
+    db: DuckDBConn,
     mocker: MockerFixture,
 ) -> None:
     """run_analysis returns SuspiciousIndicator list when analysis finds results."""
@@ -158,7 +159,7 @@ def test_run_analysis_returns_indicators_when_finding_results(
 
 
 def test_synthesize_report_skips_intel_when_enrich_intel_false(
-    db: duckdb.DuckDBPyConnection,
+    db: DuckDBConn,
     mocker: MockerFixture,
 ) -> None:
     """synthesize_report skips intel enrichment when enrich_intel=False."""
@@ -187,7 +188,7 @@ def test_synthesize_report_skips_intel_when_enrich_intel_false(
 
 
 def test_synthesize_report_raises_value_error_when_no_api_key(
-    db: duckdb.DuckDBPyConnection,
+    db: DuckDBConn,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """synthesize_report raises ValueError when LLM API key is missing."""
@@ -213,7 +214,7 @@ def test_synthesize_report_raises_value_error_when_no_api_key(
 
 
 def test_synthesize_report_allows_ollama_without_api_key(
-    db: duckdb.DuckDBPyConnection,
+    db: DuckDBConn,
     monkeypatch: pytest.MonkeyPatch,
     mocker: MockerFixture,
 ) -> None:

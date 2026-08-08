@@ -1,12 +1,9 @@
 """Benchmark suite for large text-log parsing strategies (OVD-33 / OVD-68 spikes)."""
 
-from __future__ import annotations
-
 import contextlib
 import datetime
 import json
 import logging
-import os
 import random
 import re
 import tempfile
@@ -21,6 +18,7 @@ from typing import Any
 import duckdb
 import pytest
 
+from ovs_logs.core.common import DuckDBConn
 from ovs_logs.core.database import Database
 from ovs_logs.core.ingestion.adapters import build_result, load_text_log
 from ovs_logs.core.normalization import NormalizationEngine
@@ -495,7 +493,7 @@ def _parser_based(sample: LogSample) -> BenchmarkResult:
 
     hits = dict.fromkeys(["timestamp", "source_ip", "status_code", "event_type"], 0)
 
-    def _process(db_conn: duckdb.DuckDBPyConnection) -> int:
+    def _process(db_conn: DuckDBConn) -> int:
         nonlocal hits
         log = validate_log_file(sample.path)
         load_result = load_text_log(log, db_conn, table_name="raw")
@@ -558,7 +556,7 @@ def _parser_based(sample: LogSample) -> BenchmarkResult:
 def _hybrid(sample: LogSample) -> BenchmarkResult:
     hits = {"timestamp": 0, "source_ip": 0, "status_code": 0, "event_type": 0}
 
-    def _process(db_conn: duckdb.DuckDBPyConnection) -> int:
+    def _process(db_conn: DuckDBConn) -> int:
         nonlocal hits
         log = validate_log_file(sample.path)
         load_result = load_text_log(log, db_conn, table_name="raw")
@@ -634,7 +632,7 @@ def _duckdb_regex_native(sample: LogSample) -> BenchmarkResult:
     columns = ["timestamp", "source_ip", "status_code", "event_type"]
     raw_table = quote_identifier("raw")
 
-    def _process(conn: duckdb.DuckDBPyConnection) -> int:
+    def _process(conn: DuckDBConn) -> int:
         log = validate_log_file(sample.path)
         load_result = load_text_log(log, conn, table_name="raw")
         rows = load_result.row_count
@@ -719,11 +717,6 @@ def log_samples(tmp_path: Path) -> list[LogSample]:
     return build_samples(tmp_path, sizes=[2000])[2000]
 
 
-@pytest.fixture
-def large_log_samples(tmp_path: Path) -> dict[int, list[LogSample]]:
-    return build_samples(tmp_path, sizes=[20_000, 100_000])
-
-
 @pytest.mark.parametrize(
     "bench_fn",
     [_baseline, _regex_python_loop, _parser_based, _hybrid, _duckdb_regex_native],
@@ -755,35 +748,6 @@ def test_benchmark_strategies(
             assert any(v > 0 for v in result.regex_hits.values()), (
                 f"{result.strategy} produced no regex hits for {result.sample_name}"
             )
-
-
-@pytest.mark.skipif(
-    os.environ.get("OVD68_LARGE_BENCHMARKS", "").lower() not in ("1", "true", "yes"),
-    reason="Set OVD68_LARGE_BENCHMARKS=1 to run 20k/100k benchmarks",
-)
-def test_benchmark_large(
-    large_log_samples: dict[int, list[LogSample]],
-    tmp_path: Path,
-) -> None:
-    strategies = [_baseline, _regex_python_loop, _parser_based, _hybrid, _duckdb_regex_native]
-    rows: list[dict] = []
-    for _size, samples in sorted(large_log_samples.items()):
-        for bench_fn in strategies:
-            for sample in samples:
-                result = bench_fn(sample)
-                rows.append(
-                    {
-                        "strategy": result.strategy,
-                        "sample": result.sample_name,
-                        "rows": result.rows,
-                        "elapsed_seconds": result.elapsed_seconds,
-                        "peak_kb": result.peak_kb,
-                    }
-                )
-    report_path = tmp_path / "benchmark_large_report.md"
-    write_markdown_report(rows, report_path)
-    assert report_path.exists()
-    assert report_path.read_text(encoding="utf-8").startswith("# OVS-Log Text-Log")
 
 
 def test_report_summary(

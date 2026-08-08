@@ -1,7 +1,5 @@
 """Persistence helpers for incident reports and related artifacts."""
 
-from __future__ import annotations
-
 import json
 import logging
 import threading
@@ -11,6 +9,7 @@ from typing import Any
 
 import duckdb
 
+from ovs_logs.core.common import DuckDBConn
 from ovs_logs.core.report import IncidentReport
 from ovs_logs.core.sql_utils import quote_identifier
 
@@ -26,7 +25,7 @@ class ReportStore:
 
     TABLE_NAME = "_ovs_incident_reports"
 
-    def _migrate_legacy_table(self, connection: duckdb.DuckDBPyConnection) -> None:
+    def _migrate_legacy_table(self, connection: DuckDBConn) -> None:
         """Rename the legacy ``incident_reports`` table if it exists and the new one does not."""
         try:
             existing = {
@@ -42,7 +41,7 @@ class ReportStore:
                 f"ALTER TABLE {quote_identifier(LEGACY_TABLE_NAME)} RENAME TO {quote_identifier(self.TABLE_NAME)}"
             )
 
-    def _migrate_add_source_table(self, connection: duckdb.DuckDBPyConnection) -> None:
+    def _migrate_add_source_table(self, connection: DuckDBConn) -> None:
         """Add the ``source_table`` column if it does not exist.
 
         DuckDB has no reliable ``IF NOT EXISTS`` for ``ADD COLUMN``, so we
@@ -57,7 +56,7 @@ class ReportStore:
         if "source_table" not in existing_columns:
             connection.execute(f"ALTER TABLE {quote_identifier(self.TABLE_NAME)} ADD COLUMN source_table VARCHAR")
 
-    def _ensure_table(self, connection: duckdb.DuckDBPyConnection) -> None:
+    def _ensure_table(self, connection: DuckDBConn) -> None:
         with _MIGRATION_LOCK:
             self._migrate_legacy_table(connection)
             connection.execute(
@@ -74,7 +73,7 @@ class ReportStore:
 
     def save_report(
         self,
-        connection: duckdb.DuckDBPyConnection,
+        connection: DuckDBConn,
         report: IncidentReport,
         source_table: str | None = None,
     ) -> str:
@@ -92,7 +91,7 @@ class ReportStore:
         )
         return report_id
 
-    def get_report(self, connection: duckdb.DuckDBPyConnection, report_id: str) -> IncidentReport:
+    def get_report(self, connection: DuckDBConn, report_id: str) -> IncidentReport:
         """Retrieve a report by its id."""
         self._ensure_table(connection)
         row = connection.execute(
@@ -105,7 +104,7 @@ class ReportStore:
 
     def get_all_reports(
         self,
-        connection: duckdb.DuckDBPyConnection,
+        connection: DuckDBConn,
         source_table: str | None = None,
     ) -> list[dict[str, Any]]:
         """Return stored reports ordered by created_at descending.

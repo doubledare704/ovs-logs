@@ -1,15 +1,13 @@
 """Integration tests for structured text-log parsing in CLI and UI flows."""
 
-from __future__ import annotations
-
 from datetime import datetime
 from pathlib import Path
 
-import duckdb
 from streamlit.testing.v1 import AppTest
 from typer.testing import CliRunner, Result
 
 from ovs_logs.cli.main import app
+from ovs_logs.core.common import DuckDBConn
 from ovs_logs.core.database import Database
 
 from .conftest import launch_app, make_db, make_temp_file
@@ -36,7 +34,7 @@ def _invoke_ingest(file_path: Path, file_type: str, db: Path, table: str) -> Res
     )
 
 
-def _describe_columns(conn: duckdb.DuckDBPyConnection, table: str) -> dict[str, str]:
+def _describe_columns(conn: DuckDBConn, table: str) -> dict[str, str]:
     """Helper to describe columns of a given table."""
     schema = conn.execute(f'DESCRIBE "{table}"').fetchall()
     return {row[0]: row[1] for row in schema}

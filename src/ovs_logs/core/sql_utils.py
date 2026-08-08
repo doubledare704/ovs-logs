@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 import uuid
 
-from ovs_logs.core.validation import LogFile
+from ovs_logs.core.models import LogFile
 
 _IDENTIFIER_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
 """Pattern for a valid, unquoted SQL identifier."""

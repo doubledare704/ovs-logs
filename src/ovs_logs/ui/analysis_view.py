@@ -6,8 +6,6 @@ fields or that raise a query error degrade to an informational message
 instead of failing.
 """
 
-from __future__ import annotations
-
 import dataclasses
 import logging
 from pathlib import Path
@@ -17,10 +15,12 @@ import streamlit as st
 
 from ovs_logs.config.settings import settings
 from ovs_logs.core.analysis.indicators import SuspiciousIndicator, extract_unique_ips
+from ovs_logs.core.common import DuckDBConn
+from ovs_logs.core.models import AnalysisConfig
 from ovs_logs.core.normalization import get_all_aliases
 from ovs_logs.core.sql_utils import quote_identifier
 from ovs_logs.core.threat_lists import is_loaded as tl_is_loaded, match_ips as tl_match_ips
-from ovs_logs.services import AnalysisConfig, AnalysisService
+from ovs_logs.services import AnalysisService
 from ovs_logs.ui.state import SessionKeys
 
 logger = logging.getLogger(__name__)
@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 SK = SessionKeys()
 
 
-def has_analyzable_columns(connection: duckdb.DuckDBPyConnection, table_name: str) -> bool:
+def has_analyzable_columns(connection: DuckDBConn, table_name: str) -> bool:
     """Return True when the table exposes at least one normalized column."""
     try:
         columns = [row[0].lower() for row in connection.execute(f"DESCRIBE {quote_identifier(table_name)}").fetchall()]
@@ -40,7 +40,7 @@ def has_analyzable_columns(connection: duckdb.DuckDBPyConnection, table_name: st
 
 
 def compute_indicators(
-    connection: duckdb.DuckDBPyConnection,
+    connection: DuckDBConn,
     table_name: str,
 ) -> list[SuspiciousIndicator] | None:
     """Run analysis and return enriched indicators with threat-list matches.
@@ -86,7 +86,7 @@ def compute_indicators(
 
 
 def render_analysis_results(
-    connection: duckdb.DuckDBPyConnection,
+    connection: DuckDBConn,
     table_name: str,
     indicators: list[SuspiciousIndicator] | None = None,
 ) -> None:

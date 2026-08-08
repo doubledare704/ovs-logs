@@ -13,8 +13,6 @@ importing core components directly, keeping the presentation layer thin.
 
 import logging
 import os
-from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
 
 import duckdb
@@ -22,35 +20,17 @@ import duckdb
 from ovs_logs.config.settings import Settings, settings as _default_settings
 from ovs_logs.core.analysis import AnalysisEngine, IndicatorProcessor
 from ovs_logs.core.analysis.indicators import SuspiciousIndicator, extract_unique_ips
+from ovs_logs.core.common import DuckDBConn
 from ovs_logs.core.database import ALLOWLIST_TABLE, Database, _ensure_allowlist_table
 from ovs_logs.core.errors import ThreatIntelError
 from ovs_logs.core.llm import LLMSynthesizer, create_llm_provider, is_ollama_endpoint
-from ovs_logs.core.models import ThreatIntelClientOptions
+from ovs_logs.core.models import AnalysisConfig, ThreatIntelClientOptions
 from ovs_logs.core.persistence import ReportStore
 from ovs_logs.core.report import IncidentReport
 from ovs_logs.core.sql_utils import quote_identifier
 from ovs_logs.core.threat_intel import ThreatIntelClient
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass
-class AnalysisConfig:
-    """Configuration for a single analysis run.
-
-    All *None* fields fall back to environment variables or core settings
-    defaults when the service runs.
-    """
-
-    db_path: Path
-    table: str
-    intel: bool = False
-    llm: bool = False
-    abuseipdb_api_key: str | None = None
-    llm_api_key: str | None = None
-    llm_endpoint: str | None = None
-    llm_model: str | None = None
-    output: Path | None = None
 
 
 class AnalysisService:
@@ -99,7 +79,7 @@ class AnalysisService:
 
     def _filter_allowlisted(
         self,
-        connection: duckdb.DuckDBPyConnection,
+        connection: DuckDBConn,
         indicators: list[SuspiciousIndicator],
     ) -> list[SuspiciousIndicator]:
         """Remove indicators whose IP is in the allowlist.
@@ -161,7 +141,7 @@ class AnalysisService:
 
     def run(
         self,
-        connection: duckdb.DuckDBPyConnection | None = None,
+        connection: DuckDBConn | None = None,
     ) -> tuple[list[SuspiciousIndicator] | None, IncidentReport | None]:
         """Execute the full analysis pipeline.
 
@@ -182,7 +162,7 @@ class AnalysisService:
 
     def run_analysis(
         self,
-        connection: duckdb.DuckDBPyConnection,
+        connection: DuckDBConn,
     ) -> list[SuspiciousIndicator] | None:
         """Run analysis queries and return processed indicators.
 
@@ -198,7 +178,7 @@ class AnalysisService:
 
     def synthesize_report(
         self,
-        connection: duckdb.DuckDBPyConnection,
+        connection: DuckDBConn,
         indicators: list[SuspiciousIndicator],
         *,
         enrich_intel: bool = False,
@@ -224,7 +204,7 @@ class AnalysisService:
 
     def has_correlated_alerts(
         self,
-        connection: duckdb.DuckDBPyConnection,
+        connection: DuckDBConn,
     ) -> bool:
         """Check whether the ``v_correlated_alerts`` view exists."""
         from ovs_logs.core.ingestion.adapters import _CORRELATION_VIEW_NAME  # noqa: PLC0415
@@ -242,7 +222,7 @@ class AnalysisService:
 
     def _pipeline(
         self,
-        connection: duckdb.DuckDBPyConnection,
+        connection: DuckDBConn,
     ) -> tuple[list[SuspiciousIndicator] | None, IncidentReport | None]:
         """Run the full pipeline against an open connection."""
         indicators = self._run_analysis(connection)
@@ -260,7 +240,7 @@ class AnalysisService:
 
     def _run_analysis(
         self,
-        connection: duckdb.DuckDBPyConnection,
+        connection: DuckDBConn,
     ) -> list[SuspiciousIndicator] | None:
         """Run SQL templates and shape raw results into indicators."""
         raw_results = AnalysisEngine().run_queries(connection, table_name=self.config.table)
@@ -298,7 +278,7 @@ class AnalysisService:
 
     def _synthesize(
         self,
-        connection: duckdb.DuckDBPyConnection,
+        connection: DuckDBConn,
         indicators: list[SuspiciousIndicator],
         threat_intel: dict[str, Any] | None = None,
     ) -> tuple[IncidentReport, str]:

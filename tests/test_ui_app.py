@@ -10,6 +10,7 @@ from streamlit.testing.v1 import AppTest
 
 from ovs_logs.config.settings import OLLAMA_DEFAULT_ENDPOINT, Settings, settings
 from ovs_logs.core.analysis import engine
+from ovs_logs.core.common import DuckDBConn
 from ovs_logs.core.database import ALLOWLIST_TABLE, insert_allowlisted_indicator
 from ovs_logs.core.ingestion import adapters
 from ovs_logs.core.models import AllowlistedIndicator
@@ -640,7 +641,7 @@ def test_analysis_duckdb_error_shows_st_error(
     )
 
     # Monkey-patch AnalysisEngine.run_queries to raise duckdb.Error
-    def broken_run(self: engine.AnalysisEngine, connection: duckdb.DuckDBPyConnection, **kwargs: object) -> object:  # type: ignore[no-untyped-def]
+    def broken_run(self: engine.AnalysisEngine, connection: DuckDBConn, **kwargs: object) -> object:  # type: ignore[no-untyped-def]
         raise duckdb.Error("simulated query failure")
 
     monkeypatch.setattr(engine.AnalysisEngine, "run_queries", broken_run)

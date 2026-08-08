@@ -1,7 +1,5 @@
 """DuckDB ingestion adapters for supported log formats."""
 
-from __future__ import annotations
-
 import csv
 import json
 import logging
@@ -19,8 +17,8 @@ from evtx import PyEvtxParser
 from ovs_logs.config.settings import EVTXToolSettings, settings
 from ovs_logs.core.constants import EVTX_CSV_FIELDNAMES, SINGLE_COLUMN_DELIMITER
 from ovs_logs.core.errors import BinaryNotFoundError, IngestionError
+from ovs_logs.core.models import LogFile
 from ovs_logs.core.sql_utils import quote_identifier, resolve_table_name
-from ovs_logs.core.validation import LogFile
 
 type FilePath = str | Path
 type DuckDBConn = duckdb.DuckDBPyConnection

@@ -12,6 +12,7 @@ import logging
 import duckdb
 import streamlit as st
 
+from ovs_logs.core.common import DuckDBConn
 from ovs_logs.core.persistence import ReportStore
 from ovs_logs.ui.report_display import report_date_label, severity_label
 
@@ -26,7 +27,7 @@ def _detect_language(fmt: str) -> str:
     return _FORMAT_LANGUAGE.get(fmt.lower(), "")
 
 
-def render_mitigation_tab(connection: duckdb.DuckDBPyConnection, table_name: str) -> None:
+def render_mitigation_tab(connection: DuckDBConn, table_name: str) -> None:
     """Render the Mitigation tab for ``table_name``.
 
     Loads saved incident reports and lets the user pick one to view its
@@ -51,7 +52,7 @@ def render_mitigation_tab(connection: duckdb.DuckDBPyConnection, table_name: str
     selected_id = st.selectbox(
         "Select a report",
         options=[r["report_id"] for r in reports],
-        format_func=lambda rid: report_options.get(rid, rid),
+        format_func=lambda rid: report_options.get(rid, str(rid)),
         key="selected_report_id",
     )
 

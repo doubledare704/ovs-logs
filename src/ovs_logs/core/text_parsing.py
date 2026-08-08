@@ -16,8 +16,8 @@ from ovs_logs.core.ingestion.adapters import (
     load_json,
     load_text_log,
 )
+from ovs_logs.core.models import LogFile
 from ovs_logs.core.sql_utils import quote_identifier, resolve_table_name
-from ovs_logs.core.validation import LogFile
 
 logger = logging.getLogger(__name__)
 

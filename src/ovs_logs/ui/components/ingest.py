@@ -14,6 +14,7 @@ import duckdb
 import streamlit as st
 
 from ovs_logs.config.settings import EVTXToolSettings, Settings
+from ovs_logs.core.common import DuckDBConn
 from ovs_logs.core.database import Database
 from ovs_logs.core.ingestion.adapters import EVTX_TOOL_ADAPTERS
 from ovs_logs.core.normalization import NormalizationEngine, discover_raw_tables
@@ -43,7 +44,7 @@ def _apply_evtx_settings() -> None:
 
 
 def _run_batch_normalization(
-    connection: duckdb.DuckDBPyConnection,
+    connection: DuckDBConn,
     ingested_files: list[dict[str, Any]],
 ) -> None:
     """Run normalization on all successfully ingested files into the unified ``events`` table."""

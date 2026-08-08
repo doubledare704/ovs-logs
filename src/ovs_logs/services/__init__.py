@@ -5,7 +5,8 @@ so that both the CLI (``cli/``) and UI (``ui/``) can reuse the same orchestratio
 logic without duplicating pipeline code or importing core internals directly.
 """
 
-from .analysis_service import AnalysisConfig, AnalysisService
+from ..core.models import AnalysisConfig
+from .analysis_service import AnalysisService
 
 __all__ = [
     "AnalysisConfig",

@@ -87,3 +87,31 @@ class IngestOptions:
     table: str | None = None
     tool: str | None = None
     force_reanalyze: bool = False
+
+
+@dataclass(frozen=True)
+class LogFile:
+    """Descriptor for a validated input log file."""
+
+    path: Path
+    format: str
+    needs_conversion: bool
+
+
+@dataclass
+class AnalysisConfig:
+    """Configuration for a single analysis run.
+
+    All *None* fields fall back to environment variables or core settings
+    defaults when the service runs.
+    """
+
+    db_path: Path
+    table: str
+    intel: bool = False
+    llm: bool = False
+    abuseipdb_api_key: str | None = None
+    llm_api_key: str | None = None
+    llm_endpoint: str | None = None
+    llm_model: str | None = None
+    output: Path | None = None
